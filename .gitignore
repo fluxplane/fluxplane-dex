@@ -1,0 +1,34 @@
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+.dex/
+
+# Go build/test artifacts
+bin/
+build/
+dist/
+*.test
+*.out
+coverage.out
+coverage.*
+
+# Local caches and temporary files
+.cache/
+tmp/
+temp/
+*.log
+
+# Built plugin binaries
+dex
+dex-plugin-*

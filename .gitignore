@@ -30,5 +30,5 @@ temp/
 *.log
 
 # Built plugin binaries
-dex
-dex-plugin-*
+/dex
+/dex-plugin-*

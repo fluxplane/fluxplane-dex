@@ -1,116 +1,41 @@
 package gitlab
 
 import (
-	"encoding/json"
-
 	"github.com/fluxplane/fluxplane-dex/core"
-	"github.com/fluxplane/fluxplane-dex/plugins/internal/pluginutil"
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/protocol"
 )
 
-type Handler struct {
-	Runner OperationRunner
+func NewPlugin() *pluginbinding.Plugin {
+	return NewPluginWithRunner(NewOperationRunner())
 }
 
-func NewHandler() Handler {
-	return Handler{Runner: NewOperationRunner()}
+func NewPluginWithRunner(runner OperationRunner) *pluginbinding.Plugin {
+	plugin := pluginbinding.New(Manifest())
+	plugin.AuthConnectText("Use dex auth connect gitlab --field access_token=<token> --field gitlab_url=<url>")
+	plugin.AuthTestOperation("gitlab.auth.test")
+	plugin.IndexBuildOperation("gitlab.index.build")
+	plugin.HostOwnedIndexStatus("GitLab")
+
+	pluginbinding.Operation(plugin, operationSpec("gitlab.auth.test"), runner.AuthTest)
+	pluginbinding.Operation(plugin, operationSpec("gitlab.index.build"), runner.IndexBuild)
+	pluginbinding.Operation(plugin, operationSpec("gitlab.project.list"), runner.ProjectList)
+	pluginbinding.Operation(plugin, operationSpec("gitlab.project.show"), runner.ProjectShow)
+	pluginbinding.Operation(plugin, operationSpec("gitlab.mr.list"), runner.MergeRequestList)
+	pluginbinding.Operation(plugin, operationSpec("gitlab.mr.show"), runner.MergeRequestShow)
+
+	return plugin
 }
 
 func Handle(req protocol.Request) protocol.Response {
-	return NewHandler().Handle(req)
+	return NewPlugin().Handle(req)
 }
 
-func (h Handler) Handle(req protocol.Request) protocol.Response {
-	switch req.Command {
-	case protocol.CommandManifest:
-		return protocol.OK(Manifest())
-	case protocol.CommandAuthMethods:
-		return protocol.OK(Manifest().Auth)
-	case protocol.CommandAuthTest:
-		return h.authTest(req)
-	case protocol.CommandAuthConnect:
-		return pluginutil.OKText("Use dex auth connect gitlab --field access_token=<token> --field gitlab_url=<url>", nil)
-	case protocol.CommandOperationsList:
-		return protocol.OK(Manifest().Operations)
-	case protocol.CommandOperationsCall:
-		return h.callOne(req)
-	case protocol.CommandOperationsBatch:
-		return h.callBatch(req)
-	case protocol.CommandDatasourcesList:
-		return protocol.OK(Manifest().Datasources)
-	case protocol.CommandDatasourcesSearch:
-		return protocol.Fail("not_implemented", "gitlab datasource live search requires host index integration")
-	case protocol.CommandDatasourcesGet:
-		return protocol.Fail("not_implemented", "gitlab datasource get requires host index integration")
-	case protocol.CommandDatasourcesLookup:
-		return protocol.Fail("not_implemented", "gitlab datasource lookup requires host index integration")
-	case protocol.CommandContextBuild:
-		return pluginutil.OKData(map[string]any{"blocks": []core.ContextBlock{}})
-	case protocol.CommandEndpointsDiscover:
-		return pluginutil.OKData(map[string]any{"candidates": []core.EndpointCandidate{}})
-	case protocol.CommandIndexBuild:
-		return h.indexBuild(req)
-	case protocol.CommandIndexStatus:
-		return pluginutil.OKText("GitLab index is host-owned", map[string]any{"status": "host_owned"})
-	default:
-		return protocol.Fail("unknown_command", "gitlab plugin does not implement "+req.Command)
+func operationSpec(name string) core.OperationSpec {
+	for _, spec := range Manifest().Operations {
+		if spec.Name == name {
+			return spec
+		}
 	}
-}
-
-func (h Handler) callOne(req protocol.Request) protocol.Response {
-	call, err := protocol.DecodePayload[protocol.OperationCall](req.Payload)
-	if err != nil {
-		return protocol.Fail("bad_payload", err.Error())
-	}
-	result := h.runner().Run(req, call, nil)
-	if !result.OK {
-		return protocol.Response{Protocol: protocol.Version, OK: false, Error: result.Error}
-	}
-	return protocol.Response{Protocol: protocol.Version, OK: true, Result: result.Result}
-}
-
-func (h Handler) callBatch(req protocol.Request) protocol.Response {
-	batch, err := protocol.DecodePayload[protocol.OperationBatch](req.Payload)
-	if err != nil {
-		return protocol.Fail("bad_payload", err.Error())
-	}
-	secrets := map[string]pluginutil.SecretMaterial{}
-	results := make([]protocol.OperationResult, 0, len(batch.Calls))
-	for _, call := range batch.Calls {
-		results = append(results, h.runner().Run(req, call, secrets))
-	}
-	return protocol.OK(protocol.OperationBatchResult{Results: results})
-}
-
-func (h Handler) authTest(req protocol.Request) protocol.Response {
-	if req.Grant == "" {
-		return pluginutil.OKText("GitLab auth is host-managed; use dex auth status gitlab or dex op run gitlab.auth.test", map[string]any{"status": "host_managed"})
-	}
-	result := h.runner().Run(req, protocol.OperationCall{Name: "gitlab.auth.test"}, nil)
-	if !result.OK {
-		return protocol.Response{Protocol: protocol.Version, OK: false, Error: result.Error}
-	}
-	return protocol.Response{Protocol: protocol.Version, OK: true, Result: result.Result}
-}
-
-func (h Handler) indexBuild(req protocol.Request) protocol.Response {
-	if req.Grant == "" {
-		return pluginutil.OKText("Use dex op run gitlab.index.build to build live GitLab project records", map[string]any{"status": "requires_operation_grant"})
-	}
-	result := h.runner().Run(req, protocol.OperationCall{Name: "gitlab.index.build"}, nil)
-	if !result.OK {
-		return protocol.Response{Protocol: protocol.Version, OK: false, Error: result.Error}
-	}
-	var value any
-	if err := json.Unmarshal(result.Result, &value); err != nil {
-		return protocol.Fail("marshal_result", err.Error())
-	}
-	return pluginutil.OKData(value)
-}
-
-func (h Handler) runner() OperationRunner {
-	if h.Runner.SecretGetter == nil && h.Runner.ClientFactory == nil {
-		return NewOperationRunner()
-	}
-	return h.Runner
+	return core.OperationSpec{Name: name}
 }

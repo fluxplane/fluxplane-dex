@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/plugins/internal/pluginutil"
 	"github.com/fluxplane/fluxplane-dex/protocol"
 )
@@ -20,33 +21,39 @@ func NewOperationRunner() OperationRunner {
 }
 
 func (r OperationRunner) Run(req protocol.Request, call protocol.OperationCall, cache map[string]pluginutil.SecretMaterial) protocol.OperationResult {
-	if call.ID == "" {
-		call.ID = call.Name
-	}
-	client, err := r.client(req, cache)
+	raw, err := json.Marshal(call)
 	if err != nil {
-		return opError(call, "secret", err.Error())
+		return pluginbinding.OperationError(call, "marshal_call", err.Error())
 	}
-	input, err := operationInput(call)
-	if err != nil {
-		return opError(call, "bad_input", err.Error())
+	req.Command = protocol.CommandOperationsCall
+	req.Payload = raw
+	plugin := NewPluginWithRunner(r)
+	if cache != nil {
+		plugin.Command(protocol.CommandOperationsCall, func(ctx pluginbinding.Context) protocol.Response {
+			ctx.Cache.Set(secretCacheKey, cache)
+			decoded, err := protocol.DecodePayload[protocol.OperationCall](ctx.Request.Payload)
+			if err != nil {
+				return protocol.Fail("bad_payload", err.Error())
+			}
+			result := plugin.RunOperation(ctx.Request, decoded, ctx.Cache)
+			if !result.OK {
+				return protocol.Response{Protocol: protocol.Version, OK: false, Error: result.Error}
+			}
+			return protocol.Response{Protocol: protocol.Version, OK: true, Result: result.Result}
+		})
 	}
-	switch call.Name {
-	case "gitlab.auth.test":
-		return r.authTest(call, client)
-	case "gitlab.index.build":
-		return r.indexBuild(call, client, input)
-	case "gitlab.project.list":
-		return r.projectList(call, client, input)
-	case "gitlab.project.show":
-		return r.projectShow(call, client, input)
-	case "gitlab.mr.list":
-		return r.mrList(call, client, input)
-	case "gitlab.mr.show":
-		return r.mrShow(call, client, input)
-	default:
-		return opError(call, "unknown_operation", "unknown GitLab operation "+call.Name)
+	resp := plugin.Handle(req)
+	if resp.OK {
+		if call.ID == "" {
+			call.ID = call.Name
+		}
+		return protocol.OperationResult{ID: call.ID, Name: call.Name, OK: true, Result: resp.Result}
 	}
+	errResp := resp.Error
+	if errResp == nil {
+		errResp = &protocol.Error{Code: "plugin_error", Message: "operation failed"}
+	}
+	return protocol.OperationResult{ID: call.ID, Name: call.Name, OK: false, Error: errResp}
 }
 
 func (r OperationRunner) client(req protocol.Request, cache map[string]pluginutil.SecretMaterial) (Client, error) {
@@ -61,46 +68,182 @@ func (r OperationRunner) client(req protocol.Request, cache map[string]pluginuti
 	return factory(secrets)
 }
 
-func (r OperationRunner) authTest(call protocol.OperationCall, client Client) protocol.OperationResult {
+const secretCacheKey = "gitlab.secret_cache"
+
+func secretCache(ctx pluginbinding.Context) map[string]pluginutil.SecretMaterial {
+	if ctx.Cache == nil {
+		return nil
+	}
+	if value, ok := ctx.Cache.Get(secretCacheKey); ok {
+		if cache, ok := value.(map[string]pluginutil.SecretMaterial); ok {
+			return cache
+		}
+	}
+	cache := map[string]pluginutil.SecretMaterial{}
+	ctx.Cache.Set(secretCacheKey, cache)
+	return cache
+}
+
+type NoInput struct{}
+
+type ProjectListInput struct {
+	Limit      int    `json:"limit,omitempty" jsonschema:"description=Maximum projects to return"`
+	Search     string `json:"search,omitempty" jsonschema:"description=Project search text"`
+	Query      string `json:"query,omitempty" jsonschema:"description=Alias for search"`
+	OrderBy    string `json:"order_by,omitempty" jsonschema:"description=GitLab order_by value"`
+	Sort       string `json:"sort,omitempty" jsonschema:"description=Sort direction,enum=asc|desc"`
+	Membership *bool  `json:"membership,omitempty" jsonschema:"description=Limit results to member projects"`
+}
+
+type ProjectShowInput struct {
+	ID      string `json:"id,omitempty" jsonschema:"description=Numeric project ID or path"`
+	Project string `json:"project,omitempty" jsonschema:"description=Alias for id"`
+	Path    string `json:"path,omitempty" jsonschema:"description=Alias for id"`
+}
+
+type MergeRequestListInput struct {
+	Project   string `json:"project,omitempty" jsonschema:"description=Project path or numeric ID"`
+	ProjectID string `json:"project_id,omitempty" jsonschema:"description=Alias for project"`
+	Path      string `json:"path,omitempty" jsonschema:"description=Alias for project"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"description=Maximum merge requests to return"`
+	State     string `json:"state,omitempty" jsonschema:"description=Merge request state"`
+	Search    string `json:"search,omitempty" jsonschema:"description=Merge request search text"`
+	Query     string `json:"query,omitempty" jsonschema:"description=Alias for search"`
+	OrderBy   string `json:"order_by,omitempty" jsonschema:"description=GitLab order_by value"`
+	Sort      string `json:"sort,omitempty" jsonschema:"description=Sort direction,enum=asc|desc"`
+}
+
+type MergeRequestShowInput struct {
+	Ref string `json:"ref,omitempty" jsonschema:"description=Merge request reference as PROJECT!IID"`
+	ID  string `json:"id,omitempty" jsonschema:"description=Alias for ref"`
+}
+
+type IndexBuildInput struct {
+	Index            string `json:"index,omitempty" jsonschema:"description=Index selector"`
+	Indexes          string `json:"indexes,omitempty" jsonschema:"description=Comma-separated index selectors"`
+	Entity           string `json:"entity,omitempty" jsonschema:"description=Entity selector"`
+	Entities         string `json:"entities,omitempty" jsonschema:"description=Comma-separated entity selectors"`
+	Limit            int    `json:"limit,omitempty" jsonschema:"description=Project fetch limit"`
+	Search           string `json:"search,omitempty" jsonschema:"description=Project search text"`
+	Query            string `json:"query,omitempty" jsonschema:"description=Alias for search"`
+	OrderBy          string `json:"order_by,omitempty" jsonschema:"description=Project order_by value"`
+	Sort             string `json:"sort,omitempty" jsonschema:"description=Project sort direction,enum=asc|desc"`
+	UserLimit        int    `json:"user_limit,omitempty" jsonschema:"description=User fetch limit"`
+	UserSearch       string `json:"user_search,omitempty" jsonschema:"description=User search text"`
+	GroupLimit       int    `json:"group_limit,omitempty" jsonschema:"description=Group fetch limit"`
+	GroupSearch      string `json:"group_search,omitempty" jsonschema:"description=Group search text"`
+	GroupOrderBy     string `json:"group_order_by,omitempty" jsonschema:"description=Group order_by value"`
+	GroupSort        string `json:"group_sort,omitempty" jsonschema:"description=Group sort direction,enum=asc|desc"`
+	IssueLimit       int    `json:"issue_limit,omitempty" jsonschema:"description=Issue fetch limit"`
+	IssueSearch      string `json:"issue_search,omitempty" jsonschema:"description=Issue search text"`
+	IssueState       string `json:"issue_state,omitempty" jsonschema:"description=Issue state"`
+	IssueOrderBy     string `json:"issue_order_by,omitempty" jsonschema:"description=Issue order_by value"`
+	IssueSort        string `json:"issue_sort,omitempty" jsonschema:"description=Issue sort direction,enum=asc|desc"`
+	MRProject        string `json:"mr_project,omitempty" jsonschema:"description=Merge request project path or ID"`
+	MRLimit          int    `json:"mr_limit,omitempty" jsonschema:"description=Merge request fetch limit"`
+	MRSearch         string `json:"mr_search,omitempty" jsonschema:"description=Merge request search text"`
+	MRState          string `json:"mr_state,omitempty" jsonschema:"description=Merge request state"`
+	MROrderBy        string `json:"mr_order_by,omitempty" jsonschema:"description=Merge request order_by value"`
+	MRSort           string `json:"mr_sort,omitempty" jsonschema:"description=Merge request sort direction,enum=asc|desc"`
+	Membership       *bool  `json:"membership,omitempty" jsonschema:"description=Limit projects to member projects"`
+	ActiveUsers      *bool  `json:"active_users,omitempty" jsonschema:"description=Only include active users"`
+	ActiveGroups     *bool  `json:"active_groups,omitempty" jsonschema:"description=Only include active groups"`
+	AllVisibleGroups *bool  `json:"all_visible_groups,omitempty" jsonschema:"description=Include all visible groups"`
+}
+
+func inputMap(input any) map[string]any {
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return map[string]any{}
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return map[string]any{}
+	}
+	return out
+}
+
+func (r OperationRunner) AuthTest(ctx pluginbinding.Context, _ NoInput) (map[string]any, error) {
+	client, err := r.client(ctx.Request, secretCache(ctx))
+	if err != nil {
+		return nil, pluginbinding.Errorf("secret", "%s", err)
+	}
 	user, err := client.CurrentUser()
 	if err != nil {
-		return opError(call, "gitlab", err.Error())
+		return nil, pluginbinding.Errorf("gitlab", "%s", err)
 	}
-	return opOK(call, map[string]any{"text": "GitLab auth OK", "status": "ok", "user": user})
+	return map[string]any{"text": "GitLab auth OK", "status": "ok", "user": user}, nil
 }
 
-func (r OperationRunner) projectList(call protocol.OperationCall, client Client, input map[string]any) protocol.OperationResult {
-	projects, err := client.ListProjects(projectListOptions(input, 20))
+func (r OperationRunner) ProjectList(ctx pluginbinding.Context, input ProjectListInput) (map[string]any, error) {
+	client, err := r.client(ctx.Request, secretCache(ctx))
 	if err != nil {
-		return opError(call, "gitlab", err.Error())
+		return nil, pluginbinding.Errorf("secret", "%s", err)
 	}
-	return opOK(call, map[string]any{"projects": projects, "count": len(projects)})
+	projects, err := client.ListProjects(projectListOptions(inputMap(input), 20))
+	if err != nil {
+		return nil, pluginbinding.Errorf("gitlab", "%s", err)
+	}
+	return map[string]any{"projects": projects, "count": len(projects)}, nil
 }
 
-func (r OperationRunner) projectShow(call protocol.OperationCall, client Client, input map[string]any) protocol.OperationResult {
-	id := strings.TrimSpace(firstString(input, "id", "project", "path"))
+func (r OperationRunner) ProjectShow(ctx pluginbinding.Context, input ProjectShowInput) (map[string]any, error) {
+	client, err := r.client(ctx.Request, secretCache(ctx))
+	if err != nil {
+		return nil, pluginbinding.Errorf("secret", "%s", err)
+	}
+	id := strings.TrimSpace(firstString(inputMap(input), "id", "project", "path"))
 	if id == "" {
-		return opError(call, "bad_input", "project id or path is required")
+		return nil, pluginbinding.Fail("bad_input", "project id or path is required")
 	}
 	project, err := client.GetProject(projectID(id))
 	if err != nil {
-		return opError(call, "gitlab", err.Error())
+		return nil, pluginbinding.Errorf("gitlab", "%s", err)
 	}
-	return opOK(call, map[string]any{"project": project})
+	return map[string]any{"project": project}, nil
 }
 
-func (r OperationRunner) mrList(call protocol.OperationCall, client Client, input map[string]any) protocol.OperationResult {
-	mrs, err := client.ListMergeRequests(mergeRequestListOptionsFromInput(input))
+func (r OperationRunner) MergeRequestList(ctx pluginbinding.Context, input MergeRequestListInput) (map[string]any, error) {
+	client, err := r.client(ctx.Request, secretCache(ctx))
 	if err != nil {
-		return opError(call, "gitlab", err.Error())
+		return nil, pluginbinding.Errorf("secret", "%s", err)
 	}
-	return opOK(call, map[string]any{"merge_requests": mrs, "count": len(mrs)})
+	mrs, err := client.ListMergeRequests(mergeRequestListOptionsFromInput(inputMap(input)))
+	if err != nil {
+		return nil, pluginbinding.Errorf("gitlab", "%s", err)
+	}
+	return map[string]any{"merge_requests": mrs, "count": len(mrs)}, nil
 }
 
-func (r OperationRunner) indexBuild(call protocol.OperationCall, client Client, input map[string]any) protocol.OperationResult {
+func (r OperationRunner) IndexBuild(ctx pluginbinding.Context, input IndexBuildInput) (map[string]any, error) {
+	client, err := r.client(ctx.Request, secretCache(ctx))
+	if err != nil {
+		return nil, pluginbinding.Errorf("secret", "%s", err)
+	}
+	return r.indexBuild(client, inputMap(input))
+}
+
+func (r OperationRunner) MergeRequestShow(ctx pluginbinding.Context, input MergeRequestShowInput) (map[string]any, error) {
+	client, err := r.client(ctx.Request, secretCache(ctx))
+	if err != nil {
+		return nil, pluginbinding.Errorf("secret", "%s", err)
+	}
+	ref := strings.TrimSpace(firstString(inputMap(input), "ref", "id"))
+	project, iid, err := parseMergeRequestRef(ref)
+	if err != nil {
+		return nil, pluginbinding.Errorf("bad_input", "%s", err)
+	}
+	mr, err := client.GetMergeRequest(projectID(project), iid)
+	if err != nil {
+		return nil, pluginbinding.Errorf("gitlab", "%s", err)
+	}
+	return map[string]any{"merge_request": mr, "ref": ref}, nil
+}
+
+func (r OperationRunner) indexBuild(client Client, input map[string]any) (map[string]any, error) {
 	selector, err := indexBuildSelector(input)
 	if err != nil {
-		return opError(call, "bad_input", err.Error())
+		return nil, pluginbinding.Errorf("bad_input", "%s", err)
 	}
 	var indexes []map[string]any
 	var records []ProjectRecord
@@ -109,7 +252,7 @@ func (r OperationRunner) indexBuild(call protocol.OperationCall, client Client, 
 		options.All = true
 		projects, err := client.ListProjects(options)
 		if err != nil {
-			return opError(call, "gitlab", err.Error())
+			return nil, pluginbinding.Errorf("gitlab", "%s", err)
 		}
 		records = make([]ProjectRecord, 0, len(projects))
 		for _, project := range projects {
@@ -122,7 +265,7 @@ func (r OperationRunner) indexBuild(call protocol.OperationCall, client Client, 
 		userOptions.All = true
 		users, err := client.ListUsers(userOptions)
 		if err != nil {
-			return opError(call, "gitlab", err.Error())
+			return nil, pluginbinding.Errorf("gitlab", "%s", err)
 		}
 		userRecords := make([]UserRecord, 0, len(users))
 		for _, user := range users {
@@ -135,7 +278,7 @@ func (r OperationRunner) indexBuild(call protocol.OperationCall, client Client, 
 		groupOptions.All = true
 		groups, err := client.ListGroups(groupOptions)
 		if err != nil {
-			return opError(call, "gitlab", err.Error())
+			return nil, pluginbinding.Errorf("gitlab", "%s", err)
 		}
 		groupRecords := make([]GroupRecord, 0, len(groups))
 		for _, group := range groups {
@@ -148,7 +291,7 @@ func (r OperationRunner) indexBuild(call protocol.OperationCall, client Client, 
 		issueOptions.All = true
 		issues, err := client.ListIssues(issueOptions)
 		if err != nil {
-			return opError(call, "gitlab", err.Error())
+			return nil, pluginbinding.Errorf("gitlab", "%s", err)
 		}
 		issueRecords := make([]IssueRecord, 0, len(issues))
 		for _, issue := range issues {
@@ -161,7 +304,7 @@ func (r OperationRunner) indexBuild(call protocol.OperationCall, client Client, 
 		mrOptions.All = true
 		mrs, err := client.ListMergeRequests(mrOptions)
 		if err != nil {
-			return opError(call, "gitlab", err.Error())
+			return nil, pluginbinding.Errorf("gitlab", "%s", err)
 		}
 		mrRecords := make([]MergeRequestRecord, 0, len(mrs))
 		for _, mr := range mrs {
@@ -173,36 +316,12 @@ func (r OperationRunner) indexBuild(call protocol.OperationCall, client Client, 
 	if len(indexes) > 0 {
 		firstIndex, _ = indexes[0]["index"].(string)
 	}
-	return opOK(call, map[string]any{
+	return map[string]any{
 		"index":   firstIndex,
 		"records": records,
 		"count":   len(records),
 		"indexes": indexes,
-	})
-}
-
-func (r OperationRunner) mrShow(call protocol.OperationCall, client Client, input map[string]any) protocol.OperationResult {
-	ref := strings.TrimSpace(firstString(input, "ref", "id"))
-	project, iid, err := parseMergeRequestRef(ref)
-	if err != nil {
-		return opError(call, "bad_input", err.Error())
-	}
-	mr, err := client.GetMergeRequest(projectID(project), iid)
-	if err != nil {
-		return opError(call, "gitlab", err.Error())
-	}
-	return opOK(call, map[string]any{"merge_request": mr, "ref": ref})
-}
-
-func operationInput(call protocol.OperationCall) (map[string]any, error) {
-	input := map[string]any{}
-	if len(call.Input) == 0 {
-		return input, nil
-	}
-	if err := json.Unmarshal(call.Input, &input); err != nil {
-		return nil, fmt.Errorf("decode operation input: %w", err)
-	}
-	return input, nil
+	}, nil
 }
 
 func projectListOptions(input map[string]any, defaultLimit int) ProjectListOptions {

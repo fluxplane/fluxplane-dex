@@ -3,6 +3,7 @@ package slack
 import (
 	"testing"
 
+	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding/plugintest"
 )
 
@@ -30,5 +31,23 @@ func TestManifestUsesTokenSetAuthMethod(t *testing.T) {
 		if !fields[purpose] {
 			t.Fatalf("missing auth field %q in %#v", purpose, method.Fields)
 		}
+	}
+}
+
+func TestManifestDeclaresDatasourceMetadata(t *testing.T) {
+	manifest := Manifest()
+	byEntity := map[string]core.DatasourceSpec{}
+	for _, datasource := range manifest.Datasources {
+		byEntity[datasource.Entity] = datasource
+	}
+	channel := byEntity[EntityChannel]
+	if channel.EntitySchema == nil || channel.EntitySchema.IDField != "channel_id" || channel.EntitySchema.TitleField != "title" {
+		t.Fatalf("channel entity schema = %#v", channel.EntitySchema)
+	}
+	if channel.Fallback != core.DatasourceFallbackHostIndexFirst {
+		t.Fatalf("channel fallback = %q", channel.Fallback)
+	}
+	if channel.Completion == nil || len(channel.Completion.Fields) == 0 {
+		t.Fatalf("channel completion = %#v", channel.Completion)
 	}
 }

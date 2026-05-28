@@ -62,11 +62,27 @@ func manifestSpec() pluginbinding.ManifestSpec {
 		Auth:        []core.AuthMethod{auth},
 		Operations:  operationSpecs(),
 		IndexedDatasources: []pluginbinding.IndexedDatasourceSpec{
-			pluginbinding.IndexedDatasource(DatasourceProjects, EntityProject, "GitLab projects.", "Project metadata and reverse lookup index.", pluginbinding.SearchableIndexCapabilities()...),
-			pluginbinding.IndexedDatasource(DatasourceUsers, EntityUser, "GitLab users.", "User metadata and reverse lookup index.", pluginbinding.SearchableIndexCapabilities()...),
-			pluginbinding.IndexedDatasource(DatasourceGroups, EntityGroup, "GitLab groups and namespaces.", "Group and namespace reverse lookup index.", pluginbinding.SearchableIndexCapabilities()...),
-			pluginbinding.IndexedDatasource(DatasourceIssues, EntityIssue, "GitLab issues.", "Issue metadata and reverse lookup index.", pluginbinding.SearchableIndexCapabilities()...),
-			pluginbinding.IndexedDatasource(DatasourceMergeRequests, EntityMergeRequest, "GitLab merge requests.", "Merge request metadata and reverse lookup index.", pluginbinding.SearchableIndexCapabilities()...),
+			pluginbinding.IndexedDatasourceWithOptions(DatasourceProjects, EntityProject, "GitLab projects.", "Project metadata and reverse lookup index.", pluginbinding.SearchableIndexCapabilities(),
+				pluginbinding.EntitySchemaFor[ProjectRecord](),
+				pluginbinding.EntitySchema(core.DatasourceEntitySchema{IDField: "path_with_namespace", TitleField: "name_with_namespace"}),
+				pluginbinding.Fallback(core.DatasourceFallbackHostIndexFirst),
+			),
+			pluginbinding.IndexedDatasourceWithOptions(DatasourceUsers, EntityUser, "GitLab users.", "User metadata and reverse lookup index.", pluginbinding.SearchableIndexCapabilities(),
+				pluginbinding.EntitySchemaFor[UserRecord](),
+				pluginbinding.Fallback(core.DatasourceFallbackHostIndexFirst),
+			),
+			pluginbinding.IndexedDatasourceWithOptions(DatasourceGroups, EntityGroup, "GitLab groups and namespaces.", "Group and namespace reverse lookup index.", pluginbinding.SearchableIndexCapabilities(),
+				pluginbinding.EntitySchemaFor[GroupRecord](),
+				pluginbinding.Fallback(core.DatasourceFallbackHostIndexFirst),
+			),
+			pluginbinding.IndexedDatasourceWithOptions(DatasourceIssues, EntityIssue, "GitLab issues.", "Issue metadata and reverse lookup index.", pluginbinding.SearchableIndexCapabilities(),
+				pluginbinding.EntitySchemaFor[IssueRecord](),
+				pluginbinding.Fallback(core.DatasourceFallbackHostIndexFirst),
+			),
+			pluginbinding.IndexedDatasourceWithOptions(DatasourceMergeRequests, EntityMergeRequest, "GitLab merge requests.", "Merge request metadata and reverse lookup index.", pluginbinding.SearchableIndexCapabilities(),
+				pluginbinding.EntitySchemaFor[MergeRequestRecord](),
+				pluginbinding.Fallback(core.DatasourceFallbackHostIndexFirst),
+			),
 		},
 		Context: []core.ContextSpec{
 			pluginbinding.ContextSpec(ContextName, "GitLab context blocks.", pluginbinding.ContextKindText, pluginbinding.ContextKindReference),
@@ -89,27 +105,51 @@ func operationSpecs() []core.OperationSpec {
 }
 
 func authTestSpec() core.OperationSpec {
-	return pluginbinding.TypedOperationSpec[NoInput, AuthTestResult](OperationAuthTest, "Test GitLab authentication by fetching the current user.", pluginbinding.ReadOnly(), pluginbinding.SecretPurposes(AuthPurposeAccessToken, AuthPurposeGitLabURL))
+	return gitlabReadOperation[NoInput, AuthTestResult](OperationAuthTest, "Test GitLab authentication by fetching the current user.")
 }
 
 func indexBuildSpec() core.OperationSpec {
-	return pluginbinding.TypedOperationSpec[IndexBuildInput, pluginbinding.IndexBuildResult](OperationIndexBuild, "Build GitLab index records.", pluginbinding.ReadOnly(), pluginbinding.SecretPurposes(AuthPurposeAccessToken, AuthPurposeGitLabURL))
+	return pluginbinding.TypedOperationSpec[IndexBuildInput, pluginbinding.IndexBuildResult](
+		OperationIndexBuild,
+		"Build GitLab index records.",
+		gitlabReadOptions(core.OperationConditional)...,
+	)
 }
 
 func projectListSpec() core.OperationSpec {
-	return pluginbinding.TypedOperationSpec[ProjectListInput, pluginbinding.ListResult[Project]](OperationProjectList, "List accessible GitLab projects.", pluginbinding.ReadOnly(), pluginbinding.Compact(), pluginbinding.SecretPurposes(AuthPurposeAccessToken, AuthPurposeGitLabURL))
+	return gitlabCompactReadOperation[ProjectListInput, pluginbinding.ListResult[Project]](OperationProjectList, "List accessible GitLab projects.")
 }
 
 func projectShowSpec() core.OperationSpec {
-	return pluginbinding.TypedOperationSpec[ProjectShowInput, pluginbinding.ShowResult[Project]](OperationProjectShow, "Show one GitLab project.", pluginbinding.ReadOnly(), pluginbinding.SecretPurposes(AuthPurposeAccessToken, AuthPurposeGitLabURL))
+	return gitlabReadOperation[ProjectShowInput, pluginbinding.ShowResult[Project]](OperationProjectShow, "Show one GitLab project.")
 }
 
 func mergeRequestListSpec() core.OperationSpec {
-	return pluginbinding.TypedOperationSpec[MergeRequestListInput, pluginbinding.ListResult[MergeRequest]](OperationMRList, "List GitLab merge requests.", pluginbinding.ReadOnly(), pluginbinding.Compact(), pluginbinding.SecretPurposes(AuthPurposeAccessToken, AuthPurposeGitLabURL))
+	return gitlabCompactReadOperation[MergeRequestListInput, pluginbinding.ListResult[MergeRequest]](OperationMRList, "List GitLab merge requests.")
 }
 
 func mergeRequestShowSpec() core.OperationSpec {
-	return pluginbinding.TypedOperationSpec[MergeRequestShowInput, pluginbinding.ShowResult[MergeRequest]](OperationMRShow, "Show one GitLab merge request.", pluginbinding.ReadOnly(), pluginbinding.SecretPurposes(AuthPurposeAccessToken, AuthPurposeGitLabURL))
+	return gitlabReadOperation[MergeRequestShowInput, pluginbinding.ShowResult[MergeRequest]](OperationMRShow, "Show one GitLab merge request.")
+}
+
+func gitlabReadOperation[I any, O any](name, description string) core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[I, O](name, description, gitlabReadOptions(core.OperationIdempotent)...)
+}
+
+func gitlabCompactReadOperation[I any, O any](name, description string) core.OperationSpec {
+	options := append(gitlabReadOptions(core.OperationIdempotent), pluginbinding.Compact())
+	return pluginbinding.TypedOperationSpec[I, O](name, description, options...)
+}
+
+func gitlabReadOptions(idempotency core.OperationIdempotency) []pluginbinding.OperationSpecOption {
+	return []pluginbinding.OperationSpecOption{
+		pluginbinding.ReadOnly(),
+		pluginbinding.SecretPurposes(AuthPurposeAccessToken, AuthPurposeGitLabURL),
+		pluginbinding.Effects(core.OperationEffectRead, core.OperationEffectNetwork),
+		pluginbinding.Access(core.OperationAccessAuth, core.OperationAccessSecret, core.OperationAccessNetwork),
+		pluginbinding.Risk(core.OperationRiskLow),
+		pluginbinding.Idempotency(idempotency),
+	}
 }
 
 func gitlabProjectsLookupSpec() core.DatasourceSpec {

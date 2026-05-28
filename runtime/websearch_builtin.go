@@ -51,6 +51,9 @@ func websearchManifestSpec() pluginbinding.ManifestSpec {
 		Datasources: []core.DatasourceSpec{
 			websearchDatasourceSpec(),
 		},
+		Context: []core.ContextSpec{
+			pluginbinding.ContextSpec("websearch.context", "Web search provider context.", pluginbinding.ContextKindText, pluginbinding.ContextKindReference),
+		},
 		Metadata: map[string]string{"kind": "builtin"},
 	}
 }
@@ -69,29 +72,68 @@ func (r Runner) websearchPlugin(ctx context.Context) *pluginbinding.Plugin {
 		pluginbinding.RegisterOperation(websearchProviderSpec(), service.Providers),
 		pluginbinding.RegisterOperation(websearchSearchSpec(), service.Search),
 		pluginbinding.RegisterDatasourceSearch(websearchDatasourceSpec(), service.DatasourceSearch),
+		pluginbinding.RegisterContextProvider(pluginbinding.ContextSpec("websearch.context", "Web search provider context.", pluginbinding.ContextKindText, pluginbinding.ContextKindReference), service.Context),
 	)
 }
 
 func websearchProviderSpec() core.OperationSpec {
-	return pluginbinding.TypedOperationSpec[websearchNoInput, websearch.ProviderListResult](websearchOperationProvider, "List available web search provider plugins.", pluginbinding.ReadOnly(), pluginbinding.Compact())
+	return websearchReadOperation[websearchNoInput, websearch.ProviderListResult](websearchOperationProvider, "List available web search provider plugins.")
 }
 
 func websearchSearchSpec() core.OperationSpec {
-	return pluginbinding.TypedOperationSpec[websearch.SearchInput, websearch.SearchOutput](websearchOperationSearch, "Search the web through provider plugins.", pluginbinding.ReadOnly(), pluginbinding.Compact())
+	return websearchReadOperation[websearch.SearchInput, websearch.SearchOutput](websearchOperationSearch, "Search the web through provider plugins.")
+}
+
+func websearchReadOperation[I any, O any](name, description string) core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[I, O](
+		name,
+		description,
+		pluginbinding.ReadOnly(),
+		pluginbinding.Compact(),
+		pluginbinding.Effects(core.OperationEffectRead, core.OperationEffectNetwork),
+		pluginbinding.Access(core.OperationAccessNetwork),
+		pluginbinding.Risk(core.OperationRiskLow),
+		pluginbinding.Idempotency(core.OperationIdempotent),
+	)
 }
 
 func websearchDatasourceSpec() core.DatasourceSpec {
-	return pluginbinding.TypedDatasourceSpec[websearch.SearchInput, websearch.DatasourceSearchResult](
-		websearchDatasource,
-		websearch.EntitySearchResult,
-		"Aggregated web search results.",
-		[]string{pluginbinding.CapabilitySearch},
-	)
+	return websearch.DatasourceSpec(websearchDatasource, "Aggregated web search results.")
 }
 
 func (s websearchBuiltinService) Providers(pluginbinding.Context, websearchNoInput) (websearch.ProviderListResult, error) {
 	providers := s.runner.websearchProviders(s.ctx)
 	return websearch.ProviderListResult{Providers: providers, Count: len(providers)}, nil
+}
+
+func (s websearchBuiltinService) Context(_ pluginbinding.Context, input pluginbinding.ContextBuildInput) (pluginbinding.ContextBuildResult, error) {
+	providers := s.runner.websearchProviders(s.ctx)
+	names := make([]string, 0, len(providers))
+	for _, provider := range providers {
+		names = append(names, provider.Name)
+	}
+	content := "Websearch aggregates provider plugins through provider discovery."
+	if len(names) > 0 {
+		content += " Available providers: " + strings.Join(names, ", ") + "."
+	} else {
+		content += " No provider plugins are currently available."
+	}
+	if query := strings.TrimSpace(input.Query); query != "" {
+		content += " Query: " + query + "."
+	}
+	return pluginbinding.ContextBuildResult{
+		Blocks: []core.ContextBlock{{
+			ID:       "websearch.context",
+			Kind:     pluginbinding.ContextKindText,
+			Title:    "Websearch context",
+			Content:  content,
+			Priority: 30,
+			Metadata: map[string]string{
+				"providers": strings.Join(names, ","),
+				"operation": websearchOperationSearch,
+			},
+		}},
+	}, nil
 }
 
 func (s websearchBuiltinService) Search(ctx pluginbinding.Context, input websearch.SearchInput) (websearch.SearchOutput, error) {

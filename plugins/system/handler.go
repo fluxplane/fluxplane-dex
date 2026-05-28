@@ -8,6 +8,7 @@ import (
 func NewPlugin() *pluginbinding.Plugin {
 	return pluginbinding.Define(manifestSpec(),
 		pluginbinding.RegisterOperation(infoSpec(), Info),
+		pluginbinding.RegisterContextProvider(contextSpec(), BuildContext),
 	)
 }
 

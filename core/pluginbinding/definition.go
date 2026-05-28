@@ -89,6 +89,12 @@ func RegisterDatasourceGet[I any, O any](spec core.DatasourceSpec, handler Datas
 	}
 }
 
+func RegisterContextProvider(spec core.ContextSpec, handler ContextProviderHandler) PluginOption {
+	return func(plugin *Plugin) {
+		ContextProvider(plugin, spec, handler)
+	}
+}
+
 func TypedOperationSpec[I any, O any](name, description string, options ...OperationSpecOption) core.OperationSpec {
 	spec := OperationSpec(name, description, options...)
 	if len(spec.Input) == 0 {
@@ -111,7 +117,7 @@ func TypedDatasourceSpec[I any, O any](name, entity, description string, capabil
 	if len(spec.Output) == 0 {
 		spec.Output = MustSchemaFor[O]()
 	}
-	return spec
+	return NormalizeDatasourceSpec(spec)
 }
 
 func NotImplementedOperation[I any, O any](message string) OperationHandler[I, O] {

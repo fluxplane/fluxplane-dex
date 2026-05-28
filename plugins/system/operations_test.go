@@ -1,9 +1,12 @@
 package system
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding/plugintest"
+	"github.com/fluxplane/fluxplane-dex/protocol"
 )
 
 func TestManifestDeclaresNoAuthDatasourcesOrIndexes(t *testing.T) {
@@ -23,6 +26,12 @@ func TestManifestDeclaresNoAuthDatasourcesOrIndexes(t *testing.T) {
 	}
 	if !manifest.Operations[0].ReadOnly || len(manifest.Operations[0].SecretPurposes) != 0 {
 		t.Fatalf("operation spec = %#v", manifest.Operations[0])
+	}
+	if manifest.Operations[0].Risk != core.OperationRiskLow || manifest.Operations[0].Idempotency != core.OperationIdempotent {
+		t.Fatalf("operation metadata = %#v", manifest.Operations[0])
+	}
+	if len(manifest.Context) != 1 || manifest.Context[0].Name != ContextName {
+		t.Fatalf("context = %#v", manifest.Context)
 	}
 }
 
@@ -89,5 +98,25 @@ func TestInfoNetworkShape(t *testing.T) {
 	}
 	if _, ok := network["interfaces"]; !ok {
 		t.Fatalf("network missing interfaces: %#v", network)
+	}
+}
+
+func TestBuildContext(t *testing.T) {
+	resp := NewPlugin().Handle(protocol.Request{
+		Command: protocol.CommandContextBuild,
+		Plugin:  PluginName,
+		Payload: []byte(`{"query":"debug"}`),
+	})
+	if !resp.OK {
+		t.Fatalf("context failed: %#v", resp.Error)
+	}
+	var result struct {
+		Blocks []core.ContextBlock `json:"blocks"`
+	}
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Blocks) != 1 || result.Blocks[0].Source == nil || result.Blocks[0].Source.Plugin != PluginName {
+		t.Fatalf("blocks = %#v", result.Blocks)
 	}
 }

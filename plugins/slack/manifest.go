@@ -52,8 +52,14 @@ func manifestSpec() pluginbinding.ManifestSpec {
 		)},
 		Operations: operationSpecs(),
 		IndexedDatasources: []pluginbinding.IndexedDatasourceSpec{
-			pluginbinding.IndexedDatasource(DatasourceChannels, EntityChannel, "Slack channels.", "Slack channel reverse lookup index.", pluginbinding.SearchableIndexCapabilities()...),
-			pluginbinding.IndexedDatasource(DatasourceUsers, EntityUser, "Slack users.", "Slack user reverse lookup index.", pluginbinding.SearchableIndexCapabilities()...),
+			pluginbinding.IndexedDatasourceWithOptions(DatasourceChannels, EntityChannel, "Slack channels.", "Slack channel reverse lookup index.", pluginbinding.SearchableIndexCapabilities(),
+				pluginbinding.EntitySchemaFor[ChannelRecord](),
+				pluginbinding.Fallback(core.DatasourceFallbackHostIndexFirst),
+			),
+			pluginbinding.IndexedDatasourceWithOptions(DatasourceUsers, EntityUser, "Slack users.", "Slack user reverse lookup index.", pluginbinding.SearchableIndexCapabilities(),
+				pluginbinding.EntitySchemaFor[UserRecord](),
+				pluginbinding.Fallback(core.DatasourceFallbackHostIndexFirst),
+			),
 		},
 		Context: []core.ContextSpec{
 			pluginbinding.ContextSpec(ContextName, "Slack context blocks.", pluginbinding.ContextKindText, pluginbinding.ContextKindReference),
@@ -71,19 +77,42 @@ func operationSpecs() []core.OperationSpec {
 }
 
 func indexBuildSpec() core.OperationSpec {
-	return pluginbinding.TypedOperationSpec[IndexBuildInput, pluginbinding.IndexBuildResult](OperationIndexBuild, "Build Slack channel and user indexes.", pluginbinding.ReadOnly(), pluginbinding.SecretPurposes(AuthPurposeUser, AuthPurposeBot))
+	return pluginbinding.TypedOperationSpec[IndexBuildInput, pluginbinding.IndexBuildResult](
+		OperationIndexBuild,
+		"Build Slack channel and user indexes.",
+		slackReadOptions(core.OperationConditional)...,
+	)
 }
 
 func messageSendSpec() core.OperationSpec {
-	return pluginbinding.TypedOperationSpec[MessageSendInput, MessageSendResult](OperationMessageSend, "Send a Slack message.", pluginbinding.SecretPurposes(AuthPurposeBot))
+	return pluginbinding.TypedOperationSpec[MessageSendInput, MessageSendResult](
+		OperationMessageSend,
+		"Send a Slack message.",
+		pluginbinding.SecretPurposes(AuthPurposeBot),
+		pluginbinding.Effects(core.OperationEffectWrite, core.OperationEffectNetwork),
+		pluginbinding.Access(core.OperationAccessAuth, core.OperationAccessSecret, core.OperationAccessNetwork),
+		pluginbinding.Risk(core.OperationRiskMedium),
+		pluginbinding.Idempotency(core.OperationNonIdempotent),
+	)
 }
 
 func searchSpec() core.OperationSpec {
-	return pluginbinding.TypedOperationSpec[SearchInput, SearchResult](OperationSearch, "Search Slack.", pluginbinding.ReadOnly(), pluginbinding.SecretPurposes(AuthPurposeUser, AuthPurposeBot))
+	return pluginbinding.TypedOperationSpec[SearchInput, SearchResult](OperationSearch, "Search Slack.", slackReadOptions(core.OperationIdempotent)...)
 }
 
 func threadSpec() core.OperationSpec {
-	return pluginbinding.TypedOperationSpec[ThreadInput, ThreadResult](OperationThread, "View a Slack thread.", pluginbinding.ReadOnly(), pluginbinding.SecretPurposes(AuthPurposeUser, AuthPurposeBot))
+	return pluginbinding.TypedOperationSpec[ThreadInput, ThreadResult](OperationThread, "View a Slack thread.", slackReadOptions(core.OperationIdempotent)...)
+}
+
+func slackReadOptions(idempotency core.OperationIdempotency) []pluginbinding.OperationSpecOption {
+	return []pluginbinding.OperationSpecOption{
+		pluginbinding.ReadOnly(),
+		pluginbinding.SecretPurposes(AuthPurposeUser, AuthPurposeBot),
+		pluginbinding.Effects(core.OperationEffectRead, core.OperationEffectNetwork),
+		pluginbinding.Access(core.OperationAccessAuth, core.OperationAccessSecret, core.OperationAccessNetwork),
+		pluginbinding.Risk(core.OperationRiskLow),
+		pluginbinding.Idempotency(idempotency),
+	}
 }
 
 func slackUsersLookupSpec() core.DatasourceSpec {

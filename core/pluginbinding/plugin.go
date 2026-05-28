@@ -13,11 +13,12 @@ import (
 )
 
 type Plugin struct {
-	manifest        core.PluginManifest
-	operations      map[string]operation
-	datasources     map[string][]datasourceHandler
-	commandHandlers map[string]CommandHandler
-	secretGetter    SecretGetter
+	manifest         core.PluginManifest
+	operations       map[string]operation
+	datasources      map[string][]datasourceHandler
+	contextProviders []contextProvider
+	commandHandlers  map[string]CommandHandler
+	secretGetter     SecretGetter
 }
 
 type Context struct {
@@ -35,6 +36,7 @@ type CommandHandler func(Context) protocol.Response
 
 type OperationHandler[I any, O any] func(Context, I) (O, error)
 type DatasourceHandler[I any, O any] func(Context, I) (O, error)
+type ContextProviderHandler func(Context, ContextBuildInput) (ContextBuildResult, error)
 
 type TextResult struct {
 	Text    string `json:"text,omitempty"`
@@ -57,6 +59,11 @@ type datasourceHandler interface {
 	Run(Context) protocol.Response
 }
 
+type contextProvider interface {
+	Spec() core.ContextSpec
+	Run(Context) protocol.Response
+}
+
 type typedOperation[I any, O any] struct {
 	spec    core.OperationSpec
 	handler OperationHandler[I, O]
@@ -67,13 +74,29 @@ type typedDatasource[I any, O any] struct {
 	handler DatasourceHandler[I, O]
 }
 
+type typedContextProvider struct {
+	spec    core.ContextSpec
+	handler ContextProviderHandler
+}
+
+type ContextBuildInput struct {
+	Query string   `json:"query,omitempty" jsonschema:"description=Context query."`
+	Kinds []string `json:"kinds,omitempty" jsonschema:"description=Optional context block kind filters."`
+	Limit int      `json:"limit,omitempty" jsonschema:"description=Maximum context blocks to return."`
+}
+
+type ContextBuildResult struct {
+	Blocks []core.ContextBlock `json:"blocks"`
+}
+
 func New(manifest core.PluginManifest) *Plugin {
 	return &Plugin{
-		manifest:        manifest,
-		operations:      map[string]operation{},
-		datasources:     map[string][]datasourceHandler{},
-		commandHandlers: map[string]CommandHandler{},
-		secretGetter:    DefaultSecretGetter,
+		manifest:         manifest,
+		operations:       map[string]operation{},
+		datasources:      map[string][]datasourceHandler{},
+		contextProviders: nil,
+		commandHandlers:  map[string]CommandHandler{},
+		secretGetter:     DefaultSecretGetter,
 	}
 }
 
@@ -94,6 +117,7 @@ func Operation[I any, O any](plugin *Plugin, spec core.OperationSpec, handler Op
 	if len(spec.Output) == 0 {
 		spec.Output = MustSchemaFor[O]()
 	}
+	spec = NormalizeOperationSpec(spec)
 	plugin.operations[spec.Name] = typedOperation[I, O]{spec: spec, handler: handler}
 	plugin.upsertOperation(spec)
 }
@@ -115,8 +139,23 @@ func DatasourceHandlerFor[I any, O any](plugin *Plugin, spec core.DatasourceSpec
 		spec.Output = MustSchemaFor[O]()
 	}
 	spec.Capabilities = ensureString(spec.Capabilities, capability)
+	spec = NormalizeDatasourceSpec(spec)
 	plugin.datasources[capability] = append(plugin.datasources[capability], typedDatasource[I, O]{spec: spec, handler: handler})
 	plugin.upsertDatasource(spec)
+}
+
+func ContextProvider(plugin *Plugin, spec core.ContextSpec, handler ContextProviderHandler) {
+	if plugin == nil {
+		return
+	}
+	if strings.TrimSpace(spec.Name) == "" {
+		panic("pluginbinding: context provider name is required")
+	}
+	if handler == nil {
+		panic("pluginbinding: context provider handler is required")
+	}
+	plugin.contextProviders = append(plugin.contextProviders, typedContextProvider{spec: spec, handler: handler})
+	plugin.upsertContext(spec)
 }
 
 func (p *Plugin) Command(command string, handler CommandHandler) {
@@ -201,7 +240,7 @@ func (p *Plugin) Handle(req protocol.Request) protocol.Response {
 	case protocol.CommandDatasourcesLookup:
 		return p.runDatasource(ctx, CapabilityLookup)
 	case protocol.CommandContextBuild:
-		return OKData(map[string]any{"blocks": []core.ContextBlock{}})
+		return p.runContext(ctx)
 	case protocol.CommandEndpointsDiscover:
 		return OKData(map[string]any{"candidates": []core.EndpointCandidate{}})
 	default:
@@ -211,8 +250,8 @@ func (p *Plugin) Handle(req protocol.Request) protocol.Response {
 
 func (p *Plugin) Manifest() core.PluginManifest {
 	manifest := p.manifest
-	manifest.Operations = append([]core.OperationSpec(nil), manifest.Operations...)
-	manifest.Datasources = append([]core.DatasourceSpec(nil), manifest.Datasources...)
+	manifest.Operations = normalizeOperationSpecs(manifest.Operations)
+	manifest.Datasources = normalizeDatasourceSpecs(manifest.Datasources)
 	return manifest
 }
 
@@ -283,6 +322,16 @@ func (p *Plugin) upsertDatasource(spec core.DatasourceSpec) {
 	p.manifest.Datasources = append(p.manifest.Datasources, spec)
 }
 
+func (p *Plugin) upsertContext(spec core.ContextSpec) {
+	for i := range p.manifest.Context {
+		if p.manifest.Context[i].Name == spec.Name {
+			p.manifest.Context[i] = mergeContextSpec(p.manifest.Context[i], spec)
+			return
+		}
+	}
+	p.manifest.Context = append(p.manifest.Context, spec)
+}
+
 func (p *Plugin) runDatasource(ctx Context, capability string) protocol.Response {
 	handlers := p.datasources[capability]
 	if len(handlers) == 0 {
@@ -293,6 +342,32 @@ func (p *Plugin) runDatasource(ctx Context, capability string) protocol.Response
 		return protocol.Fail("bad_payload", err.Error())
 	}
 	return handler.Run(ctx)
+}
+
+func (p *Plugin) runContext(ctx Context) protocol.Response {
+	input, err := DecodePayload[ContextBuildInput](ctx.Request.Payload)
+	if err != nil {
+		return protocol.Fail("bad_payload", err.Error())
+	}
+	if len(p.contextProviders) == 0 {
+		return protocol.OK(ContextBuildResult{Blocks: []core.ContextBlock{}})
+	}
+	var out ContextBuildResult
+	for _, provider := range p.contextProviders {
+		resp := provider.Run(Context{Request: ctx.Request, Cache: ctx.Cache, plugin: p})
+		if !resp.OK {
+			return resp
+		}
+		var result ContextBuildResult
+		if len(resp.Result) > 0 {
+			if err := json.Unmarshal(resp.Result, &result); err != nil {
+				return protocol.Fail("bad_payload", err.Error())
+			}
+		}
+		out.Blocks = append(out.Blocks, result.Blocks...)
+	}
+	out.Blocks = filterContextBlocks(out.Blocks, input)
+	return protocol.OK(out)
 }
 
 func (op typedOperation[I, O]) Spec() core.OperationSpec {
@@ -337,6 +412,46 @@ func (ds typedDatasource[I, O]) Run(ctx Context) protocol.Response {
 		return protocol.Fail("plugin_error", err.Error())
 	}
 	return protocol.OK(out)
+}
+
+func (provider typedContextProvider) Spec() core.ContextSpec {
+	return provider.spec
+}
+
+func (provider typedContextProvider) Run(ctx Context) protocol.Response {
+	input, err := DecodePayload[ContextBuildInput](ctx.Request.Payload)
+	if err != nil {
+		return protocol.Fail("bad_payload", err.Error())
+	}
+	out, err := provider.handler(ctx, input)
+	if err != nil {
+		var pluginErr Error
+		if errors.As(err, &pluginErr) {
+			return protocol.Fail(pluginErr.Code, pluginErr.Message)
+		}
+		return protocol.Fail("plugin_error", err.Error())
+	}
+	for i := range out.Blocks {
+		out.Blocks[i] = ctx.NormalizeContextBlock(out.Blocks[i])
+	}
+	if out.Blocks == nil {
+		out.Blocks = []core.ContextBlock{}
+	}
+	return protocol.OK(out)
+}
+
+func (ctx Context) NormalizeContextBlock(block core.ContextBlock) core.ContextBlock {
+	if strings.TrimSpace(block.Kind) == "" {
+		block.Kind = ContextKindText
+	}
+	if block.Source == nil {
+		plugin := strings.TrimSpace(ctx.Request.Plugin)
+		if plugin == "" && ctx.plugin != nil {
+			plugin = ctx.plugin.manifest.Name
+		}
+		block.Source = &core.ContextSource{Plugin: plugin, Instance: strings.TrimSpace(ctx.Request.Instance)}
+	}
+	return block
 }
 
 func DecodeCallInput[T any](call protocol.OperationCall) (T, error) {
@@ -483,7 +598,25 @@ func mergeOperationSpec(base, generated core.OperationSpec) core.OperationSpec {
 	if len(base.SecretPurposes) == 0 {
 		base.SecretPurposes = generated.SecretPurposes
 	}
-	return base
+	if len(base.Effects) == 0 {
+		base.Effects = generated.Effects
+	}
+	if base.Risk == "" {
+		base.Risk = generated.Risk
+	}
+	if base.Idempotency == "" {
+		base.Idempotency = generated.Idempotency
+	}
+	if len(base.Access) == 0 {
+		base.Access = generated.Access
+	}
+	if len(base.AuthScopes) == 0 {
+		base.AuthScopes = generated.AuthScopes
+	}
+	if base.Render == nil {
+		base.Render = generated.Render
+	}
+	return NormalizeOperationSpec(base)
 }
 
 func mergeDatasourceSpec(base, generated core.DatasourceSpec) core.DatasourceSpec {
@@ -500,7 +633,63 @@ func mergeDatasourceSpec(base, generated core.DatasourceSpec) core.DatasourceSpe
 	if len(base.Output) == 0 {
 		base.Output = generated.Output
 	}
+	if base.EntitySchema == nil {
+		base.EntitySchema = generated.EntitySchema
+	} else if generated.EntitySchema != nil {
+		schema := mergeEntitySchema(*base.EntitySchema, *generated.EntitySchema)
+		base.EntitySchema = &schema
+	}
+	base.Views = normalizeDatasourceViews(append(base.Views, generated.Views...))
+	base.Relations = normalizeDatasourceRelations(append(base.Relations, generated.Relations...))
+	if base.Fallback == "" {
+		base.Fallback = generated.Fallback
+	}
+	if base.Completion == nil {
+		base.Completion = generated.Completion
+	} else if generated.Completion != nil {
+		base.Completion.Fields = uniqueStringValues(append(base.Completion.Fields, generated.Completion.Fields...))
+		if base.Completion.Description == "" {
+			base.Completion.Description = generated.Completion.Description
+		}
+	}
+	return NormalizeDatasourceSpec(base)
+}
+
+func mergeContextSpec(base, generated core.ContextSpec) core.ContextSpec {
+	base.Name = firstNonEmpty(base.Name, generated.Name)
+	base.Description = firstNonEmpty(base.Description, generated.Description)
+	base.Kinds = mergeStrings(base.Kinds, generated.Kinds)
 	return base
+}
+
+func filterContextBlocks(blocks []core.ContextBlock, input ContextBuildInput) []core.ContextBlock {
+	if len(blocks) == 0 {
+		return []core.ContextBlock{}
+	}
+	allowedKinds := map[string]bool{}
+	for _, kind := range input.Kinds {
+		kind = strings.TrimSpace(kind)
+		if kind != "" {
+			allowedKinds[kind] = true
+		}
+	}
+	out := make([]core.ContextBlock, 0, len(blocks))
+	for _, block := range blocks {
+		if len(allowedKinds) > 0 && !allowedKinds[block.Kind] {
+			continue
+		}
+		out = append(out, block)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Priority != out[j].Priority {
+			return out[i].Priority > out[j].Priority
+		}
+		return out[i].ID < out[j].ID
+	})
+	if input.Limit > 0 && len(out) > input.Limit {
+		out = out[:input.Limit]
+	}
+	return out
 }
 
 func selectDatasourceHandler(payload json.RawMessage, handlers []datasourceHandler) (datasourceHandler, error) {

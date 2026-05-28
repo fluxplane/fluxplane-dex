@@ -21,11 +21,11 @@ type User struct {
 
 type UserRecord struct {
 	pluginbinding.DatasourceRecord
-	Title       string `json:"title,omitempty"`
-	UserID      string `json:"user_id"`
-	Name        string `json:"name,omitempty"`
-	RealName    string `json:"real_name,omitempty"`
-	DisplayName string `json:"display_name,omitempty"`
+	Title       string `json:"title,omitempty" datasource:"title,view=compact|lookup|table"`
+	UserID      string `json:"user_id" datasource:"id"`
+	Name        string `json:"name,omitempty" datasource:"completion,view=compact|lookup|table"`
+	RealName    string `json:"real_name,omitempty" datasource:"completion,view=compact|lookup|table"`
+	DisplayName string `json:"display_name,omitempty" datasource:"completion,view=compact|lookup|table"`
 	Email       string `json:"email,omitempty"`
 	TeamID      string `json:"team_id,omitempty"`
 	TZ          string `json:"tz,omitempty"`
@@ -53,9 +53,9 @@ type Channel struct {
 
 type ChannelRecord struct {
 	pluginbinding.DatasourceRecord
-	Title       string `json:"title,omitempty"`
-	ChannelID   string `json:"channel_id"`
-	Name        string `json:"name,omitempty"`
+	Title       string `json:"title,omitempty" datasource:"title,view=compact|lookup|table"`
+	ChannelID   string `json:"channel_id" datasource:"id"`
+	Name        string `json:"name,omitempty" datasource:"completion,view=compact|lookup|table"`
 	IsChannel   bool   `json:"is_channel,omitempty"`
 	IsGroup     bool   `json:"is_group,omitempty"`
 	IsPrivate   bool   `json:"is_private,omitempty"`

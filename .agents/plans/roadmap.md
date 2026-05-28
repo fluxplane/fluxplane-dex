@@ -18,6 +18,13 @@ Sources checked:
 
 Boundary rule: do not import code from legacy `~/projects/dex` or from `../fluxplane-core`. This repository is the replacement target for the legacy dex CLI surface and the old `fluxplane-core/plugins` implementations. Those repositories are source material only: inspect behavior, port concepts deliberately, and implement them in this repository's pluginbinding/runtime shape.
 
+Integration rule: `fluxplane-dex` should eventually become a
+`fluxplane-core` plugin contribution provider, but that is the last phase of
+this roadmap. Until then, contribution-provider concerns should not drive the
+shape of near-term plugin implementations. First build the local contracts,
+prove them with real plugins, and only then expose the resulting catalog to
+`fluxplane-core`.
+
 ## Current fluxplane-dex Plugin Surface
 
 Implemented or scaffolded now:
@@ -36,12 +43,15 @@ The vision and concepts documents frame `fluxplane-dex` as an engineering
 interface layer, not just a terminal command tree. That changes the order of
 work:
 
-1. Build the missing host contracts first.
+1. Build the local host contracts that dex itself needs.
 2. Stabilize the plugins that already exist against those contracts.
-3. Port broad integrations by composing datasources, typed operations, context,
+3. Prove endpoint discovery with a real plugin, starting with Prometheus.
+4. Port broad integrations by composing datasources, typed operations, context,
    endpoint discovery, and shortcuts.
-4. Preserve legacy ergonomics through CLI shortcuts without freezing the legacy
+5. Preserve legacy ergonomics through CLI shortcuts without freezing the legacy
    command tree into the protocol.
+6. Expose the final plugin/catalog surface as a `fluxplane-core` contribution
+   provider only after the local contracts are proven.
 
 The immediate implementation focus should be:
 - Operation metadata: effects, risk, idempotency, access requirements, and
@@ -49,11 +59,12 @@ The immediate implementation focus should be:
 - Datasource model: entity schemas, views, relations, provider fallback, and
   completion hints.
 - Endpoint model: discovery providers, registry entries, endpoint refs, and
-  secret refs.
+  secret refs, driven by the first real endpoint discovery use case.
 - Runtime model: host-owned network/process/browser/filesystem/environment
-  boundaries plus managed process handles.
+  boundaries plus managed process handles where local plugins need them.
 - Context model: dynamic context providers first; activation/operation sets once
-  operation metadata and context providers are stable.
+  operation metadata and context providers are stable and contribution-provider
+  needs are clearer.
 - Shortcut model: structured bindings from `dex gl ...`, `dex slack ...`, and
   similar commands to operation or datasource calls.
 
@@ -66,7 +77,17 @@ behavior and parity will become harder, not easier.
 These are the next implementation slices implied by the concepts document,
 vision, and roadmap. They are intentionally smaller than the broad P0 themes.
 
-### 1. Operation Metadata v1
+Current recommended order:
+1. Implement Shortcut Binding v1.
+2. Stabilize current plugins, especially Slack live behavior, GitLab read
+   coverage, and provider-neutral websearch hardening.
+3. Add the Prometheus plugin as the first endpoint discovery proof point.
+4. Reuse the endpoint model for Loki/Kubernetes/SQL/Homer after Prometheus
+   proves it.
+5. Keep `fluxplane-core` contribution-provider work as the final integration
+   phase.
+
+### 1. Operation Metadata v1 - Implemented
 
 Goal: make operations self-describing enough for humans, agents, and the host to
 reason about safety before broad write operations are added.
@@ -86,7 +107,7 @@ Acceptance:
 - Missing metadata has conservative defaults.
 - No plugin-specific safety logic is hardcoded in the host.
 
-### 2. Datasource Entity/View v1
+### 2. Datasource Entity/View v1 - Implemented
 
 Goal: make datasource reads a stable shared data model instead of only a list of
 named search handlers.
@@ -95,8 +116,8 @@ Scope:
 - Extend datasource specs with entity schema hints, view hints, relation hints,
   provider fallback behavior, and completion hints.
 - Add pluginbinding helpers and focused tests.
-- Apply the model first to system info, websearch results, GitLab indexed
-  records, and Slack indexed records.
+- Apply the model first to websearch results, GitLab indexed records, and Slack
+  indexed records. Keep system as operation/context only.
 - Keep `search`, `lookup`, `get`, and `index` as the current capability base.
 
 Acceptance:
@@ -124,7 +145,7 @@ Acceptance:
 - Shortcut failures surface the same structured errors as generic calls.
 - No plugin implementation needs Cobra command knowledge.
 
-### 4. Context Provider v1
+### 4. Context Provider v1 - Implemented
 
 Goal: let plugins produce prompt-ready context dynamically instead of only
 declaring static context specs.
@@ -141,23 +162,27 @@ Acceptance:
 - Context blocks include source identity and stable IDs.
 - Empty context is a successful empty result, not a protocol error.
 
-### 5. Endpoint Registry/Discovery v1
+### 5. Endpoint Discovery Proof Point
 
-Goal: create the shared endpoint model before Loki, Prometheus, Kubernetes, SQL,
-or Homer work begins.
+Goal: create the shared endpoint model through the first real endpoint
+discovery plugin instead of designing a registry without endpoints to discover.
 
 Scope:
+- Add a minimal Prometheus plugin focused on endpoint discovery, connection
+  test, labels, targets, alerts, and instant/range query.
 - Define endpoint refs, registry storage, endpoint candidate normalization, and
-  endpoint test/report shape.
+  endpoint test/report shape as Prometheus needs them.
 - Keep discovery providers separate from stored endpoint refs.
 - Add CLI inspection commands for endpoint candidates and registered endpoints.
-- Use system/static/manual endpoints first; avoid a large Kubernetes port in
-  this slice.
+- Use Prometheus cluster endpoint discovery as the proof point before Loki,
+  Kubernetes, SQL, or Homer depend on the endpoint registry.
 
 Acceptance:
 - Plugins can return endpoint candidates through the protocol.
 - The host can store and reference endpoint refs by stable ID.
 - Endpoint refs can carry secret refs without exposing secret material.
+- Prometheus can use discovered or registered endpoint refs for its read
+  operations.
 
 ### 6. Current Plugin Stabilization
 
@@ -177,8 +202,9 @@ Acceptance:
 - `operations.call_batch` and datasource search behave consistently across
   builtins and external plugins.
 
-Do not start Jira, Kubernetes, Loki, Prometheus, SQL, Homer, or GitHub as large
-ports before the relevant contract slice exists.
+Do not start Jira, Kubernetes, Loki, SQL, Homer, or GitHub as large ports before
+the relevant contract slice exists. Prometheus is the exception because it is
+the smallest useful endpoint discovery proof point.
 
 ## fluxplane-core Plugin Overlap Review
 
@@ -250,32 +276,40 @@ reference concepts ported or re-shaped locally before the larger integrations
 can be clean.
 
 Current local support:
-- Present: `PluginManifest`, typed operation schemas, auth methods/fields, basic datasource specs with capabilities, static context specs, endpoint specs, index specs, endpoint candidates, context blocks, typed pluginbinding handlers, batch calls, and secret purpose metadata.
+- Present: `PluginManifest`, typed operation schemas, operation safety/access metadata, auth methods/fields, datasource specs with capabilities/entities/views/relations/completion metadata, static context specs, dynamic context providers, endpoint specs, index specs, endpoint candidates, context blocks, typed pluginbinding handlers, batch calls, and secret purpose metadata.
 - Partial: marketplace command shortcuts, datasource search/get/lookup, host-owned indexes, builtin plugins, and live auth/secret resolution.
-- Missing: operation sets, activation sets, dynamic context providers, datasource views/relations, discovery providers, endpoint registry, structured auth-test reports, external identity, operation safety/access metadata, runtime system boundary, managed processes, observers/assertions, usage/events, and render metadata.
+- Missing for local parity: shortcut bindings, discovery providers, endpoint registry, structured auth-test reports, runtime system boundary, managed processes, and richer render metadata.
+- Deferred to contribution-provider phase: operation sets, activation sets,
+  external identity, observers/assertions as contribution facts, usage/events,
+  and catalog export shapes for `fluxplane-core`.
 
 Concepts to port into this repo:
-- Operation sets: named groups of operations for activation, shortcut discovery, and agent-facing tool selection.
-- Activation sets: bundles that activate operations, datasources, and context providers together, with aliases such as `channel`, `gitlab`, or `skills.default`.
 - Context providers: providers that can return text/data/reference blocks on demand, not only static manifest `ContextSpec` declarations.
 - Datasource entities and views: entity schemas, list/search/get/lookup/relation capabilities, view hints, relation includes, and provider-first/fallback search behavior.
 - Endpoint discovery: discovery providers that return endpoint candidates for products such as Loki, Prometheus, Homer, Kubernetes services, SQL databases, and maybe GitLab/Jira instances.
 - Endpoint registry: host-managed endpoint refs that plugins can consume instead of storing URLs repeatedly in plugin config.
 - Secret resolution: plugin-contributed secret resolvers, secret purpose metadata, auth scopes, and migration from legacy config/env shapes.
 - Auth testing: structured auth test reports per plugin, method, instance, check, status, message, and details.
-- External identity: plugin-owned lookup of provider identities for statusline, permissions, and "my" queries.
 - Operation semantics and access metadata: read/write/network/process/browser/file effects, risk, idempotency, auth-scope requirements, and target access descriptors.
 - Runtime system boundary: local abstractions for network, process, browser, filesystem/artifacts, environment, and human clarification so plugins do not call host IO directly.
 - Managed process handles: start/ensure/list/status/stop/output/wait primitives for port-forwards, log follows, and other long-running tasks.
-- Observers and assertions: environment observation hooks for Kubernetes, browser availability, identity/status facts, and derived capability availability.
-- Usage/events: lightweight event records for network bytes, request counts, costs, runtime facts, and statusline inputs.
 - Command/shortcut binding: structured mapping from legacy CLI shortcuts to operation or datasource calls without embedding command parsing inside plugin implementations.
 - Render metadata: compact/table/json/yaml hints owned by the host renderer, not ad hoc output formatting inside each plugin.
+- Contribution catalog: a final export surface that can present operations,
+  datasources, context providers, endpoint discovery, shortcut bindings,
+  activation bundles, identity facts, usage facts, observers/assertions, and
+  render hints to `fluxplane-core` without importing `fluxplane-core`.
 
 Immediate concept priority:
-- P0: operation semantics/access metadata, datasource entity/view model, endpoint registry/discovery, context providers, shortcut binding.
-- P1: auth test reports, secret resolution/migration, runtime system boundary, managed process handles.
-- P2: activation sets, external identity, observers/assertions, usage/events, richer render metadata.
+- P0: maintain operation semantics/access metadata, datasource entity/view model, and context providers; implement shortcut binding.
+- P1: Prometheus-driven endpoint registry/discovery, auth test reports,
+  secret resolution/migration, runtime system boundary, and managed process
+  handles.
+- P2: current plugin stabilization, richer render metadata, and high-value
+  daily workflow integrations.
+- Final phase: contribution catalog, operation sets, activation sets, external
+  identity, observers/assertions, usage/events, and other
+  `fluxplane-core`-facing export concerns.
 
 ### Relax Legacy Parity Where Core Is Better
 
@@ -721,23 +755,20 @@ The current plugin protocol can express operations, auth methods, datasources, c
 
 ## Execution Order
 
-### Phase 0: P0 Host Contracts
+### Phase 0: Local Contract Baseline
 
 1. Confirm and keep enforcing the source boundary: no imports from legacy dex or
    `fluxplane-core`; port selected behavior and concepts into this repo.
-2. Implement Operation Metadata v1 and apply it to the current plugin set.
-3. Implement Datasource Entity/View v1 and apply it to the current datasource
-   set.
+2. Maintain Operation Metadata v1 and require it for new write operations.
+3. Maintain Datasource Entity/View v1 and require metadata for new datasources.
 4. Implement Shortcut Binding v1 for GitLab and websearch shortcuts.
-5. Implement Context Provider v1 with system, GitLab, and websearch proof
-   points.
-6. Implement Endpoint Registry/Discovery v1 before observability and SQL plugin
-   work.
-7. Update protocol/runtime tests so builtins and external plugins behave the
+5. Extend Context Provider v1 beyond the system, GitLab, and websearch proof
+   points as plugins gain richer context.
+6. Update protocol/runtime tests so builtins and external plugins behave the
    same for success, failure, batch calls, auth grants, datasource errors, and
    metadata exposure.
-8. Defer operation/activation sets beyond simple grouping until operation
-   metadata and context providers are stable.
+7. Defer operation sets, activation sets, identity facts, usage events, and
+   contribution catalogs until the final contribution-provider phase.
 
 ### Phase 1: Stabilize Current Partial Plugins
 
@@ -751,10 +782,23 @@ The current plugin protocol can express operations, auth methods, datasources, c
    datasource behavior tests, and credential-gated live tests.
 5. Keep websearch provider-neutral while locally adding bounded concurrency,
    multi-query behavior, result rendering, and error aggregation semantics.
-6. Do not add broad write operations until Operation Metadata v1 is present for
+6. Do not add broad write operations without Operation Metadata v1 fields for
    their effect/risk/idempotency/access profile.
 
-### Phase 2: Port High-Value Daily Workflow Integrations
+### Phase 2: Prometheus and Endpoint Discovery Proof Point
+
+1. Add a Prometheus plugin with endpoint discovery, test, instant/range query,
+   labels, targets, and alerts.
+2. Implement Endpoint Registry/Discovery v1 from the Prometheus use case:
+   endpoint candidates, registered endpoint refs, endpoint health/test reports,
+   and secret refs.
+3. Add CLI inspection for discovered candidates and registered endpoints.
+4. Keep Kubernetes-assisted discovery narrow at first; only add the minimal
+   cluster endpoint discovery path needed to prove the endpoint model.
+5. Reuse the endpoint model later for Loki, Kubernetes, SQL/MySQL, Homer, and
+   any hosted product endpoints.
+
+### Phase 3: Port High-Value Daily Workflow Integrations
 
 1. Jira plugin: port the Atlassian auth pattern, issue search/create/comment,
    and issue/project datasource; then add view/my/lookup, transitions,
@@ -768,20 +812,17 @@ The current plugin protocol can express operations, auth methods, datasources, c
    search, full diff rendering, and any legacy-specific helpers not covered by
    the reference implementation.
 
-### Phase 3: Observability and Cluster Plugins
+### Phase 4: Observability and Cluster Plugins
 
 1. Kubernetes plugin: port the reference datasource inventory, endpoint
    discovery, observers, secret resolver, and port-forward operation; add pod
    logs and legacy context/namespace shortcuts.
 2. Loki plugin: port the reference test, labels, query, recent logs, datasource
    entities, endpoint discovery, and port-forward discovery behavior.
-3. Prometheus plugin: discover, test, instant/range query, labels, targets,
-   alerts. No reference overlap exists yet, but port/adapt the Loki/Kubernetes
-   discovery patterns.
-4. Add shared time parsing and endpoint discovery helpers to avoid each plugin
+3. Add shared time parsing and endpoint discovery helpers to avoid each plugin
    reimplementing legacy behavior.
 
-### Phase 4: Specialized and Local Tools
+### Phase 5: Specialized and Local Tools
 
 1. SQL/MySQL plugin: port the endpoint-ref read-only query model, then add
    legacy named datasource listing/migration.
@@ -793,7 +834,7 @@ The current plugin protocol can express operations, auth methods, datasources, c
    separately from legacy skills.sh install/search/show.
 5. Todo plugin: local store, CRUD, refs, statusline segment.
 
-### Phase 5: Host CLI Utilities
+### Phase 6: Host CLI Utilities
 
 1. Doctor: host command that validates plugin manifests, auth state, endpoints,
    external binaries, and known instances.
@@ -801,6 +842,34 @@ The current plugin protocol can express operations, auth methods, datasources, c
    config migration.
 3. Upgrade: host self-update command.
 4. Skills and Claude statusline: keep as host-level features unless plugin distribution or statusline segment composition benefits from the plugin protocol.
+
+### Phase 7: fluxplane-core Contribution Provider
+
+Goal: expose the mature `fluxplane-dex` plugin surface as a contribution source
+for `fluxplane-core` without importing `fluxplane-core` into this repository.
+
+Scope:
+- Define a local contribution catalog format that can describe plugins,
+  operations, datasources, context providers, endpoint discovery providers,
+  auth methods, shortcut bindings, render hints, and secret purposes.
+- Add operation sets only where a group is needed for activation, shortcut
+  discovery, or agent-facing tool selection.
+- Add activation sets only where operations, datasources, context providers,
+  and endpoint discovery need to be activated together.
+- Add external identity, observer/assertion, and usage/event contributions as
+  exported facts, not as prerequisites for ordinary plugin execution.
+- Provide a host command or builtin datasource that emits the contribution
+  catalog for `fluxplane-core` to consume.
+- Keep the integration boundary one-way: dex emits contribution data; no
+  `fluxplane-core` packages are imported here.
+
+Acceptance:
+- `fluxplane-dex` can enumerate its contribution catalog in a stable machine
+  readable form.
+- Each contribution record points back to local dex plugin manifests,
+  operations, datasources, contexts, endpoints, auth, and shortcuts.
+- `fluxplane-core` integration can be built as an adapter over that catalog
+  instead of a dependency inside this repo.
 
 ## Acceptance Criteria
 
@@ -810,3 +879,6 @@ The current plugin protocol can express operations, auth methods, datasources, c
 - Each plugin has manifest quality tests, operation handler tests, and at least one live-test path gated by credentials/config.
 - For read-only list/search/show operations, compact and JSON outputs are stable enough for agent use.
 - Legacy config migration is documented before old `~/.dex/config.json` users are expected to switch.
+- The final `fluxplane-core` integration consumes a dex contribution catalog;
+  it does not require importing legacy dex or `fluxplane-core` packages into
+  this repository.

@@ -21,6 +21,7 @@ func NewPluginWithService(service Service) *pluginbinding.Plugin {
 		pluginbinding.RegisterOperation(projectShowSpec(), service.ProjectShow),
 		pluginbinding.RegisterOperation(mergeRequestListSpec(), service.MergeRequestList),
 		pluginbinding.RegisterOperation(mergeRequestShowSpec(), service.MergeRequestShow),
+		pluginbinding.RegisterContextProvider(pluginbinding.ContextSpec(ContextName, "GitLab context blocks.", pluginbinding.ContextKindText, pluginbinding.ContextKindReference), BuildContext),
 		pluginbinding.RegisterDatasourceLookup(gitlabProjectsLookupSpec(), service.Lookup),
 		pluginbinding.RegisterDatasourceLookup(gitlabUsersLookupSpec(), service.Lookup),
 		pluginbinding.RegisterDatasourceLookup(gitlabGroupsLookupSpec(), service.Lookup),

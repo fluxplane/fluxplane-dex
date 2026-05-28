@@ -13,9 +13,9 @@ type User struct {
 
 type UserRecord struct {
 	pluginbinding.DatasourceRecord
-	UserID   int64  `json:"user_id"`
-	Username string `json:"username,omitempty"`
-	Name     string `json:"name,omitempty"`
+	UserID   int64  `json:"user_id" datasource:"id"`
+	Username string `json:"username,omitempty" datasource:"completion,view=compact|lookup|table"`
+	Name     string `json:"name,omitempty" datasource:"title,completion,view=compact|lookup|table"`
 	Email    string `json:"email,omitempty"`
 	State    string `json:"state,omitempty"`
 	WebURL   string `json:"web_url,omitempty"`
@@ -39,11 +39,11 @@ type GroupRecord struct {
 	GroupID     int64  `json:"group_id"`
 	Name        string `json:"name,omitempty"`
 	FullName    string `json:"full_name,omitempty"`
-	FullPath    string `json:"full_path,omitempty"`
+	FullPath    string `json:"full_path,omitempty" datasource:"id,title,completion,view=compact|lookup|table"`
 	Description string `json:"description,omitempty"`
 	Visibility  string `json:"visibility,omitempty"`
 	WebURL      string `json:"web_url,omitempty"`
-	ParentID    int64  `json:"parent_id,omitempty"`
+	ParentID    int64  `json:"parent_id,omitempty" datasource:"relation=gitlab.group:parent"`
 	CreatedAt   string `json:"created_at,omitempty"`
 }
 
@@ -68,9 +68,9 @@ type Project struct {
 type ProjectRecord struct {
 	pluginbinding.DatasourceRecord
 	ProjectID         int64    `json:"project_id"`
-	Name              string   `json:"name,omitempty"`
-	NameWithNamespace string   `json:"name_with_namespace,omitempty"`
-	PathWithNamespace string   `json:"path_with_namespace,omitempty"`
+	Name              string   `json:"name,omitempty" datasource:"completion,view=compact|lookup|table"`
+	NameWithNamespace string   `json:"name_with_namespace,omitempty" datasource:"title,completion,view=compact|lookup|table"`
+	PathWithNamespace string   `json:"path_with_namespace,omitempty" datasource:"id,completion,view=compact|lookup|table"`
 	DefaultBranch     string   `json:"default_branch,omitempty"`
 	Visibility        string   `json:"visibility,omitempty"`
 	WebURL            string   `json:"web_url,omitempty"`
@@ -98,8 +98,8 @@ type IssueRecord struct {
 	pluginbinding.DatasourceRecord
 	IssueID        int64    `json:"issue_id"`
 	IID            int64    `json:"iid"`
-	ProjectID      int64    `json:"project_id"`
-	Title          string   `json:"title,omitempty"`
+	ProjectID      int64    `json:"project_id" datasource:"relation=gitlab.project:project"`
+	Title          string   `json:"title,omitempty" datasource:"title,completion,view=compact|lookup|table"`
 	State          string   `json:"state,omitempty"`
 	WebURL         string   `json:"web_url,omitempty"`
 	AuthorUsername string   `json:"author_username,omitempty"`
@@ -130,8 +130,8 @@ type MergeRequestRecord struct {
 	pluginbinding.DatasourceRecord
 	MergeRequestID int64    `json:"merge_request_id"`
 	IID            int64    `json:"iid"`
-	ProjectID      int64    `json:"project_id"`
-	Title          string   `json:"title,omitempty"`
+	ProjectID      int64    `json:"project_id" datasource:"relation=gitlab.project:project"`
+	Title          string   `json:"title,omitempty" datasource:"title,completion,view=compact|lookup|table"`
 	State          string   `json:"state,omitempty"`
 	SourceBranch   string   `json:"source_branch,omitempty"`
 	TargetBranch   string   `json:"target_branch,omitempty"`

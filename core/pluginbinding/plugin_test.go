@@ -70,6 +70,18 @@ func TestPluginOperationBadInputReturnsProtocolError(t *testing.T) {
 	}
 }
 
+func TestPluginContextBadPayloadReturnsProtocolError(t *testing.T) {
+	plugin := Define(ManifestSpec{Name: "test"},
+		RegisterContextProvider(ContextSpec("test.context", "Test.", ContextKindText), func(Context, ContextBuildInput) (ContextBuildResult, error) {
+			return ContextBuildResult{}, nil
+		}),
+	)
+	resp := plugin.Handle(protocol.Request{Command: protocol.CommandContextBuild, Plugin: "test", Payload: []byte(`{"limit":"bad"}`)})
+	if resp.OK || resp.Error == nil || resp.Error.Code != "bad_payload" {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
 func TestPluginManifestIncludesGeneratedInputSchema(t *testing.T) {
 	plugin := newTestPlugin()
 	resp := plugin.Handle(request(t, protocol.CommandManifest, nil))

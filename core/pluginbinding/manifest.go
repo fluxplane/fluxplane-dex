@@ -10,6 +10,7 @@ const (
 
 	ContextKindText      = "text"
 	ContextKindReference = "reference"
+	ContextKindData      = "data"
 )
 
 type ManifestSpec struct {
@@ -36,13 +37,20 @@ type IndexedDatasourceSpec struct {
 	Description      string
 	IndexDescription string
 	Capabilities     []string
+	Options          []DatasourceSpecOption
 }
 
 func Manifest(spec ManifestSpec) core.PluginManifest {
-	datasources := append([]core.DatasourceSpec(nil), spec.Datasources...)
+	datasources := normalizeDatasourceSpecs(spec.Datasources)
 	indexes := append([]core.IndexSpec(nil), spec.Indexes...)
 	for _, indexed := range spec.IndexedDatasources {
-		datasources = append(datasources, Datasource(indexed.Name, indexed.Entity, indexed.Description, indexed.Capabilities...))
+		datasource := Datasource(indexed.Name, indexed.Entity, indexed.Description, indexed.Capabilities...)
+		for _, option := range indexed.Options {
+			if option != nil {
+				option(&datasource)
+			}
+		}
+		datasources = append(datasources, NormalizeDatasourceSpec(datasource))
 		indexDescription := indexed.IndexDescription
 		if indexDescription == "" {
 			indexDescription = indexed.Description
@@ -54,7 +62,7 @@ func Manifest(spec ManifestSpec) core.PluginManifest {
 		Version:     spec.Version,
 		Description: spec.Description,
 		Aliases:     append([]string(nil), spec.Aliases...),
-		Operations:  append([]core.OperationSpec(nil), spec.Operations...),
+		Operations:  normalizeOperationSpecs(spec.Operations),
 		Auth:        append([]core.AuthMethod(nil), spec.Auth...),
 		Datasources: datasources,
 		Context:     append([]core.ContextSpec(nil), spec.Context...),
@@ -81,12 +89,51 @@ func ReadOnly() OperationSpecOption {
 func Compact() OperationSpecOption {
 	return func(spec *core.OperationSpec) {
 		spec.Compact = true
+		if spec.Render == nil {
+			spec.Render = &core.OperationRenderSpec{Preferred: "compact", Formats: []string{"text", "compact", "json", "yaml"}}
+		}
 	}
 }
 
 func SecretPurposes(purposes ...string) OperationSpecOption {
 	return func(spec *core.OperationSpec) {
 		spec.SecretPurposes = append([]string(nil), purposes...)
+	}
+}
+
+func Effects(effects ...core.OperationEffect) OperationSpecOption {
+	return func(spec *core.OperationSpec) {
+		spec.Effects = append([]core.OperationEffect(nil), effects...)
+	}
+}
+
+func Risk(risk core.OperationRisk) OperationSpecOption {
+	return func(spec *core.OperationSpec) {
+		spec.Risk = risk
+	}
+}
+
+func Idempotency(idempotency core.OperationIdempotency) OperationSpecOption {
+	return func(spec *core.OperationSpec) {
+		spec.Idempotency = idempotency
+	}
+}
+
+func Access(access ...core.OperationAccess) OperationSpecOption {
+	return func(spec *core.OperationSpec) {
+		spec.Access = append([]core.OperationAccess(nil), access...)
+	}
+}
+
+func AuthScopes(scopes ...string) OperationSpecOption {
+	return func(spec *core.OperationSpec) {
+		spec.AuthScopes = append([]string(nil), scopes...)
+	}
+}
+
+func Render(preferred string, formats ...string) OperationSpecOption {
+	return func(spec *core.OperationSpec) {
+		spec.Render = &core.OperationRenderSpec{Preferred: preferred, Formats: append([]string(nil), formats...)}
 	}
 }
 
@@ -160,6 +207,17 @@ func IndexedDatasource(name, entity, description, indexDescription string, capab
 	}
 }
 
+func IndexedDatasourceWithOptions(name, entity, description, indexDescription string, capabilities []string, options ...DatasourceSpecOption) IndexedDatasourceSpec {
+	return IndexedDatasourceSpec{
+		Name:             name,
+		Entity:           entity,
+		Description:      description,
+		IndexDescription: indexDescription,
+		Capabilities:     append([]string(nil), capabilities...),
+		Options:          append([]DatasourceSpecOption(nil), options...),
+	}
+}
+
 func SearchableIndexCapabilities() []string {
 	return []string{CapabilitySearch, CapabilityLookup, CapabilityGet, CapabilityIndex}
 }
@@ -186,6 +244,130 @@ func cloneStringMap(input map[string]string) map[string]string {
 	out := make(map[string]string, len(input))
 	for key, value := range input {
 		out[key] = value
+	}
+	return out
+}
+
+func normalizeOperationSpecs(specs []core.OperationSpec) []core.OperationSpec {
+	out := make([]core.OperationSpec, 0, len(specs))
+	for _, spec := range specs {
+		out = append(out, NormalizeOperationSpec(spec))
+	}
+	return out
+}
+
+func NormalizeOperationSpec(spec core.OperationSpec) core.OperationSpec {
+	spec.Effects = uniqueOperationEffects(spec.Effects)
+	spec.Access = uniqueOperationAccess(spec.Access)
+	spec.AuthScopes = uniqueStringValues(spec.AuthScopes)
+	spec.SecretPurposes = uniqueStringValues(spec.SecretPurposes)
+	if len(spec.Effects) == 0 {
+		if spec.ReadOnly {
+			spec.Effects = []core.OperationEffect{core.OperationEffectRead}
+		} else {
+			spec.Effects = []core.OperationEffect{core.OperationEffectWrite}
+		}
+	}
+	if spec.Risk == "" {
+		if spec.ReadOnly {
+			spec.Risk = core.OperationRiskLow
+		} else {
+			spec.Risk = core.OperationRiskMedium
+		}
+	}
+	if spec.Idempotency == "" {
+		if spec.ReadOnly {
+			spec.Idempotency = core.OperationIdempotent
+		} else {
+			spec.Idempotency = core.OperationUnknown
+		}
+	}
+	for _, effect := range spec.Effects {
+		switch effect {
+		case core.OperationEffectNetwork:
+			spec.Access = ensureOperationAccess(spec.Access, core.OperationAccessNetwork)
+		case core.OperationEffectProcess:
+			spec.Access = ensureOperationAccess(spec.Access, core.OperationAccessProcess)
+		case core.OperationEffectBrowser:
+			spec.Access = ensureOperationAccess(spec.Access, core.OperationAccessBrowser)
+		case core.OperationEffectFilesystem:
+			spec.Access = ensureOperationAccess(spec.Access, core.OperationAccessFilesystem)
+		case core.OperationEffectLocalSystem:
+			spec.Access = ensureOperationAccess(spec.Access, core.OperationAccessLocalSystem)
+		}
+	}
+	if len(spec.SecretPurposes) > 0 {
+		spec.Access = ensureOperationAccess(spec.Access, core.OperationAccessSecret)
+		spec.Access = ensureOperationAccess(spec.Access, core.OperationAccessAuth)
+	}
+	if len(spec.Access) == 0 {
+		spec.Access = []core.OperationAccess{core.OperationAccessNone}
+	} else if len(spec.Access) > 1 {
+		spec.Access = removeOperationAccess(spec.Access, core.OperationAccessNone)
+	}
+	if spec.Render == nil && spec.Compact {
+		spec.Render = &core.OperationRenderSpec{Preferred: "compact", Formats: []string{"text", "compact", "json", "yaml"}}
+	}
+	if spec.Render != nil {
+		spec.Render.Formats = uniqueStringValues(spec.Render.Formats)
+	}
+	return spec
+}
+
+func uniqueStringValues(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func uniqueOperationEffects(values []core.OperationEffect) []core.OperationEffect {
+	seen := map[core.OperationEffect]bool{}
+	var out []core.OperationEffect
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func uniqueOperationAccess(values []core.OperationAccess) []core.OperationAccess {
+	seen := map[core.OperationAccess]bool{}
+	var out []core.OperationAccess
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func ensureOperationAccess(values []core.OperationAccess, candidate core.OperationAccess) []core.OperationAccess {
+	for _, value := range values {
+		if value == candidate {
+			return values
+		}
+	}
+	return append(values, candidate)
+}
+
+func removeOperationAccess(values []core.OperationAccess, candidate core.OperationAccess) []core.OperationAccess {
+	out := values[:0]
+	for _, value := range values {
+		if value != candidate {
+			out = append(out, value)
+		}
 	}
 	return out
 }

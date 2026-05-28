@@ -55,9 +55,9 @@ type SearchError struct {
 
 type SearchRecord struct {
 	pluginbinding.DatasourceRecord
-	URL      string  `json:"url,omitempty"`
-	Snippet  string  `json:"snippet,omitempty"`
-	Provider string  `json:"provider,omitempty"`
+	URL      string  `json:"url,omitempty" datasource:"id,completion,view=compact|lookup|table"`
+	Snippet  string  `json:"snippet,omitempty" datasource:"view=compact|lookup"`
+	Provider string  `json:"provider,omitempty" datasource:"completion,view=compact|table"`
 	Score    float64 `json:"score,omitempty"`
 }
 
@@ -123,7 +123,14 @@ func ProviderOperationSpec(spec ProviderSpec) core.OperationSpec {
 	return pluginbinding.TypedOperationSpec[SearchInput, SearchOutput](
 		spec.Operation,
 		firstNonEmpty(spec.OperationDescription, "Search the web with "+spec.Name+"."),
-		append([]pluginbinding.OperationSpecOption{pluginbinding.ReadOnly(), pluginbinding.Compact()}, secretPurposeOptions(spec.SecretPurposes)...)...,
+		append([]pluginbinding.OperationSpecOption{
+			pluginbinding.ReadOnly(),
+			pluginbinding.Compact(),
+			pluginbinding.Effects(core.OperationEffectRead, core.OperationEffectNetwork),
+			pluginbinding.Access(core.OperationAccessNetwork),
+			pluginbinding.Risk(core.OperationRiskLow),
+			pluginbinding.Idempotency(core.OperationIdempotent),
+		}, secretPurposeOptions(spec.SecretPurposes)...)...,
 	)
 }
 
@@ -252,7 +259,11 @@ func secretPurposeOptions(purposes []string) []pluginbinding.OperationSpecOption
 }
 
 func DatasourceSpec(name, description string, secretPurposes ...string) core.DatasourceSpec {
-	options := []pluginbinding.DatasourceSpecOption{}
+	options := []pluginbinding.DatasourceSpecOption{
+		pluginbinding.EntitySchemaFor[SearchRecord](),
+		pluginbinding.EntitySchema(core.DatasourceEntitySchema{IDField: "url", TitleField: "title"}),
+		pluginbinding.Fallback(core.DatasourceFallbackProviderFirst),
+	}
 	if len(secretPurposes) > 0 {
 		options = append(options, pluginbinding.DatasourceSecretPurposes(secretPurposes...))
 	}

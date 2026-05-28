@@ -204,6 +204,22 @@ func newOpCommand(opts *options) *cobra.Command {
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
+		Use:   "show NAME",
+		Short: "Show one operation",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			operation, err := findOperationSpec(cmd.Context(), runner, args[0])
+			if err != nil {
+				return err
+			}
+			return renderValue(cmd.OutOrStdout(), opts.output, operation)
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
 		Use:   "run NAME [JSON|-]",
 		Short: "Run one operation",
 		Args:  cobra.RangeArgs(1, 2),
@@ -963,6 +979,33 @@ func pluginManifest(ctx context.Context, runner runtime.Runner, plugin string) (
 		return core.PluginManifest{}, err
 	}
 	return manifest, nil
+}
+
+func findOperationSpec(ctx context.Context, runner runtime.Runner, name string) (core.OperationSpec, error) {
+	plugin := strings.TrimSpace(strings.SplitN(name, ".", 2)[0])
+	if plugin != "" && plugin != name {
+		manifest, err := pluginManifest(ctx, runner, plugin)
+		if err == nil {
+			for _, operation := range manifest.Operations {
+				if operation.Name == name {
+					return operation, nil
+				}
+			}
+			return core.OperationSpec{}, fmt.Errorf("unknown operation %q", name)
+		}
+	}
+	for _, entry := range runner.Marketplace.Plugins() {
+		manifest, err := pluginManifest(ctx, runner, entry.Name)
+		if err != nil {
+			continue
+		}
+		for _, operation := range manifest.Operations {
+			if operation.Name == name {
+				return operation, nil
+			}
+		}
+	}
+	return core.OperationSpec{}, fmt.Errorf("unknown operation %q", name)
 }
 
 func manifestHasDatasourceCapability(manifest core.PluginManifest, capability string) bool {

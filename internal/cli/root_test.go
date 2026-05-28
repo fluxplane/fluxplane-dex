@@ -67,6 +67,55 @@ func TestSystemInfoCommandFiltersCategories(t *testing.T) {
 	}
 }
 
+func TestOperationShowIncludesMetadata(t *testing.T) {
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "--dev-plugin", "system=../../plugins/system", "op", "show", "system.info", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var result core.OperationSpec
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Name != "system.info" || result.Risk != core.OperationRiskLow || result.Idempotency != core.OperationIdempotent {
+		t.Fatalf("operation = %#v", result)
+	}
+	if len(result.Effects) == 0 || result.Effects[0] != core.OperationEffectRead {
+		t.Fatalf("effects = %#v", result.Effects)
+	}
+}
+
+func TestContextCommandReturnsBlocks(t *testing.T) {
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "--dev-plugin", "system=../../plugins/system", "context", "debug host", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"blocks"`)) || !bytes.Contains(out.Bytes(), []byte(`"plugin": "system"`)) {
+		t.Fatalf("context output missing block/source:\n%s", out.String())
+	}
+}
+
+func TestPluginShowIncludesDatasourceMetadata(t *testing.T) {
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "--dev-plugin", "gitlab=../../plugins/gitlab", "plugin", "show", "gitlab", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"entity_schema"`)) || !bytes.Contains(out.Bytes(), []byte(`"fallback": "host_index_first"`)) {
+		t.Fatalf("plugin show missing datasource metadata:\n%s", out.String())
+	}
+}
+
 func TestWebsearchCommandSurfacesOperationFailure(t *testing.T) {
 	cmd := NewRootCommand()
 	var out bytes.Buffer

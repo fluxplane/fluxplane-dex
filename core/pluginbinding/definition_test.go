@@ -31,6 +31,39 @@ func TestDefineRegistersOperationAndSchema(t *testing.T) {
 	if len(operation.Input) == 0 || len(operation.Output) == 0 {
 		t.Fatalf("schemas were not generated: %#v", operation)
 	}
+	if operation.Risk != core.OperationRiskLow || operation.Idempotency != core.OperationIdempotent {
+		t.Fatalf("operation metadata defaults = %#v", operation)
+	}
+	if !containsOperationAccess(operation.Access, core.OperationAccessSecret) || !containsOperationAccess(operation.Access, core.OperationAccessAuth) {
+		t.Fatalf("operation access = %#v", operation.Access)
+	}
+}
+
+func TestOperationMetadataHelpers(t *testing.T) {
+	spec := TypedOperationSpec[struct{}, definitionOKOutput](
+		"test.write",
+		"Write.",
+		Effects(core.OperationEffectWrite, core.OperationEffectNetwork),
+		Access(core.OperationAccessNetwork),
+		Risk(core.OperationRiskHigh),
+		Idempotency(core.OperationNonIdempotent),
+		AuthScopes("write:things"),
+		Render("json", "json", "yaml"),
+	)
+	manifest := Manifest(ManifestSpec{Name: "test", Operations: []core.OperationSpec{spec}})
+	operation := manifest.Operations[0]
+	if operation.Risk != core.OperationRiskHigh || operation.Idempotency != core.OperationNonIdempotent {
+		t.Fatalf("metadata = %#v", operation)
+	}
+	if len(operation.Effects) != 2 || operation.Effects[0] != core.OperationEffectWrite || operation.Effects[1] != core.OperationEffectNetwork {
+		t.Fatalf("effects = %#v", operation.Effects)
+	}
+	if len(operation.AuthScopes) != 1 || operation.AuthScopes[0] != "write:things" {
+		t.Fatalf("auth scopes = %#v", operation.AuthScopes)
+	}
+	if operation.Render == nil || operation.Render.Preferred != "json" || len(operation.Render.Formats) != 2 {
+		t.Fatalf("render = %#v", operation.Render)
+	}
 }
 
 func TestDefineRegistersDatasourceAndSchema(t *testing.T) {
@@ -56,6 +89,83 @@ func TestDefineRegistersDatasourceAndSchema(t *testing.T) {
 	manifest := plugin.Manifest()
 	if len(manifest.Datasources) != 1 || len(manifest.Datasources[0].Input) == 0 || len(manifest.Datasources[0].Output) == 0 {
 		t.Fatalf("datasource schema missing: %#v", manifest.Datasources)
+	}
+}
+
+func TestDatasourceMetadataHelpersAndTags(t *testing.T) {
+	type taggedRecord struct {
+		ID        string `json:"id" datasource:"id,completion,view=compact|lookup"`
+		Title     string `json:"title,omitempty" datasource:"title,completion,view=compact|table"`
+		ProjectID int64  `json:"project_id,omitempty" datasource:"relation=test.project:project"`
+	}
+	spec := TypedDatasourceSpec[DatasourceSearchInput, DatasourceSearchResult[taggedRecord]](
+		"test.items",
+		"test.item",
+		"Test items.",
+		[]string{CapabilitySearch},
+		EntitySchemaFor[taggedRecord](),
+		View("detail", "Detail view.", "id", "title", "project_id"),
+		Fallback(core.DatasourceFallbackProviderFirst),
+	)
+	if spec.EntitySchema == nil || spec.EntitySchema.Entity != "test.item" {
+		t.Fatalf("entity schema = %#v", spec.EntitySchema)
+	}
+	if spec.EntitySchema.IDField != "id" || spec.EntitySchema.TitleField != "title" {
+		t.Fatalf("entity id/title = %#v", spec.EntitySchema)
+	}
+	if spec.Fallback != core.DatasourceFallbackProviderFirst {
+		t.Fatalf("fallback = %q", spec.Fallback)
+	}
+	if spec.Completion == nil || len(spec.Completion.Fields) != 2 {
+		t.Fatalf("completion = %#v", spec.Completion)
+	}
+	if !hasDatasourceView(spec.Views, "compact", "id") || !hasDatasourceView(spec.Views, "detail", "project_id") {
+		t.Fatalf("views = %#v", spec.Views)
+	}
+	if len(spec.Relations) != 1 || spec.Relations[0].Entity != "test.project" || spec.Relations[0].Field != "project_id" {
+		t.Fatalf("relations = %#v", spec.Relations)
+	}
+}
+
+func TestDefineRegistersContextProvider(t *testing.T) {
+	spec := ContextSpec("test.context", "Test context.", ContextKindText)
+	plugin := Define(ManifestSpec{Name: "test"},
+		RegisterContextProvider(spec, func(_ Context, input ContextBuildInput) (ContextBuildResult, error) {
+			return ContextBuildResult{Blocks: []core.ContextBlock{{
+				ID:      "one",
+				Title:   "One",
+				Content: input.Query,
+			}}}, nil
+		}),
+	)
+	resp := plugin.Handle(request(t, protocol.CommandContextBuild, map[string]any{"query": "hello"}))
+	if !resp.OK {
+		t.Fatalf("context build failed: %#v", resp.Error)
+	}
+	var result ContextBuildResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Blocks) != 1 || result.Blocks[0].Content != "hello" || result.Blocks[0].Kind != ContextKindText {
+		t.Fatalf("blocks = %#v", result.Blocks)
+	}
+	if result.Blocks[0].Source == nil || result.Blocks[0].Source.Plugin != "test" {
+		t.Fatalf("source = %#v", result.Blocks[0].Source)
+	}
+}
+
+func TestDefaultContextProviderReturnsEmptyBlocks(t *testing.T) {
+	plugin := Define(ManifestSpec{Name: "test"})
+	resp := plugin.Handle(request(t, protocol.CommandContextBuild, map[string]any{"query": "hello"}))
+	if !resp.OK {
+		t.Fatalf("context build failed: %#v", resp.Error)
+	}
+	var result ContextBuildResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Blocks) != 0 {
+		t.Fatalf("blocks = %#v", result.Blocks)
 	}
 }
 
@@ -137,4 +247,27 @@ func TestNotImplementedOperationReturnsCallSpecificError(t *testing.T) {
 	if !strings.Contains(resp.Error.Message, "test.todo") || !strings.Contains(resp.Error.Message, "requires migration") {
 		t.Fatalf("message = %q", resp.Error.Message)
 	}
+}
+
+func containsOperationAccess(values []core.OperationAccess, candidate core.OperationAccess) bool {
+	for _, value := range values {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDatasourceView(views []core.DatasourceViewSpec, name, field string) bool {
+	for _, view := range views {
+		if view.Name != name {
+			continue
+		}
+		for _, candidate := range view.Fields {
+			if candidate == field {
+				return true
+			}
+		}
+	}
+	return false
 }

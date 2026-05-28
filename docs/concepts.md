@@ -109,7 +109,7 @@ results, system facts, Jira issues, Kubernetes pods, Loki log entries, and
 Confluence pages.
 
 Current datasource capabilities include `search`, `lookup`, `get`, and `index`.
-The roadmap expands datasources with entity schemas, views, relations, provider
+Datasource specs also describe entity schemas, views, relations, provider
 fallback behavior, and completion hints.
 
 ## Entity
@@ -121,7 +121,6 @@ Examples:
 - `gitlab.merge_request`
 - `slack.user`
 - `websearch.result`
-- `system.info`
 - `jira.issue`
 - `kubernetes.pod`
 
@@ -159,9 +158,8 @@ files as the contract.
 
 Context is prompt-ready information contributed by plugins.
 
-Today plugins can declare static context specs and the protocol can return
-context blocks. The target model is dynamic context providers: a plugin should be
-able to produce text, data, and reference blocks on demand for a workspace,
+Plugins can declare static context specs and register dynamic context providers.
+A provider returns text, data, and reference blocks on demand for a workspace,
 channel, project, incident, endpoint, or agent task.
 
 ## Endpoint
@@ -298,18 +296,18 @@ Implemented today:
 - plugins and manifests
 - marketplace entries
 - operations and batch operations
+- operation effects/risk/idempotency/access metadata
 - auth methods and scoped secret purposes
 - datasource search/get/lookup
-- context specs and endpoint specs
+- datasource entity schemas, views, relations, fallback, and completion hints
+- context specs and dynamic context providers
+- endpoint specs
 - index specs and host-owned indexes
 - builtin plugins
 - command shortcuts
 
 Planned or partial:
-- operation effects/risk/access metadata
-- datasource entity schemas, views, relations, and completion hints
 - endpoint registry and endpoint refs
-- dynamic context providers
 - operation sets and activation sets
 - structured auth test reports
 - plugin-contributed secret resolvers

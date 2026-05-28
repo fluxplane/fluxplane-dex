@@ -232,7 +232,12 @@ func newShortcutPrefixCommand(prefix string, opts *options) *cobra.Command {
 	cmd.Flags().String("context", "", "Kubernetes context")
 	cmd.Flags().String("name", "", "Resource name")
 	cmd.Flags().String("query", "", "Search query")
+	cmd.Flags().String("container", "", "Container name")
 	cmd.Flags().Int("limit", 0, "Maximum records")
+	cmd.Flags().Int64("tail-lines", 0, "Log lines to return")
+	cmd.Flags().Int64("limit-bytes", 0, "Maximum log bytes to return")
+	cmd.Flags().Bool("previous", false, "Return previous container logs")
+	cmd.Flags().Bool("timestamps", false, "Include log timestamps")
 	return cmd
 }
 
@@ -1038,7 +1043,7 @@ func shortcutFlagsFromCommand(cmd *cobra.Command) map[string]any {
 		value, _ := cmd.Flags().GetString("endpoint-ref")
 		setShortcutInputValue(flags, "endpoint", value)
 	}
-	for _, name := range []string{"namespace", "context", "name", "query"} {
+	for _, name := range []string{"namespace", "context", "name", "query", "container"} {
 		if cmd.Flags().Changed(name) {
 			value, _ := cmd.Flags().GetString(name)
 			setShortcutInputValue(flags, name, value)
@@ -1047,6 +1052,18 @@ func shortcutFlagsFromCommand(cmd *cobra.Command) map[string]any {
 	if cmd.Flags().Changed("limit") {
 		value, _ := cmd.Flags().GetInt("limit")
 		flags["limit"] = value
+	}
+	for _, name := range []string{"tail-lines", "limit-bytes"} {
+		if cmd.Flags().Changed(name) {
+			value, _ := cmd.Flags().GetInt64(name)
+			flags[shortcutFieldName(name)] = value
+		}
+	}
+	for _, name := range []string{"previous", "timestamps"} {
+		if cmd.Flags().Changed(name) {
+			value, _ := cmd.Flags().GetBool(name)
+			flags[shortcutFieldName(name)] = value
+		}
 	}
 	return flags
 }
@@ -1115,6 +1132,13 @@ func parseShortcutArgs(args []string) ([]string, map[string]any, error) {
 				}
 				i++
 				value = args[i]
+			}
+			if name == "previous" || name == "timestamps" {
+				parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+				if err == nil {
+					flags[name] = parsed
+					continue
+				}
 			}
 			setShortcutInputValue(flags, name, strings.TrimSpace(value))
 			continue
@@ -1201,6 +1225,13 @@ func setShortcutInputValue(input map[string]any, name, value string) {
 			return
 		}
 		input["limit"] = strings.TrimSpace(value)
+	case "tail_lines", "limit_bytes":
+		n, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		if err == nil {
+			input[name] = n
+			return
+		}
+		input[name] = strings.TrimSpace(value)
 	default:
 		input[name] = strings.TrimSpace(value)
 	}

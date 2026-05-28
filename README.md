@@ -92,6 +92,8 @@ Use Kubernetes inventory shortcuts:
 ```bash
 dex kube svc ls --endpoint dev-kubernetes --namespace latest
 dex kube pod ls --endpoint dev-kubernetes --namespace latest --query api
+dex kube pod logs latest/api-123 --endpoint dev-kubernetes --tail-lines 50
+dex kube deploy ls --endpoint dev-kubernetes --namespace latest
 ```
 
 ## Current Status
@@ -109,7 +111,8 @@ This project is actively being built. The current surface includes:
 - `duckduckgo`: web search provider without auth.
 - `websearch`: builtin generic search aggregator over web search providers.
 - `kubernetes`: kubeconfig context discovery, cluster endpoint health probes,
-  namespace/service/pod inventory, executable inventory shortcuts, and
+  namespace/service/pod/deployment inventory, bounded pod logs, executable
+  inventory shortcuts, and
   in-cluster endpoint discovery.
 - `sql`: read-only MySQL, PostgreSQL, and SQLite queries through URLs, DSNs, or
   registered endpoint refs.

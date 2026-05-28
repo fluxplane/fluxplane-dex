@@ -15,6 +15,7 @@ import (
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/protocol"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -27,6 +28,8 @@ type Service struct {
 	Namespaces   func(context.Context, InventoryInput) ([]corev1.Namespace, error)
 	Services     func(context.Context, EndpointDiscoverInput) ([]corev1.Service, error)
 	Pods         func(context.Context, InventoryInput) ([]corev1.Pod, error)
+	Deployments  func(context.Context, InventoryInput) ([]appsv1.Deployment, error)
+	Logs         func(context.Context, PodLogsInput) (PodLogsResult, error)
 	Secrets      func(context.Context, EndpointDiscoverInput) ([]corev1.Secret, error)
 }
 
@@ -112,6 +115,45 @@ type PodRecord struct {
 	CreatedAt  string            `json:"created_at,omitempty"`
 }
 
+type DeploymentRecord struct {
+	pluginbinding.DatasourceRecord
+	Name              string            `json:"name"`
+	Namespace         string            `json:"namespace"`
+	Replicas          int32             `json:"replicas"`
+	ReadyReplicas     int32             `json:"ready_replicas"`
+	AvailableReplicas int32             `json:"available_replicas"`
+	UpdatedReplicas   int32             `json:"updated_replicas"`
+	Strategy          string            `json:"strategy,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	CreatedAt         string            `json:"created_at,omitempty"`
+}
+
+type PodLogsInput struct {
+	EndpointRef string `json:"endpoint_ref,omitempty" jsonschema:"description=Registered Kubernetes cluster endpoint ref resolved by the host."`
+	URL         string `json:"url,omitempty" jsonschema:"description=Kubernetes endpoint URL."`
+	Context     string `json:"context,omitempty" jsonschema:"description=Kubeconfig context override."`
+	Namespace   string `json:"namespace,omitempty" jsonschema:"description=Pod namespace."`
+	Name        string `json:"name,omitempty" jsonschema:"description=Pod name."`
+	Container   string `json:"container,omitempty" jsonschema:"description=Container name. Empty uses Kubernetes default selection."`
+	TailLines   int64  `json:"tail_lines,omitempty" jsonschema:"description=Number of lines to return. Defaults to 100 and is capped at 1000."`
+	LimitBytes  int64  `json:"limit_bytes,omitempty" jsonschema:"description=Maximum bytes to return. Values above 1048576 are capped."`
+	Previous    bool   `json:"previous,omitempty" jsonschema:"description=Return previous terminated container logs."`
+	Timestamps  bool   `json:"timestamps,omitempty" jsonschema:"description=Include Kubernetes log timestamps."`
+}
+
+type PodLogsResult struct {
+	Namespace  string   `json:"namespace"`
+	Name       string   `json:"name"`
+	Container  string   `json:"container,omitempty"`
+	Lines      []string `json:"lines"`
+	Text       string   `json:"text,omitempty"`
+	LineCount  int      `json:"line_count"`
+	TailLines  int64    `json:"tail_lines,omitempty"`
+	LimitBytes int64    `json:"limit_bytes,omitempty"`
+	Previous   bool     `json:"previous,omitempty"`
+	Timestamps bool     `json:"timestamps,omitempty"`
+}
+
 type NamespaceListResult struct {
 	Count      int               `json:"count"`
 	Namespaces []NamespaceRecord `json:"namespaces"`
@@ -133,6 +175,15 @@ type PodListResult struct {
 
 type PodShowResult struct {
 	Pod PodRecord `json:"pod"`
+}
+
+type DeploymentListResult struct {
+	Count       int                `json:"count"`
+	Deployments []DeploymentRecord `json:"deployments"`
+}
+
+type DeploymentShowResult struct {
+	Deployment DeploymentRecord `json:"deployment"`
 }
 
 type InventorySearchResult = pluginbinding.DatasourceSearchResult[pluginbinding.DatasourceRecord]
@@ -214,21 +265,55 @@ func (s Service) PodShow(ctx pluginbinding.Context, input InventoryInput) (PodSh
 	return PodShowResult{}, pluginbinding.Errorf("not_found", "pod %q not found", input.Name)
 }
 
+func (s Service) DeploymentList(ctx pluginbinding.Context, input InventoryInput) (DeploymentListResult, error) {
+	items, err := s.deployments()(context.Background(), input)
+	if err != nil {
+		return DeploymentListResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
+	}
+	records := deploymentRecords(ctx.DatasourceSource(), items)
+	records = filterDeploymentRecords(records, input.Query)
+	records = limitSlice(records, input.Limit)
+	return DeploymentListResult{Count: len(records), Deployments: records}, nil
+}
+
+func (s Service) DeploymentShow(ctx pluginbinding.Context, input InventoryInput) (DeploymentShowResult, error) {
+	items, err := s.deployments()(context.Background(), input)
+	if err != nil {
+		return DeploymentShowResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
+	}
+	records := deploymentRecords(ctx.DatasourceSource(), items)
+	for _, record := range records {
+		if record.Name == strings.TrimSpace(input.Name) && (input.Namespace == "" || record.Namespace == strings.TrimSpace(input.Namespace)) {
+			return DeploymentShowResult{Deployment: record}, nil
+		}
+	}
+	return DeploymentShowResult{}, pluginbinding.Errorf("not_found", "deployment %q not found", input.Name)
+}
+
+func (s Service) PodLogs(ctx pluginbinding.Context, input PodLogsInput) (PodLogsResult, error) {
+	result, err := s.logs()(context.Background(), input)
+	if err != nil {
+		return PodLogsResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
+	}
+	return result, nil
+}
+
 func (s Service) InventorySearch(ctx pluginbinding.Context, input pluginbinding.DatasourceSearchInput) (InventorySearchResult, error) {
 	inventoryInput := InventoryInput{Query: input.Query, Limit: input.Limit}
 	namespaces, nsErr := s.namespaces()(context.Background(), inventoryInput)
 	services, svcErr := s.services()(context.Background(), endpointInputFromInventory(inventoryInput))
 	pods, podErr := s.pods()(context.Background(), inventoryInput)
+	deployments, deployErr := s.deployments()(context.Background(), inventoryInput)
 	var firstErr error
-	for _, err := range []error{nsErr, svcErr, podErr} {
+	for _, err := range []error{nsErr, svcErr, podErr, deployErr} {
 		if err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
-	if firstErr != nil && len(namespaces) == 0 && len(services) == 0 && len(pods) == 0 {
+	if firstErr != nil && len(namespaces) == 0 && len(services) == 0 && len(pods) == 0 && len(deployments) == 0 {
 		return InventorySearchResult{}, pluginbinding.Errorf("kubernetes", "%s", firstErr)
 	}
-	records := inventoryRecords(ctx.DatasourceSource(), namespaces, services, pods)
+	records := inventoryRecords(ctx.DatasourceSource(), namespaces, services, pods, deployments)
 	records = filterDatasourceRecords(records, input.Query)
 	records = limitSlice(records, input.Limit)
 	return pluginbinding.NewDatasourceSearchResult(PluginName, input.Query, records), nil
@@ -308,6 +393,20 @@ func (s Service) pods() func(context.Context, InventoryInput) ([]corev1.Pod, err
 	return listKubernetesPods
 }
 
+func (s Service) deployments() func(context.Context, InventoryInput) ([]appsv1.Deployment, error) {
+	if s.Deployments != nil {
+		return s.Deployments
+	}
+	return listKubernetesDeployments
+}
+
+func (s Service) logs() func(context.Context, PodLogsInput) (PodLogsResult, error) {
+	if s.Logs != nil {
+		return s.Logs
+	}
+	return readKubernetesPodLogs
+}
+
 func (s Service) secrets() func(context.Context, EndpointDiscoverInput) ([]corev1.Secret, error) {
 	if s.Secrets != nil {
 		return s.Secrets
@@ -382,6 +481,77 @@ func listKubernetesPods(ctx context.Context, input InventoryInput) ([]corev1.Pod
 		return nil, err
 	}
 	return list.Items, nil
+}
+
+func listKubernetesDeployments(ctx context.Context, input InventoryInput) ([]appsv1.Deployment, error) {
+	clientset, namespace, err := kubernetesClient(endpointInputFromInventory(input))
+	if err != nil {
+		return nil, err
+	}
+	list, err := clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
+func readKubernetesPodLogs(ctx context.Context, input PodLogsInput) (PodLogsResult, error) {
+	namespace := strings.TrimSpace(input.Namespace)
+	name := strings.TrimSpace(input.Name)
+	if namespace == "" {
+		return PodLogsResult{}, fmt.Errorf("namespace is required")
+	}
+	if name == "" {
+		return PodLogsResult{}, fmt.Errorf("name is required")
+	}
+	tailLines := input.TailLines
+	if tailLines <= 0 {
+		tailLines = 100
+	}
+	if tailLines > 1000 {
+		tailLines = 1000
+	}
+	limitBytes := input.LimitBytes
+	if limitBytes > 1024*1024 {
+		limitBytes = 1024 * 1024
+	}
+	clientset, _, err := kubernetesClient(EndpointDiscoverInput{
+		Context:   firstNonEmpty(input.Context, clusterContextFromEndpointURL(input.URL)),
+		Namespace: namespace,
+	})
+	if err != nil {
+		return PodLogsResult{}, err
+	}
+	options := &corev1.PodLogOptions{
+		Container:  strings.TrimSpace(input.Container),
+		Previous:   input.Previous,
+		Timestamps: input.Timestamps,
+		TailLines:  &tailLines,
+	}
+	if limitBytes > 0 {
+		options.LimitBytes = &limitBytes
+	}
+	raw, err := clientset.CoreV1().Pods(namespace).GetLogs(name, options).DoRaw(ctx)
+	if err != nil {
+		return PodLogsResult{}, err
+	}
+	text := strings.TrimRight(string(raw), "\n")
+	var lines []string
+	if text != "" {
+		lines = strings.Split(text, "\n")
+	}
+	return PodLogsResult{
+		Namespace:  namespace,
+		Name:       name,
+		Container:  strings.TrimSpace(input.Container),
+		Lines:      lines,
+		Text:       text,
+		LineCount:  len(lines),
+		TailLines:  tailLines,
+		LimitBytes: limitBytes,
+		Previous:   input.Previous,
+		Timestamps: input.Timestamps,
+	}, nil
 }
 
 func listKubernetesSecrets(ctx context.Context, input EndpointDiscoverInput) ([]corev1.Secret, error) {
@@ -795,7 +965,30 @@ func podRecords(source pluginbinding.DatasourceSource, items []corev1.Pod) []Pod
 	return records
 }
 
-func inventoryRecords(source pluginbinding.DatasourceSource, namespaces []corev1.Namespace, services []corev1.Service, pods []corev1.Pod) []pluginbinding.DatasourceRecord {
+func deploymentRecords(source pluginbinding.DatasourceSource, items []appsv1.Deployment) []DeploymentRecord {
+	records := make([]DeploymentRecord, 0, len(items))
+	for _, item := range items {
+		id := item.Namespace + "/" + item.Name
+		record := DeploymentRecord{
+			DatasourceRecord:  pluginbinding.NewDatasourceRecord(source, EntityDeployment, id, pluginbinding.RecordTitle(id), pluginbinding.RecordLink("self", "kubernetes://deployment/"+url.PathEscape(id))),
+			Name:              item.Name,
+			Namespace:         item.Namespace,
+			Replicas:          deploymentReplicas(item),
+			ReadyReplicas:     item.Status.ReadyReplicas,
+			AvailableReplicas: item.Status.AvailableReplicas,
+			UpdatedReplicas:   item.Status.UpdatedReplicas,
+			Strategy:          string(item.Spec.Strategy.Type),
+			Labels:            cloneStringMap(item.Labels),
+			CreatedAt:         timestampText(item.CreationTimestamp),
+		}
+		record.Metadata = map[string]any{"name": record.Name, "namespace": record.Namespace, "replicas": record.Replicas, "ready_replicas": record.ReadyReplicas, "available_replicas": record.AvailableReplicas, "updated_replicas": record.UpdatedReplicas, "strategy": record.Strategy, "labels": record.Labels}
+		records = append(records, record)
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
+	return records
+}
+
+func inventoryRecords(source pluginbinding.DatasourceSource, namespaces []corev1.Namespace, services []corev1.Service, pods []corev1.Pod, deployments []appsv1.Deployment) []pluginbinding.DatasourceRecord {
 	var records []pluginbinding.DatasourceRecord
 	for _, record := range namespaceRecords(source, namespaces) {
 		records = append(records, record.DatasourceRecord)
@@ -804,6 +997,9 @@ func inventoryRecords(source pluginbinding.DatasourceSource, namespaces []corev1
 		records = append(records, record.DatasourceRecord)
 	}
 	for _, record := range podRecords(source, pods) {
+		records = append(records, record.DatasourceRecord)
+	}
+	for _, record := range deploymentRecords(source, deployments) {
 		records = append(records, record.DatasourceRecord)
 	}
 	sort.Slice(records, func(i, j int) bool {
@@ -835,6 +1031,13 @@ func podContainerNames(item corev1.Pod) []string {
 		}
 	}
 	return out
+}
+
+func deploymentReplicas(item appsv1.Deployment) int32 {
+	if item.Spec.Replicas == nil {
+		return 1
+	}
+	return *item.Spec.Replicas
 }
 
 func timestampText(value metav1.Time) string {
@@ -880,6 +1083,21 @@ func filterPodRecords(records []PodRecord, query string) []PodRecord {
 	var out []PodRecord
 	for _, record := range records {
 		if strings.Contains(strings.ToLower(record.ID+" "+record.Name+" "+record.Namespace+" "+record.Phase+" "+record.Node+" "+strings.Join(record.Containers, " ")+" "+joinMap(record.Labels)), query) {
+			out = append(out, record)
+		}
+	}
+	return out
+}
+
+func filterDeploymentRecords(records []DeploymentRecord, query string) []DeploymentRecord {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return records
+	}
+	var out []DeploymentRecord
+	for _, record := range records {
+		replicaText := fmt.Sprintf("%d/%d/%d/%d", record.ReadyReplicas, record.AvailableReplicas, record.UpdatedReplicas, record.Replicas)
+		if strings.Contains(strings.ToLower(record.ID+" "+record.Name+" "+record.Namespace+" "+record.Strategy+" "+replicaText+" "+joinMap(record.Labels)), query) {
 			out = append(out, record)
 		}
 	}

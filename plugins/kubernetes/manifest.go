@@ -18,14 +18,18 @@ const (
 	OperationServiceShow      = "kubernetes.service.show"
 	OperationPodList          = "kubernetes.pod.list"
 	OperationPodShow          = "kubernetes.pod.show"
+	OperationPodLogs          = "kubernetes.pod.logs"
+	OperationDeploymentList   = "kubernetes.deployment.list"
+	OperationDeploymentShow   = "kubernetes.deployment.show"
 
 	EndpointClusterDiscovered = "kubernetes.discovered_endpoints"
 	DatasourceInventory       = "kubernetes.inventory"
 
-	EntityResource  = "kubernetes.resource"
-	EntityNamespace = "kubernetes.namespace"
-	EntityService   = "kubernetes.service"
-	EntityPod       = "kubernetes.pod"
+	EntityResource   = "kubernetes.resource"
+	EntityNamespace  = "kubernetes.namespace"
+	EntityService    = "kubernetes.service"
+	EntityPod        = "kubernetes.pod"
+	EntityDeployment = "kubernetes.deployment"
 )
 
 func Manifest() core.PluginManifest {
@@ -47,6 +51,9 @@ func manifestSpec() pluginbinding.ManifestSpec {
 			serviceShowSpec(),
 			podListSpec(),
 			podShowSpec(),
+			podLogsSpec(),
+			deploymentListSpec(),
+			deploymentShowSpec(),
 		},
 		Datasources: []core.DatasourceSpec{
 			inventoryDatasourceSpec(),
@@ -121,11 +128,35 @@ func podShowSpec() core.OperationSpec {
 	)
 }
 
+func podLogsSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[PodLogsInput, PodLogsResult](
+		OperationPodLogs,
+		"Read bounded logs for one Kubernetes pod.",
+		kubernetesReadOptions(core.OperationIdempotent)...,
+	)
+}
+
+func deploymentListSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[InventoryInput, DeploymentListResult](
+		OperationDeploymentList,
+		"List Kubernetes deployments.",
+		kubernetesReadOptions(core.OperationIdempotent)...,
+	)
+}
+
+func deploymentShowSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[InventoryInput, DeploymentShowResult](
+		OperationDeploymentShow,
+		"Show one Kubernetes deployment.",
+		kubernetesReadOptions(core.OperationIdempotent)...,
+	)
+}
+
 func inventoryDatasourceSpec() core.DatasourceSpec {
 	return pluginbinding.TypedDatasourceSpec[pluginbinding.DatasourceSearchInput, InventorySearchResult](
 		DatasourceInventory,
 		EntityResource,
-		"Kubernetes namespaces, services, and pods.",
+		"Kubernetes namespaces, services, pods, and deployments.",
 		[]string{pluginbinding.CapabilitySearch},
 	)
 }

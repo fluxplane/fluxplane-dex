@@ -50,6 +50,7 @@ inspect inventory:
 dex op run kubernetes.namespace.list '{"endpoint_ref":"dev-kubernetes"}'
 dex op run kubernetes.service.list '{"endpoint_ref":"dev-kubernetes","namespace":"latest"}'
 dex op run kubernetes.pod.list '{"endpoint_ref":"dev-kubernetes","namespace":"latest"}'
+dex op run kubernetes.deployment.list '{"endpoint_ref":"dev-kubernetes","namespace":"latest"}'
 ```
 
 Show one resource:
@@ -57,6 +58,13 @@ Show one resource:
 ```bash
 dex op run kubernetes.service.show '{"endpoint_ref":"dev-kubernetes","namespace":"latest","name":"api"}'
 dex op run kubernetes.pod.show '{"endpoint_ref":"dev-kubernetes","namespace":"latest","name":"api-123"}'
+dex op run kubernetes.deployment.show '{"endpoint_ref":"dev-kubernetes","namespace":"latest","name":"api"}'
+```
+
+Read bounded pod logs:
+
+```bash
+dex op run kubernetes.pod.logs '{"endpoint_ref":"dev-kubernetes","namespace":"latest","name":"api-123","tail_lines":50}'
 ```
 
 The same operations are available through shortcut bindings:
@@ -66,13 +74,16 @@ dex kube ns ls --endpoint dev-kubernetes
 dex kube svc ls --endpoint dev-kubernetes --namespace latest
 dex kube svc show latest/api --endpoint dev-kubernetes
 dex kube pod ls --endpoint dev-kubernetes --namespace latest --query api
+dex kube pod logs latest/api-123 --endpoint dev-kubernetes --tail-lines 50
+dex kube deploy ls --endpoint dev-kubernetes --namespace latest
+dex kube deploy show latest/api --endpoint dev-kubernetes
 ```
 
 These shortcuts are resolved from marketplace metadata and call the same
 underlying `kubernetes.*` operations shown above.
 
-Datasource search exposes namespaces, services, and pods as common datasource
-records:
+Datasource search exposes namespaces, services, pods, and deployments as common
+datasource records:
 
 ```bash
 dex search --plugin kubernetes api

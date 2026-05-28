@@ -725,16 +725,24 @@ func TestShortcutListIncludesKubernetesInventoryBindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	foundPodList := false
+	foundPodLogs := false
+	foundDeployList := false
 	foundSearch := false
 	for _, shortcut := range result.Shortcuts {
 		if shortcut.Use == "kube pod ls" && shortcut.Operation == "kubernetes.pod.list" {
 			foundPodList = true
 		}
+		if shortcut.Use == "kube pod logs <namespace/name>" && shortcut.Operation == "kubernetes.pod.logs" {
+			foundPodLogs = true
+		}
+		if shortcut.Use == "kube deploy ls" && shortcut.Operation == "kubernetes.deployment.list" {
+			foundDeployList = true
+		}
 		if shortcut.Use == "search --plugin kubernetes <query>" && shortcut.Datasource == "kubernetes.inventory" {
 			foundSearch = true
 		}
 	}
-	if !foundPodList || !foundSearch {
+	if !foundPodList || !foundPodLogs || !foundDeployList || !foundSearch {
 		t.Fatalf("shortcuts = %#v", result.Shortcuts)
 	}
 }
@@ -790,15 +798,46 @@ func TestShortcutPrefixCommandExecutesWithFlags(t *testing.T) {
 	}
 }
 
+func TestShortcutExecutesKubernetesPodLogsBinding(t *testing.T) {
+	pluginDir := writeFakeKubernetesShortcutPlugin(t)
+	var out bytes.Buffer
+	state, err := runtime.NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := runtime.Runner{
+		Marketplace: runtime.NewMarketplace(core.Marketplace{Version: "1", Plugins: []core.PluginEntry{{
+			Name: "kubernetes", Binary: "dex-plugin-kubernetes", LocalPath: pluginDir,
+			Commands: []core.CommandShortcut{{Use: "kube pod logs <namespace/name>", Target: "operation", Operation: "kubernetes.pod.logs"}},
+		}}}),
+		State: state,
+	}
+	opts := &options{output: "json"}
+	if err := runShortcut(context.Background(), &out, opts, runner, []string{"kube", "pod", "logs", "latest/api-123", "--container", "api", "--tail-lines", "25", "--timestamps"}); err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["name"] != "kubernetes.pod.logs" {
+		t.Fatalf("result = %#v", result)
+	}
+	input, _ := result["input"].(map[string]any)
+	if input["namespace"] != "latest" || input["name"] != "api-123" || input["container"] != "api" || input["tail_lines"] != float64(25) || input["timestamps"] != true {
+		t.Fatalf("input = %#v", input)
+	}
+}
+
 func TestShortcutArgParsingMapsEndpointFlag(t *testing.T) {
-	positionals, flags, err := parseShortcutArgs([]string{"kube", "svc", "ls", "--endpoint", "dev-cluster", "--namespace=latest", "--limit", "3"})
+	positionals, flags, err := parseShortcutArgs([]string{"kube", "svc", "ls", "--endpoint", "dev-cluster", "--namespace=latest", "--limit", "3", "--tail-lines", "25", "--timestamps=false"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(positionals, " ") != "kube svc ls" {
 		t.Fatalf("positionals = %#v", positionals)
 	}
-	if flags["endpoint_ref"] != "dev-cluster" || flags["namespace"] != "latest" || flags["limit"] != 3 {
+	if flags["endpoint_ref"] != "dev-cluster" || flags["namespace"] != "latest" || flags["limit"] != 3 || flags["tail_lines"] != int64(25) || flags["timestamps"] != false {
 		t.Fatalf("flags = %#v", flags)
 	}
 }

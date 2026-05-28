@@ -19,6 +19,9 @@ func NewPluginWithService(service Service) *pluginbinding.Plugin {
 		pluginbinding.RegisterOperation(serviceShowSpec(), service.ServiceShow),
 		pluginbinding.RegisterOperation(podListSpec(), service.PodList),
 		pluginbinding.RegisterOperation(podShowSpec(), service.PodShow),
+		pluginbinding.RegisterOperation(podLogsSpec(), service.PodLogs),
+		pluginbinding.RegisterOperation(deploymentListSpec(), service.DeploymentList),
+		pluginbinding.RegisterOperation(deploymentShowSpec(), service.DeploymentShow),
 		pluginbinding.RegisterDatasourceSearch(inventoryDatasourceSpec(), service.InventorySearch),
 	)
 	plugin.Command(protocol.CommandEndpointsDiscover, service.DiscoverEndpointsCommand)

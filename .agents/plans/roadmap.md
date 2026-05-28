@@ -582,16 +582,16 @@ Legacy support:
 
 Current status:
 - Minimal plugin implemented.
-- Core overlap: `fluxplane-core` already has datasource inventory for clusters, namespaces, pods, services, deployments, and containers; port-forwarding; observers; endpoint discovery; and Kubernetes secret resolution.
+- Kubeconfig context discovery, Kubernetes cluster endpoint probes, endpoint discovery from services and Crossplane-style SQL secrets, namespace/service/pod/deployment inventory, bounded pod logs, datasource search, and executable shortcuts are implemented.
+- Core overlap to port later: richer container inventory, port-forwarding, observers, and Kubernetes secret resolution patterns.
 
 Missing operations/features:
-- Namespace, pod, service, deployment, and container datasource inventory.
-- Namespace, pod, and service list/show.
-- Pod logs with follow, previous container, include/exclude regex, tail, since, all containers, and container selection.
+- Container datasource inventory.
+- Pod logs follow, since, all containers, and include/exclude regex.
 - Detached port-forward lifecycle and PID/status tracking.
 - Smart pod/service discovery for port-forward targets.
 - Shell completion metadata for contexts, namespaces, pods, containers, services, and forwards.
-- Datasources for contexts, namespaces, pods, services, logs, and forwards.
+- Datasources for contexts, logs, and forwards.
 - Broader live validation docs/matrix across dev/staging/prod contexts for
   service and Crossplane-style SQL secret discovery.
 - Relaxation: list/show commands should be datasource shortcuts. Keep explicit operations for side effects and streaming/long-running behavior such as logs and port-forwarding.

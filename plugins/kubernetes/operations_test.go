@@ -7,6 +7,7 @@ import (
 
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding/plugintest"
 	"github.com/fluxplane/fluxplane-dex/protocol"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -84,6 +85,19 @@ func TestInventoryOperationsListResources(t *testing.T) {
 				Status:     corev1.PodStatus{Phase: corev1.PodRunning},
 			}}, nil
 		},
+		Deployments: func(_ context.Context, _ InventoryInput) ([]appsv1.Deployment, error) {
+			return []appsv1.Deployment{{
+				ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "latest", Labels: map[string]string{"app": "api"}},
+				Spec:       appsv1.DeploymentSpec{Replicas: int32Ptr(2), Strategy: appsv1.DeploymentStrategy{Type: appsv1.RollingUpdateDeploymentStrategyType}},
+				Status:     appsv1.DeploymentStatus{ReadyReplicas: 1, AvailableReplicas: 1, UpdatedReplicas: 2},
+			}}, nil
+		},
+		Logs: func(_ context.Context, input PodLogsInput) (PodLogsResult, error) {
+			if input.Namespace != "latest" || input.Name != "api-123" || input.Container != "api" || input.TailLines != 25 || !input.Timestamps {
+				t.Fatalf("input = %#v", input)
+			}
+			return PodLogsResult{Namespace: input.Namespace, Name: input.Name, Container: input.Container, Lines: []string{"one", "two"}, Text: "one\ntwo", LineCount: 2, TailLines: input.TailLines, Timestamps: input.Timestamps}, nil
+		},
 	})
 
 	namespaces := plugintest.RunOK[NamespaceListResult](t, plugin, OperationNamespaceList, map[string]any{"query": "platform"})
@@ -98,9 +112,21 @@ func TestInventoryOperationsListResources(t *testing.T) {
 	if pods.Count != 1 || pods.Pods[0].Phase != "Running" || pods.Pods[0].Containers[0] != "api" {
 		t.Fatalf("pods = %#v", pods)
 	}
+	deployments := plugintest.RunOK[DeploymentListResult](t, plugin, OperationDeploymentList, map[string]any{"query": "api"})
+	if deployments.Count != 1 || deployments.Deployments[0].ReadyReplicas != 1 || deployments.Deployments[0].Replicas != 2 {
+		t.Fatalf("deployments = %#v", deployments)
+	}
+	deployment := plugintest.RunOK[DeploymentShowResult](t, plugin, OperationDeploymentShow, map[string]any{"namespace": "latest", "name": "api"})
+	if deployment.Deployment.ID != "latest/api" || deployment.Deployment.Strategy != "RollingUpdate" {
+		t.Fatalf("deployment = %#v", deployment)
+	}
+	logs := plugintest.RunOK[PodLogsResult](t, plugin, OperationPodLogs, map[string]any{"namespace": "latest", "name": "api-123", "container": "api", "tail_lines": 25, "timestamps": true})
+	if logs.LineCount != 2 || logs.Lines[1] != "two" {
+		t.Fatalf("logs = %#v", logs)
+	}
 }
 
-func TestInventoryDatasourceSearchFindsServicesAndPods(t *testing.T) {
+func TestInventoryDatasourceSearchFindsServicesPodsAndDeployments(t *testing.T) {
 	plugin := NewPluginWithService(Service{
 		Namespaces: func(_ context.Context, _ InventoryInput) ([]corev1.Namespace, error) {
 			return []corev1.Namespace{{ObjectMeta: metav1.ObjectMeta{Name: "latest"}}}, nil
@@ -111,17 +137,20 @@ func TestInventoryDatasourceSearchFindsServicesAndPods(t *testing.T) {
 		Pods: func(_ context.Context, _ InventoryInput) ([]corev1.Pod, error) {
 			return []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "api-123", Namespace: "latest"}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}}, nil
 		},
+		Deployments: func(_ context.Context, _ InventoryInput) ([]appsv1.Deployment, error) {
+			return []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "latest"}, Spec: appsv1.DeploymentSpec{Replicas: int32Ptr(1)}}}, nil
+		},
 	})
 
 	out := plugintest.DatasourceSearchOK[InventorySearchResult](t, plugin, map[string]any{"query": "api", "limit": 10})
-	if out.Count != 2 {
+	if out.Count != 3 {
 		t.Fatalf("search = %#v", out)
 	}
 	entities := map[string]bool{}
 	for _, record := range out.Records {
 		entities[record.Entity] = true
 	}
-	if !entities[EntityService] || !entities[EntityPod] {
+	if !entities[EntityService] || !entities[EntityPod] || !entities[EntityDeployment] {
 		t.Fatalf("records = %#v", out.Records)
 	}
 }
@@ -227,4 +256,8 @@ func TestEndpointDiscoverFindsPostgresConnectionSecret(t *testing.T) {
 	if candidate.Product != "postgres" || candidate.URL != "postgres://postgres.example.com:5432/latest-acd?sslmode=require" || candidate.CredentialRef == "" {
 		t.Fatalf("candidate = %#v", candidate)
 	}
+}
+
+func int32Ptr(value int32) *int32 {
+	return &value
 }

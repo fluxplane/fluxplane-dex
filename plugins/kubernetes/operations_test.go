@@ -64,6 +64,17 @@ func TestClusterTestUsesContextFromEndpointURL(t *testing.T) {
 	}
 }
 
+func TestManifestIncludesInventoryCompletionMetadata(t *testing.T) {
+	manifest := Manifest()
+	if len(manifest.Datasources) != 1 {
+		t.Fatalf("datasources = %#v", manifest.Datasources)
+	}
+	completion := manifest.Datasources[0].Completion
+	if completion == nil || !containsString(completion.Fields, "context") || !containsString(completion.Fields, "namespace") || !containsString(completion.Fields, "pod") || !containsString(completion.Fields, "containers") {
+		t.Fatalf("completion = %#v", completion)
+	}
+}
+
 func TestInventoryOperationsListResources(t *testing.T) {
 	plugin := NewPluginWithService(Service{
 		Namespaces: func(_ context.Context, _ InventoryInput) ([]corev1.Namespace, error) {
@@ -81,8 +92,19 @@ func TestInventoryOperationsListResources(t *testing.T) {
 		Pods: func(_ context.Context, _ InventoryInput) ([]corev1.Pod, error) {
 			return []corev1.Pod{{
 				ObjectMeta: metav1.ObjectMeta{Name: "api-123", Namespace: "latest", Labels: map[string]string{"app": "api"}},
-				Spec:       corev1.PodSpec{NodeName: "ip-10-0-0-1", Containers: []corev1.Container{{Name: "api"}}},
-				Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+				Spec:       corev1.PodSpec{NodeName: "ip-10-0-0-1", Containers: []corev1.Container{{Name: "api", Image: "registry.example.com/api:latest"}}},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+					ContainerStatuses: []corev1.ContainerStatus{{
+						Name:         "api",
+						Image:        "registry.example.com/api:latest",
+						ImageID:      "sha256:abc",
+						ContainerID:  "containerd://123",
+						Ready:        true,
+						RestartCount: 1,
+						State:        corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+					}},
+				},
 			}}, nil
 		},
 		Deployments: func(_ context.Context, _ InventoryInput) ([]appsv1.Deployment, error) {
@@ -111,6 +133,14 @@ func TestInventoryOperationsListResources(t *testing.T) {
 	pods := plugintest.RunOK[PodListResult](t, plugin, OperationPodList, map[string]any{"query": "api"})
 	if pods.Count != 1 || pods.Pods[0].Phase != "Running" || pods.Pods[0].Containers[0] != "api" {
 		t.Fatalf("pods = %#v", pods)
+	}
+	containers := plugintest.RunOK[ContainerListResult](t, plugin, OperationContainerList, map[string]any{"query": "api"})
+	if containers.Count != 1 || containers.Containers[0].ID != "latest/api-123/api" || containers.Containers[0].State != "running" || !containers.Containers[0].Ready {
+		t.Fatalf("containers = %#v", containers)
+	}
+	container := plugintest.RunOK[ContainerShowResult](t, plugin, OperationContainerShow, map[string]any{"namespace": "latest", "name": "api-123/api"})
+	if container.Container.Image != "registry.example.com/api:latest" || container.Container.RestartCount != 1 {
+		t.Fatalf("container = %#v", container)
 	}
 	deployments := plugintest.RunOK[DeploymentListResult](t, plugin, OperationDeploymentList, map[string]any{"query": "api"})
 	if deployments.Count != 1 || deployments.Deployments[0].ReadyReplicas != 1 || deployments.Deployments[0].Replicas != 2 {
@@ -144,7 +174,11 @@ func TestInventoryDatasourceSearchFindsServicesPodsAndDeployments(t *testing.T) 
 			if input.URL != "kubernetes://context/dev" || input.Namespace != "latest" {
 				t.Fatalf("pod input = %#v", input)
 			}
-			return []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "api-123", Namespace: "latest"}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}}, nil
+			return []corev1.Pod{{
+				ObjectMeta: metav1.ObjectMeta{Name: "api-123", Namespace: "latest"},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Image: "registry.example.com/api:latest"}}},
+				Status:     corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "api", Ready: true}}},
+			}}, nil
 		},
 		Deployments: func(_ context.Context, input InventoryInput) ([]appsv1.Deployment, error) {
 			if input.URL != "kubernetes://context/dev" || input.Namespace != "latest" {
@@ -155,14 +189,14 @@ func TestInventoryDatasourceSearchFindsServicesPodsAndDeployments(t *testing.T) 
 	})
 
 	out := plugintest.DatasourceSearchOK[InventorySearchResult](t, plugin, map[string]any{"query": "api", "limit": 10, "url": "kubernetes://context/dev", "namespace": "latest"})
-	if out.Count != 3 {
+	if out.Count != 4 {
 		t.Fatalf("search = %#v", out)
 	}
 	entities := map[string]bool{}
 	for _, record := range out.Records {
 		entities[record.Entity] = true
 	}
-	if !entities[EntityService] || !entities[EntityPod] || !entities[EntityDeployment] {
+	if !entities[EntityService] || !entities[EntityPod] || !entities[EntityDeployment] || !entities[EntityContainer] {
 		t.Fatalf("records = %#v", out.Records)
 	}
 }
@@ -272,4 +306,13 @@ func TestEndpointDiscoverFindsPostgresConnectionSecret(t *testing.T) {
 
 func int32Ptr(value int32) *int32 {
 	return &value
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

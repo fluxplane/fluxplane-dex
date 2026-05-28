@@ -1233,6 +1233,14 @@ func setShortcutInputValue(input map[string]any, name, value string) {
 			return
 		}
 		input["name"] = strings.TrimSpace(value)
+	case "namespace_pod_container":
+		namespace, rest, ok := strings.Cut(value, "/")
+		if ok {
+			input["namespace"] = strings.TrimSpace(namespace)
+			input["name"] = strings.TrimSpace(rest)
+			return
+		}
+		input["name"] = strings.TrimSpace(value)
 	case "endpoint":
 		input["endpoint_ref"] = strings.TrimSpace(value)
 	case "limit":

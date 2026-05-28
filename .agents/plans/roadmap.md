@@ -582,14 +582,15 @@ Legacy support:
 
 Current status:
 - Minimal plugin implemented.
-- Kubeconfig context discovery, Kubernetes cluster endpoint probes, endpoint discovery from services and Crossplane-style SQL secrets, namespace/service/pod/deployment inventory, bounded pod logs, datasource search, and executable shortcuts are implemented.
+- Kubeconfig context discovery, Kubernetes cluster endpoint probes, endpoint discovery from services and Crossplane-style SQL secrets, namespace/service/pod/deployment/container inventory, bounded pod logs, datasource search, and executable shortcuts are implemented.
 - Generic `dex search` can pass endpoint refs, provider context, and namespace
   into datasource calls; the host resolves registered endpoint refs before the
   plugin receives the datasource payload.
+- Kubernetes inventory advertises completion fields for endpoints, contexts,
+  namespaces, pods, containers, and labels.
 - Core overlap to port later: richer container inventory, port-forwarding, observers, and Kubernetes secret resolution patterns.
 
 Missing operations/features:
-- Container datasource inventory.
 - Pod logs follow, since, all containers, and include/exclude regex.
 - Detached port-forward lifecycle and PID/status tracking.
 - Smart pod/service discovery for port-forward targets.

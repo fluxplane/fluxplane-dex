@@ -115,6 +115,22 @@ type PodRecord struct {
 	CreatedAt  string            `json:"created_at,omitempty"`
 }
 
+type ContainerRecord struct {
+	pluginbinding.DatasourceRecord
+	Name         string            `json:"name"`
+	Namespace    string            `json:"namespace"`
+	Pod          string            `json:"pod"`
+	Type         string            `json:"type,omitempty"`
+	Image        string            `json:"image,omitempty"`
+	ImageID      string            `json:"image_id,omitempty"`
+	ContainerID  string            `json:"container_id,omitempty"`
+	State        string            `json:"state,omitempty"`
+	Ready        bool              `json:"ready,omitempty"`
+	RestartCount int32             `json:"restart_count,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	CreatedAt    string            `json:"created_at,omitempty"`
+}
+
 type DeploymentRecord struct {
 	pluginbinding.DatasourceRecord
 	Name              string            `json:"name"`
@@ -175,6 +191,15 @@ type PodListResult struct {
 
 type PodShowResult struct {
 	Pod PodRecord `json:"pod"`
+}
+
+type ContainerListResult struct {
+	Count      int               `json:"count"`
+	Containers []ContainerRecord `json:"containers"`
+}
+
+type ContainerShowResult struct {
+	Container ContainerRecord `json:"container"`
 }
 
 type DeploymentListResult struct {
@@ -296,6 +321,31 @@ func (s Service) PodLogs(ctx pluginbinding.Context, input PodLogsInput) (PodLogs
 		return PodLogsResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
 	return result, nil
+}
+
+func (s Service) ContainerList(ctx pluginbinding.Context, input InventoryInput) (ContainerListResult, error) {
+	items, err := s.pods()(context.Background(), input)
+	if err != nil {
+		return ContainerListResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
+	}
+	records := containerRecords(ctx.DatasourceSource(), items)
+	records = filterContainerRecords(records, input.Query)
+	records = limitSlice(records, input.Limit)
+	return ContainerListResult{Count: len(records), Containers: records}, nil
+}
+
+func (s Service) ContainerShow(ctx pluginbinding.Context, input InventoryInput) (ContainerShowResult, error) {
+	items, err := s.pods()(context.Background(), input)
+	if err != nil {
+		return ContainerShowResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
+	}
+	records := containerRecords(ctx.DatasourceSource(), items)
+	for _, record := range records {
+		if containerRecordMatches(record, input) {
+			return ContainerShowResult{Container: record}, nil
+		}
+	}
+	return ContainerShowResult{}, pluginbinding.Errorf("not_found", "container %q not found", input.Name)
 }
 
 func (s Service) InventorySearch(ctx pluginbinding.Context, input pluginbinding.DatasourceSearchInput) (InventorySearchResult, error) {
@@ -972,6 +1022,82 @@ func podRecords(source pluginbinding.DatasourceSource, items []corev1.Pod) []Pod
 	return records
 }
 
+func containerRecords(source pluginbinding.DatasourceSource, items []corev1.Pod) []ContainerRecord {
+	var records []ContainerRecord
+	for _, pod := range items {
+		statusByName := podContainerStatuses(pod)
+		for _, container := range pod.Spec.InitContainers {
+			records = append(records, containerRecord(source, pod, container, statusByName[container.Name], "init"))
+		}
+		for _, container := range pod.Spec.Containers {
+			records = append(records, containerRecord(source, pod, container, statusByName[container.Name], "container"))
+		}
+		for _, container := range pod.Spec.EphemeralContainers {
+			records = append(records, ephemeralContainerRecord(source, pod, container, statusByName[container.Name]))
+		}
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
+	return records
+}
+
+func containerRecord(source pluginbinding.DatasourceSource, pod corev1.Pod, container corev1.Container, status corev1.ContainerStatus, containerType string) ContainerRecord {
+	id := pod.Namespace + "/" + pod.Name + "/" + container.Name
+	record := ContainerRecord{
+		DatasourceRecord: pluginbinding.NewDatasourceRecord(source, EntityContainer, id, pluginbinding.RecordTitle(id), pluginbinding.RecordLink("self", "kubernetes://container/"+url.PathEscape(id))),
+		Name:             container.Name,
+		Namespace:        pod.Namespace,
+		Pod:              pod.Name,
+		Type:             containerType,
+		Image:            container.Image,
+		ImageID:          status.ImageID,
+		ContainerID:      status.ContainerID,
+		State:            containerStateText(status.State),
+		Ready:            status.Ready,
+		RestartCount:     status.RestartCount,
+		Labels:           cloneStringMap(pod.Labels),
+		CreatedAt:        timestampText(pod.CreationTimestamp),
+	}
+	record.Metadata = containerRecordMetadata(record)
+	return record
+}
+
+func ephemeralContainerRecord(source pluginbinding.DatasourceSource, pod corev1.Pod, container corev1.EphemeralContainer, status corev1.ContainerStatus) ContainerRecord {
+	id := pod.Namespace + "/" + pod.Name + "/" + container.Name
+	record := ContainerRecord{
+		DatasourceRecord: pluginbinding.NewDatasourceRecord(source, EntityContainer, id, pluginbinding.RecordTitle(id), pluginbinding.RecordLink("self", "kubernetes://container/"+url.PathEscape(id))),
+		Name:             container.Name,
+		Namespace:        pod.Namespace,
+		Pod:              pod.Name,
+		Type:             "ephemeral",
+		Image:            container.Image,
+		ImageID:          status.ImageID,
+		ContainerID:      status.ContainerID,
+		State:            containerStateText(status.State),
+		Ready:            status.Ready,
+		RestartCount:     status.RestartCount,
+		Labels:           cloneStringMap(pod.Labels),
+		CreatedAt:        timestampText(pod.CreationTimestamp),
+	}
+	record.Metadata = containerRecordMetadata(record)
+	return record
+}
+
+func containerRecordMetadata(record ContainerRecord) map[string]any {
+	return map[string]any{
+		"name":          record.Name,
+		"namespace":     record.Namespace,
+		"pod":           record.Pod,
+		"type":          record.Type,
+		"image":         record.Image,
+		"image_id":      record.ImageID,
+		"container_id":  record.ContainerID,
+		"state":         record.State,
+		"ready":         record.Ready,
+		"restart_count": record.RestartCount,
+		"labels":        record.Labels,
+	}
+}
+
 func deploymentRecords(source pluginbinding.DatasourceSource, items []appsv1.Deployment) []DeploymentRecord {
 	records := make([]DeploymentRecord, 0, len(items))
 	for _, item := range items {
@@ -1006,6 +1132,9 @@ func inventoryRecords(source pluginbinding.DatasourceSource, namespaces []corev1
 	for _, record := range podRecords(source, pods) {
 		records = append(records, record.DatasourceRecord)
 	}
+	for _, record := range containerRecords(source, pods) {
+		records = append(records, record.DatasourceRecord)
+	}
 	for _, record := range deploymentRecords(source, deployments) {
 		records = append(records, record.DatasourceRecord)
 	}
@@ -1038,6 +1167,39 @@ func podContainerNames(item corev1.Pod) []string {
 		}
 	}
 	return out
+}
+
+func podContainerStatuses(item corev1.Pod) map[string]corev1.ContainerStatus {
+	out := map[string]corev1.ContainerStatus{}
+	for _, status := range item.Status.InitContainerStatuses {
+		out[status.Name] = status
+	}
+	for _, status := range item.Status.ContainerStatuses {
+		out[status.Name] = status
+	}
+	for _, status := range item.Status.EphemeralContainerStatuses {
+		out[status.Name] = status
+	}
+	return out
+}
+
+func containerStateText(state corev1.ContainerState) string {
+	switch {
+	case state.Running != nil:
+		return "running"
+	case state.Waiting != nil:
+		if strings.TrimSpace(state.Waiting.Reason) != "" {
+			return "waiting:" + strings.TrimSpace(state.Waiting.Reason)
+		}
+		return "waiting"
+	case state.Terminated != nil:
+		if strings.TrimSpace(state.Terminated.Reason) != "" {
+			return "terminated:" + strings.TrimSpace(state.Terminated.Reason)
+		}
+		return "terminated"
+	default:
+		return ""
+	}
 }
 
 func deploymentReplicas(item appsv1.Deployment) int32 {
@@ -1094,6 +1256,32 @@ func filterPodRecords(records []PodRecord, query string) []PodRecord {
 		}
 	}
 	return out
+}
+
+func filterContainerRecords(records []ContainerRecord, query string) []ContainerRecord {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return records
+	}
+	var out []ContainerRecord
+	for _, record := range records {
+		if strings.Contains(strings.ToLower(record.ID+" "+record.Name+" "+record.Namespace+" "+record.Pod+" "+record.Type+" "+record.Image+" "+record.State+" "+joinMap(record.Labels)), query) {
+			out = append(out, record)
+		}
+	}
+	return out
+}
+
+func containerRecordMatches(record ContainerRecord, input InventoryInput) bool {
+	name := strings.TrimSpace(input.Name)
+	namespace := strings.TrimSpace(input.Namespace)
+	if namespace != "" && record.Namespace != namespace {
+		return false
+	}
+	if name == "" {
+		return false
+	}
+	return record.ID == name || record.Pod+"/"+record.Name == name || record.Name == name
 }
 
 func filterDeploymentRecords(records []DeploymentRecord, query string) []DeploymentRecord {

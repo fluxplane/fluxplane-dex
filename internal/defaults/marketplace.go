@@ -127,6 +127,8 @@ const MarketplaceJSON = `{
         {"use": "kube pod ls", "target": "operation", "operation": "kubernetes.pod.list"},
         {"use": "kube pod show <namespace/name>", "target": "operation", "operation": "kubernetes.pod.show"},
         {"use": "kube pod logs <namespace/name>", "target": "operation", "operation": "kubernetes.pod.logs"},
+        {"use": "kube container ls", "target": "operation", "operation": "kubernetes.container.list"},
+        {"use": "kube container show <namespace/pod/container>", "target": "operation", "operation": "kubernetes.container.show"},
         {"use": "kube deploy ls", "target": "operation", "operation": "kubernetes.deployment.list"},
         {"use": "kube deploy show <namespace/name>", "target": "operation", "operation": "kubernetes.deployment.show"},
         {"use": "search --plugin kubernetes <query>", "target": "datasource", "datasource": "kubernetes.inventory", "capability": "search", "entity": "kubernetes.resource"},

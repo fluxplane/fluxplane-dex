@@ -21,6 +21,8 @@ const (
 	OperationPodLogs          = "kubernetes.pod.logs"
 	OperationDeploymentList   = "kubernetes.deployment.list"
 	OperationDeploymentShow   = "kubernetes.deployment.show"
+	OperationContainerList    = "kubernetes.container.list"
+	OperationContainerShow    = "kubernetes.container.show"
 
 	EndpointClusterDiscovered = "kubernetes.discovered_endpoints"
 	DatasourceInventory       = "kubernetes.inventory"
@@ -30,6 +32,7 @@ const (
 	EntityService    = "kubernetes.service"
 	EntityPod        = "kubernetes.pod"
 	EntityDeployment = "kubernetes.deployment"
+	EntityContainer  = "kubernetes.container"
 )
 
 func Manifest() core.PluginManifest {
@@ -54,6 +57,8 @@ func manifestSpec() pluginbinding.ManifestSpec {
 			podLogsSpec(),
 			deploymentListSpec(),
 			deploymentShowSpec(),
+			containerListSpec(),
+			containerShowSpec(),
 		},
 		Datasources: []core.DatasourceSpec{
 			inventoryDatasourceSpec(),
@@ -152,12 +157,40 @@ func deploymentShowSpec() core.OperationSpec {
 	)
 }
 
+func containerListSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[InventoryInput, ContainerListResult](
+		OperationContainerList,
+		"List Kubernetes containers derived from pods.",
+		kubernetesReadOptions(core.OperationIdempotent)...,
+	)
+}
+
+func containerShowSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[InventoryInput, ContainerShowResult](
+		OperationContainerShow,
+		"Show one Kubernetes container derived from a pod.",
+		kubernetesReadOptions(core.OperationIdempotent)...,
+	)
+}
+
 func inventoryDatasourceSpec() core.DatasourceSpec {
 	return pluginbinding.TypedDatasourceSpec[pluginbinding.DatasourceSearchInput, InventorySearchResult](
 		DatasourceInventory,
 		EntityResource,
-		"Kubernetes namespaces, services, pods, and deployments.",
+		"Kubernetes namespaces, services, pods, deployments, and containers.",
 		[]string{pluginbinding.CapabilitySearch},
+		pluginbinding.Completion(
+			"Kubernetes contexts, endpoints, namespaces, resource names, pod names, container names, and labels.",
+			"endpoint_ref",
+			"context",
+			"namespace",
+			"id",
+			"title",
+			"name",
+			"pod",
+			"containers",
+			"labels",
+		),
 	)
 }
 

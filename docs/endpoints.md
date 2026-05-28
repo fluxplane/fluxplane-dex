@@ -59,6 +59,15 @@ dex op run kubernetes.service.show '{"endpoint_ref":"dev-kubernetes","namespace"
 dex op run kubernetes.pod.show '{"endpoint_ref":"dev-kubernetes","namespace":"latest","name":"api-123"}'
 ```
 
+The same operations are available through shortcut bindings:
+
+```bash
+dex kube ns ls --endpoint dev-kubernetes
+dex kube svc ls --endpoint dev-kubernetes --namespace latest
+dex kube svc show latest/api --endpoint dev-kubernetes
+dex kube pod ls --endpoint dev-kubernetes --namespace latest --query api
+```
+
 Datasource search exposes namespaces, services, and pods as common datasource
 records:
 

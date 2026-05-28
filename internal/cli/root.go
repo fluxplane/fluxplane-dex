@@ -79,6 +79,7 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newEndpointCommand(opts))
 	root.AddCommand(newIndexCommand(opts))
 	root.AddCommand(newDoctorCommand(opts))
+	addShortcutPrefixCommands(root, opts)
 	root.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
@@ -100,6 +101,11 @@ type shortcutView struct {
 	Capability  string         `json:"capability,omitempty"`
 	Entity      string         `json:"entity,omitempty"`
 	Defaults    map[string]any `json:"defaults,omitempty"`
+}
+
+type shortcutMatch struct {
+	Shortcut shortcutView
+	Input    map[string]any
 }
 
 type endpointCandidateView struct {
@@ -181,6 +187,52 @@ func newShortcutCommand(opts *options) *cobra.Command {
 			return fmt.Errorf("unknown shortcut %q", use)
 		},
 	})
+	return cmd
+}
+
+func addShortcutPrefixCommands(root *cobra.Command, opts *options) {
+	marketplace, err := runtime.LoadMarketplaceData([]byte(defaults.MarketplaceJSON))
+	if err != nil {
+		return
+	}
+	reserved := map[string]bool{}
+	for _, command := range root.Commands() {
+		reserved[command.Name()] = true
+		for _, alias := range command.Aliases {
+			reserved[alias] = true
+		}
+	}
+	prefixes := map[string]bool{}
+	for _, shortcut := range shortcutViews(marketplace, "") {
+		prefix := firstShortcutToken(shortcut.Use)
+		if prefix == "" || reserved[prefix] || prefixes[prefix] {
+			continue
+		}
+		prefixes[prefix] = true
+		root.AddCommand(newShortcutPrefixCommand(prefix, opts))
+	}
+}
+
+func newShortcutPrefixCommand(prefix string, opts *options) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   prefix,
+		Short: "Run shortcut binding",
+		Args:  cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			return runShortcutWithFlags(cmd.Context(), cmd.OutOrStdout(), opts, runner, append([]string{prefix}, args...), shortcutFlagsFromCommand(cmd))
+		},
+	}
+	cmd.Flags().String("endpoint", "", "Endpoint ref")
+	cmd.Flags().String("endpoint-ref", "", "Endpoint ref")
+	cmd.Flags().String("namespace", "", "Kubernetes namespace")
+	cmd.Flags().String("context", "", "Kubernetes context")
+	cmd.Flags().String("name", "", "Resource name")
+	cmd.Flags().String("query", "", "Search query")
+	cmd.Flags().Int("limit", 0, "Maximum records")
 	return cmd
 }
 
@@ -941,6 +993,258 @@ func parseStringMapFlags(values []string) (map[string]string, error) {
 		out[key] = strings.TrimSpace(val)
 	}
 	return out, nil
+}
+
+func runShortcut(ctx context.Context, out io.Writer, opts *options, runner runtime.Runner, args []string) error {
+	positionals, flags, err := parseShortcutArgs(args)
+	if err != nil {
+		return err
+	}
+	return runShortcutWithFlags(ctx, out, opts, runner, positionals, flags)
+}
+
+func runShortcutWithFlags(ctx context.Context, out io.Writer, opts *options, runner runtime.Runner, positionals []string, flags map[string]any) error {
+	if value, ok := flags["output"].(string); ok && strings.TrimSpace(value) != "" {
+		opts.output = strings.TrimSpace(value)
+		delete(flags, "output")
+	}
+	match, err := matchShortcut(shortcutViews(runner.Marketplace, ""), positionals, flags)
+	if err != nil {
+		return err
+	}
+	switch match.Shortcut.Target {
+	case "operation":
+		if strings.TrimSpace(match.Shortcut.Operation) == "" {
+			return fmt.Errorf("shortcut %q has no operation", match.Shortcut.Use)
+		}
+		return callOperation(ctx, out, opts.output, runner, opts.instanceName(), match.Shortcut.Operation, match.Input)
+	case "datasource":
+		return runDatasourceShortcut(ctx, out, opts.output, runner, opts.instanceName(), match)
+	default:
+		return fmt.Errorf("shortcut %q target %q is not executable yet", match.Shortcut.Use, match.Shortcut.Target)
+	}
+}
+
+func shortcutFlagsFromCommand(cmd *cobra.Command) map[string]any {
+	flags := map[string]any{}
+	if cmd == nil {
+		return flags
+	}
+	if cmd.Flags().Changed("endpoint") {
+		value, _ := cmd.Flags().GetString("endpoint")
+		setShortcutInputValue(flags, "endpoint", value)
+	}
+	if cmd.Flags().Changed("endpoint-ref") {
+		value, _ := cmd.Flags().GetString("endpoint-ref")
+		setShortcutInputValue(flags, "endpoint", value)
+	}
+	for _, name := range []string{"namespace", "context", "name", "query"} {
+		if cmd.Flags().Changed(name) {
+			value, _ := cmd.Flags().GetString(name)
+			setShortcutInputValue(flags, name, value)
+		}
+	}
+	if cmd.Flags().Changed("limit") {
+		value, _ := cmd.Flags().GetInt("limit")
+		flags["limit"] = value
+	}
+	return flags
+}
+
+func runDatasourceShortcut(ctx context.Context, out io.Writer, output string, runner runtime.Runner, instance string, match shortcutMatch) error {
+	plugin := strings.TrimSpace(match.Shortcut.Plugin)
+	if plugin == "" {
+		return fmt.Errorf("shortcut %q has no plugin", match.Shortcut.Use)
+	}
+	if strings.TrimSpace(match.Shortcut.Entity) != "" {
+		if _, ok := match.Input["entity"]; !ok {
+			match.Input["entity"] = match.Shortcut.Entity
+		}
+	}
+	command := protocol.CommandDatasourcesSearch
+	switch strings.TrimSpace(match.Shortcut.Capability) {
+	case "", "search":
+		command = protocol.CommandDatasourcesSearch
+	case "lookup":
+		command = protocol.CommandDatasourcesLookup
+	case "get":
+		command = protocol.CommandDatasourcesGet
+	default:
+		return fmt.Errorf("unsupported datasource shortcut capability %q", match.Shortcut.Capability)
+	}
+	resp, err := runner.InvokeInstance(ctx, plugin, instance, command, match.Input)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		if resp.Error != nil {
+			return fmt.Errorf("%s", resp.Error.Message)
+		}
+		return fmt.Errorf("datasource shortcut %q failed", match.Shortcut.Use)
+	}
+	return render(out, output, resp.Result)
+}
+
+func parseShortcutArgs(args []string) ([]string, map[string]any, error) {
+	flags := map[string]any{}
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		if arg == "" {
+			continue
+		}
+		if arg == "-o" {
+			if i+1 >= len(args) {
+				return nil, nil, fmt.Errorf("-o requires a value")
+			}
+			i++
+			flags["output"] = strings.TrimSpace(args[i])
+			continue
+		}
+		if strings.HasPrefix(arg, "--") {
+			nameValue := strings.TrimPrefix(arg, "--")
+			name, value, hasValue := strings.Cut(nameValue, "=")
+			name = shortcutFieldName(name)
+			if name == "" {
+				continue
+			}
+			if !hasValue {
+				if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+					flags[name] = true
+					continue
+				}
+				i++
+				value = args[i]
+			}
+			setShortcutInputValue(flags, name, strings.TrimSpace(value))
+			continue
+		}
+		positionals = append(positionals, arg)
+	}
+	return positionals, flags, nil
+}
+
+func matchShortcut(shortcuts []shortcutView, args []string, flags map[string]any) (shortcutMatch, error) {
+	var candidates []string
+	for _, shortcut := range shortcuts {
+		input, ok := shortcutInput(shortcut, args, flags)
+		if ok {
+			return shortcutMatch{Shortcut: shortcut, Input: input}, nil
+		}
+		if firstShortcutToken(shortcut.Use) == firstArg(args) {
+			candidates = append(candidates, shortcut.Use)
+		}
+	}
+	if len(candidates) > 0 {
+		return shortcutMatch{}, fmt.Errorf("unknown shortcut %q; available: %s", strings.Join(args, " "), strings.Join(candidates, ", "))
+	}
+	return shortcutMatch{}, fmt.Errorf("unknown shortcut %q", strings.Join(args, " "))
+}
+
+func shortcutInput(shortcut shortcutView, args []string, flags map[string]any) (map[string]any, bool) {
+	pattern := strings.Fields(shortcut.Use)
+	if len(pattern) == 0 || len(args) == 0 {
+		return nil, false
+	}
+	input := cloneAnyMap(shortcut.Defaults)
+	for key, value := range flags {
+		input[key] = value
+	}
+	i := 0
+	for p := 0; p < len(pattern); p++ {
+		token := pattern[p]
+		if shortcutPlaceholder(token) == "" {
+			if i >= len(args) || token != args[i] {
+				return nil, false
+			}
+			i++
+			continue
+		}
+		name := shortcutPlaceholder(token)
+		if name == "query" || name == "text" || name == "prompt" {
+			if i >= len(args) {
+				return nil, false
+			}
+			setShortcutInputValue(input, name, strings.Join(args[i:], " "))
+			i = len(args)
+			continue
+		}
+		if i >= len(args) {
+			return nil, false
+		}
+		setShortcutInputValue(input, name, args[i])
+		i++
+	}
+	if i != len(args) {
+		return nil, false
+	}
+	return input, true
+}
+
+func setShortcutInputValue(input map[string]any, name, value string) {
+	name = shortcutFieldName(name)
+	switch name {
+	case "namespace_name":
+		namespace, resourceName, ok := strings.Cut(value, "/")
+		if ok {
+			input["namespace"] = strings.TrimSpace(namespace)
+			input["name"] = strings.TrimSpace(resourceName)
+			return
+		}
+		input["name"] = strings.TrimSpace(value)
+	case "endpoint":
+		input["endpoint_ref"] = strings.TrimSpace(value)
+	case "limit":
+		limit, err := strconv.Atoi(strings.TrimSpace(value))
+		if err == nil {
+			input["limit"] = limit
+			return
+		}
+		input["limit"] = strings.TrimSpace(value)
+	default:
+		input[name] = strings.TrimSpace(value)
+	}
+}
+
+func shortcutFieldName(name string) string {
+	name = strings.Trim(strings.TrimSpace(name), "<>")
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	name = strings.NewReplacer("-", "_", "/", "_").Replace(name)
+	return name
+}
+
+func shortcutPlaceholder(token string) string {
+	token = strings.TrimSpace(token)
+	if strings.HasPrefix(token, "<") && strings.HasSuffix(token, ">") {
+		return strings.Trim(token, "<>")
+	}
+	return ""
+}
+
+func firstShortcutToken(use string) string {
+	fields := strings.Fields(use)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
+}
+
+func firstArg(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	return args[0]
+}
+
+func cloneAnyMap(input map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
 }
 
 func discoverEndpoints(ctx context.Context, runner runtime.Runner, instance, product, pluginFilter string, input map[string]any) (endpointDiscoveryView, error) {

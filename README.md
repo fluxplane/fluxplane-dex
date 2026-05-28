@@ -83,6 +83,13 @@ Check registered endpoint health:
 dex doctor endpoints
 ```
 
+Use Kubernetes inventory shortcuts:
+
+```bash
+dex kube svc ls --endpoint dev-kubernetes --namespace latest
+dex kube pod ls --endpoint dev-kubernetes --namespace latest --query api
+```
+
 ## Current Status
 
 This project is actively being built. The current surface includes:

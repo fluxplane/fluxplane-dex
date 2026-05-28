@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net"
 	"os"
@@ -560,6 +561,60 @@ func main() {
 	return pluginDir
 }
 
+func writeFakeKubernetesShortcutPlugin(t *testing.T) string {
+	t.Helper()
+	pluginDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pluginDir, "go.mod"), []byte("module fakekubernetesshortcut\n\ngo 1.26\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmdDir := filepath.Join(pluginDir, "cmd", "dex-plugin-kubernetes")
+	if err := os.MkdirAll(cmdDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mainGo := `package main
+
+import (
+	"encoding/json"
+	"os"
+)
+
+func main() {
+	var req struct {
+		Command string
+		Payload json.RawMessage
+	}
+	_ = json.NewDecoder(os.Stdin).Decode(&req)
+	if req.Command == "manifest" {
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"protocol": "dex.plugin.v1",
+			"ok": true,
+			"result": map[string]any{
+				"name": "kubernetes",
+				"operations": []map[string]any{{"name": "kubernetes.service.show", "read_only": true}},
+			},
+		})
+		return
+	}
+	var call struct {
+		Name string
+		Input json.RawMessage
+	}
+	_ = json.Unmarshal(req.Payload, &call)
+	var input map[string]any
+	_ = json.Unmarshal(call.Input, &input)
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"protocol": "dex.plugin.v1",
+		"ok": true,
+		"result": map[string]any{"name": call.Name, "input": input},
+	})
+}
+`
+	if err := os.WriteFile(filepath.Join(cmdDir, "main.go"), []byte(mainGo), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return pluginDir
+}
+
 func writeFailingEndpointDiscoverPlugin(t *testing.T) string {
 	t.Helper()
 	pluginDir := t.TempDir()
@@ -681,6 +736,70 @@ func TestShortcutListIncludesKubernetesInventoryBindings(t *testing.T) {
 	}
 	if !foundPodList || !foundSearch {
 		t.Fatalf("shortcuts = %#v", result.Shortcuts)
+	}
+}
+
+func TestShortcutExecutesKubernetesOperationBinding(t *testing.T) {
+	pluginDir := writeFakeKubernetesShortcutPlugin(t)
+	var out bytes.Buffer
+	state, err := runtime.NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := runtime.Runner{
+		Marketplace: runtime.NewMarketplace(core.Marketplace{Version: "1", Plugins: []core.PluginEntry{{
+			Name: "kubernetes", Binary: "dex-plugin-kubernetes", LocalPath: pluginDir,
+			Commands: []core.CommandShortcut{{Use: "kube svc show <namespace/name>", Target: "operation", Operation: "kubernetes.service.show"}},
+		}}}),
+		State: state,
+	}
+	opts := &options{output: "json"}
+	if err := runShortcut(context.Background(), &out, opts, runner, []string{"kube", "svc", "show", "latest/api", "--context", "dev"}); err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["name"] != "kubernetes.service.show" {
+		t.Fatalf("result = %#v", result)
+	}
+	input, _ := result["input"].(map[string]any)
+	if input["namespace"] != "latest" || input["name"] != "api" || input["context"] != "dev" {
+		t.Fatalf("input = %#v", input)
+	}
+}
+
+func TestShortcutPrefixCommandExecutesWithFlags(t *testing.T) {
+	pluginDir := writeFakeKubernetesShortcutPlugin(t)
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "--dev-plugin", "kubernetes=" + pluginDir, "kube", "svc", "show", "latest/api", "--context", "dev", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	input, _ := result["input"].(map[string]any)
+	if result["name"] != "kubernetes.service.show" || input["namespace"] != "latest" || input["name"] != "api" || input["context"] != "dev" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestShortcutArgParsingMapsEndpointFlag(t *testing.T) {
+	positionals, flags, err := parseShortcutArgs([]string{"kube", "svc", "ls", "--endpoint", "dev-cluster", "--namespace=latest", "--limit", "3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(positionals, " ") != "kube svc ls" {
+		t.Fatalf("positionals = %#v", positionals)
+	}
+	if flags["endpoint_ref"] != "dev-cluster" || flags["namespace"] != "latest" || flags["limit"] != 3 {
+		t.Fatalf("flags = %#v", flags)
 	}
 }
 

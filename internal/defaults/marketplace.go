@@ -71,6 +71,59 @@ const MarketplaceJSON = `{
       ]
     },
     {
+      "name": "docker",
+      "description": "Local Docker Engine inspection for containers, images, networks, volumes, and daemon info.",
+      "aliases": ["dock", "docker"],
+      "binary": "dex-plugin-docker",
+      "go_install": "github.com/fluxplane/fluxplane-dex/plugins/docker/cmd/dex-plugin-docker@latest",
+      "local_path": "plugins/docker",
+      "commands": [
+        {"use": "docker info", "target": "operation", "operation": "docker.info"},
+        {"use": "docker ps", "target": "operation", "operation": "docker.container.list"},
+        {"use": "docker container show <id-or-name>", "target": "operation", "operation": "docker.container.show"},
+        {"use": "docker logs <id-or-name>", "target": "operation", "operation": "docker.container.logs"},
+        {"use": "docker stats <id-or-name>", "target": "operation", "operation": "docker.container.stats"},
+        {"use": "docker top <id-or-name>", "target": "operation", "operation": "docker.container.top"},
+        {"use": "docker exec <id-or-name> <cmd>", "target": "operation", "operation": "docker.container.exec"},
+        {"use": "docker cp <id-or-name>:<path> <local-dir>", "target": "operation", "operation": "docker.container.copy_from"},
+        {"use": "docker cp <local-path> <id-or-name>:<path>", "target": "operation", "operation": "docker.container.copy_to"},
+        {"use": "docker create <image>", "target": "operation", "operation": "docker.container.create"},
+        {"use": "docker run <image>", "target": "operation", "operation": "docker.container.run"},
+        {"use": "docker start <id-or-name>", "target": "operation", "operation": "docker.container.start"},
+        {"use": "docker stop <id-or-name>", "target": "operation", "operation": "docker.container.stop"},
+        {"use": "docker restart <id-or-name>", "target": "operation", "operation": "docker.container.restart"},
+        {"use": "docker rm <id-or-name>", "target": "operation", "operation": "docker.container.remove"},
+        {"use": "docker container prune", "target": "operation", "operation": "docker.container.prune"},
+        {"use": "docker container inspect-raw <id-or-name>", "target": "operation", "operation": "docker.container.inspect.raw"},
+        {"use": "docker images", "target": "operation", "operation": "docker.image.list"},
+        {"use": "docker image show <id-or-ref>", "target": "operation", "operation": "docker.image.show"},
+        {"use": "docker pull <reference>", "target": "operation", "operation": "docker.image.pull"},
+        {"use": "docker tag <source> <target>", "target": "operation", "operation": "docker.image.tag"},
+        {"use": "docker push <reference>", "target": "operation", "operation": "docker.image.push"},
+        {"use": "docker build <context>", "target": "operation", "operation": "docker.image.build"},
+        {"use": "docker rmi <id-or-ref>", "target": "operation", "operation": "docker.image.remove"},
+        {"use": "docker image prune", "target": "operation", "operation": "docker.image.prune"},
+        {"use": "docker image inspect-raw <id-or-ref>", "target": "operation", "operation": "docker.image.inspect.raw"},
+        {"use": "docker networks", "target": "operation", "operation": "docker.network.list"},
+        {"use": "docker network create <name>", "target": "operation", "operation": "docker.network.create"},
+        {"use": "docker network rm <id-or-name>", "target": "operation", "operation": "docker.network.remove"},
+        {"use": "docker network prune", "target": "operation", "operation": "docker.network.prune"},
+        {"use": "docker network inspect-raw <id-or-name>", "target": "operation", "operation": "docker.network.inspect.raw"},
+        {"use": "docker system df", "target": "operation", "operation": "docker.system.df"},
+        {"use": "docker system prune", "target": "operation", "operation": "docker.system.prune"},
+        {"use": "docker events", "target": "operation", "operation": "docker.events"},
+        {"use": "docker volumes", "target": "operation", "operation": "docker.volume.list"},
+        {"use": "docker volume create <name>", "target": "operation", "operation": "docker.volume.create"},
+        {"use": "docker volume rm <name>", "target": "operation", "operation": "docker.volume.remove"},
+        {"use": "docker volume prune", "target": "operation", "operation": "docker.volume.prune"},
+        {"use": "docker volume inspect-raw <name>", "target": "operation", "operation": "docker.volume.inspect.raw"},
+        {"use": "docker build-cache prune", "target": "operation", "operation": "docker.build_cache.prune"},
+        {"use": "docker context ls", "target": "operation", "operation": "docker.context.list"},
+        {"use": "docker context show <name>", "target": "operation", "operation": "docker.context.show"},
+        {"use": "lookup --plugin docker <text>", "target": "datasource", "datasource": "docker.containers", "capability": "lookup"}
+      ]
+    },
+    {
       "name": "websearch",
       "description": "Generic web search aggregator over provider plugins.",
       "aliases": ["web", "websearch"],
@@ -150,6 +203,37 @@ const MarketplaceJSON = `{
       "commands": [
         {"use": "sql query <query>", "target": "operation", "operation": "sql.query"},
         {"use": "mysql query <query>", "target": "operation", "operation": "sql.query"}
+      ]
+    },
+    {
+      "name": "ollama",
+      "description": "Ollama local LLM operations: inspect installed models, generate completions, chat, and embed.",
+      "aliases": ["ol", "ollama"],
+      "binary": "dex-plugin-ollama",
+      "go_install": "github.com/fluxplane/fluxplane-dex/plugins/ollama/cmd/dex-plugin-ollama@latest",
+      "local_path": "plugins/ollama",
+      "commands": [
+        {"use": "ollama info", "target": "operation", "operation": "ollama.info"},
+        {"use": "ollama models", "target": "operation", "operation": "ollama.model.list"},
+        {"use": "ollama model show <name>", "target": "operation", "operation": "ollama.model.show"},
+        {"use": "ollama ps", "target": "operation", "operation": "ollama.ps"},
+        {"use": "ollama generate <model> <prompt>", "target": "operation", "operation": "ollama.generate"},
+        {"use": "ollama chat <model>", "target": "operation", "operation": "ollama.chat"},
+        {"use": "ollama embed <model> <text>", "target": "operation", "operation": "ollama.embed"},
+        {"use": "search --plugin ollama <query>", "target": "datasource", "datasource": "ollama.models", "capability": "search", "entity": "ollama.model"},
+        {"use": "lookup --plugin ollama <text>", "target": "datasource", "datasource": "ollama.models", "capability": "lookup"}
+      ]
+    },
+    {
+      "name": "openai",
+      "description": "OpenAI API plugin. Currently exposes image generation and model listing.",
+      "aliases": ["oai", "openai"],
+      "binary": "dex-plugin-openai",
+      "go_install": "github.com/fluxplane/fluxplane-dex/plugins/openai/cmd/dex-plugin-openai@latest",
+      "local_path": "plugins/openai",
+      "commands": [
+        {"use": "openai image generate <prompt>", "target": "operation", "operation": "openai.image.generate"},
+        {"use": "openai models", "target": "operation", "operation": "openai.model.list"}
       ]
     }
   ]

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.png" alt="fluxplane-dex" width="160" />
+</p>
+
 # fluxplane-dex
 
 `fluxplane-dex` is a plugin-backed engineering CLI for humans and AI agents.

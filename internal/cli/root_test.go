@@ -222,6 +222,37 @@ func TestEndpointTestUsesTCPFallback(t *testing.T) {
 	}
 }
 
+func TestEndpointTestUsesKubernetesPlugin(t *testing.T) {
+	home := t.TempDir()
+	state, err := runtime.NewState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveEndpoint(core.EndpointRef{ID: "dev-cluster", URL: "kubernetes://context/dev", Product: "kubernetes", Protocol: "kubernetes"}); err != nil {
+		t.Fatal(err)
+	}
+	pluginDir := writeFakeKubernetesTestPlugin(t)
+
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", home, "--dev-plugin", "kubernetes=" + pluginDir, "endpoint", "test", "dev-cluster", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var result endpointTestResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK || result.Method != "kubernetes.cluster.test" {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.Details["context"] != "dev" || result.Details["server_version"] != "v1.30.0" {
+		t.Fatalf("details = %#v", result.Details)
+	}
+}
+
 func TestEndpointImportCandidateFromDiscoveryJSON(t *testing.T) {
 	home := t.TempDir()
 	cmd := NewRootCommand()
@@ -397,6 +428,73 @@ func main() {
 			"columns": []string{"ok"},
 			"row_count": 1,
 			"rows": []map[string]any{{"ok": 1}},
+		},
+	})
+}
+`
+	if err := os.WriteFile(filepath.Join(cmdDir, "main.go"), []byte(mainGo), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return pluginDir
+}
+
+func writeFakeKubernetesTestPlugin(t *testing.T) string {
+	t.Helper()
+	pluginDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pluginDir, "go.mod"), []byte("module fakekubernetestest\n\ngo 1.26\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmdDir := filepath.Join(pluginDir, "cmd", "dex-plugin-kubernetes")
+	if err := os.MkdirAll(cmdDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mainGo := `package main
+
+import (
+	"encoding/json"
+	"net/url"
+	"os"
+	"strings"
+)
+
+func main() {
+	var req struct {
+		Command string
+		Payload json.RawMessage
+	}
+	_ = json.NewDecoder(os.Stdin).Decode(&req)
+	if req.Command == "manifest" {
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"protocol": "dex.plugin.v1",
+			"ok": true,
+			"result": map[string]any{
+				"name": "kubernetes",
+				"operations": []map[string]any{{"name": "kubernetes.cluster.test", "read_only": true}},
+			},
+		})
+		return
+	}
+	var call struct {
+		Name string
+		Input json.RawMessage
+	}
+	_ = json.Unmarshal(req.Payload, &call)
+	var input map[string]any
+	_ = json.Unmarshal(call.Input, &input)
+	rawURL, _ := input["url"].(string)
+	parsed, _ := url.Parse(rawURL)
+	contextName := strings.TrimPrefix(parsed.Path, "/")
+	if parsed.Host != "context" {
+		contextName = parsed.Host
+	}
+	contextName, _ = url.PathUnescape(contextName)
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"protocol": "dex.plugin.v1",
+		"ok": true,
+		"result": map[string]any{
+			"context": contextName,
+			"ok": true,
+			"server_version": "v1.30.0",
 		},
 	})
 }

@@ -32,6 +32,37 @@ func TestEndpointDiscoverFindsPrometheusService(t *testing.T) {
 	}
 }
 
+func TestEndpointDiscoverFindsKubernetesClusterContext(t *testing.T) {
+	plugin := NewPluginWithService(Service{
+		Contexts: func() (ClusterListResult, error) {
+			return ClusterListResult{Contexts: []ClusterContext{{Name: "dev/context", Current: true, Cluster: "dev", User: "aws"}}}, nil
+		},
+	})
+
+	out := plugintest.RunOK[EndpointDiscoverResult](t, plugin, OperationEndpointDiscover, map[string]any{"product": "kubernetes"})
+	if len(out.Candidates) != 1 {
+		t.Fatalf("candidates = %#v", out.Candidates)
+	}
+	candidate := out.Candidates[0]
+	if candidate.Product != "kubernetes" || candidate.Protocol != "kubernetes" || candidate.Source != "kubeconfig" || candidate.URL != "kubernetes://context/dev%2Fcontext" {
+		t.Fatalf("candidate = %#v", candidate)
+	}
+}
+
+func TestClusterTestUsesContextFromEndpointURL(t *testing.T) {
+	plugin := NewPluginWithService(Service{
+		ClusterProbe: func(_ context.Context, input ClusterTestInput) (ClusterTestResult, error) {
+			contextName := clusterContextFromTestInput(input)
+			return ClusterTestResult{Context: contextName, OK: true, ServerVersion: "v1.30.0"}, nil
+		},
+	})
+
+	out := plugintest.RunOK[ClusterTestResult](t, plugin, OperationClusterTest, map[string]any{"url": "kubernetes://context/dev%2Fcontext"})
+	if !out.OK || out.Context != "dev/context" || out.ServerVersion != "v1.30.0" {
+		t.Fatalf("result = %#v", out)
+	}
+}
+
 func TestEndpointsDiscoverProtocolUsesKubernetes(t *testing.T) {
 	plugin := NewPluginWithService(Service{
 		Services: func(_ context.Context, _ EndpointDiscoverInput) ([]corev1.Service, error) {

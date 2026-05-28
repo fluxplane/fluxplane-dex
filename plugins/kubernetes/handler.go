@@ -12,6 +12,7 @@ func NewPlugin() *pluginbinding.Plugin {
 func NewPluginWithService(service Service) *pluginbinding.Plugin {
 	plugin := pluginbinding.Define(manifestSpec(),
 		pluginbinding.RegisterOperation(clusterListSpec(), service.ClusterList),
+		pluginbinding.RegisterOperation(clusterTestSpec(), service.ClusterTest),
 		pluginbinding.RegisterOperation(endpointDiscoverSpec(), service.EndpointDiscover),
 	)
 	plugin.Command(protocol.CommandEndpointsDiscover, service.DiscoverEndpointsCommand)

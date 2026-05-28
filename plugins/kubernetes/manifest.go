@@ -11,6 +11,7 @@ const (
 	PluginDescription = "Kubernetes cluster discovery using kubeconfig and kubectl."
 
 	OperationClusterList      = "kubernetes.cluster.list"
+	OperationClusterTest      = "kubernetes.cluster.test"
 	OperationEndpointDiscover = "kubernetes.endpoint.discover"
 
 	EndpointClusterDiscovered = "kubernetes.discovered_endpoints"
@@ -28,10 +29,11 @@ func manifestSpec() pluginbinding.ManifestSpec {
 		Aliases:     []string{"k8s", "kube", PluginName},
 		Operations: []core.OperationSpec{
 			clusterListSpec(),
+			clusterTestSpec(),
 			endpointDiscoverSpec(),
 		},
 		Endpoints: []core.EndpointSpec{
-			pluginbinding.Endpoint(EndpointClusterDiscovered, "Product endpoints discovered inside Kubernetes clusters.", "prometheus", "loki", "homer", "mysql"),
+			pluginbinding.Endpoint(EndpointClusterDiscovered, "Product endpoints discovered inside Kubernetes clusters.", "kubernetes", "prometheus", "loki", "homer", "mysql", "postgres"),
 		},
 	}
 }
@@ -40,6 +42,14 @@ func clusterListSpec() core.OperationSpec {
 	return pluginbinding.TypedOperationSpec[ClusterListInput, ClusterListResult](
 		OperationClusterList,
 		"List kubeconfig contexts.",
+		kubernetesReadOptions(core.OperationIdempotent)...,
+	)
+}
+
+func clusterTestSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[ClusterTestInput, ClusterTestResult](
+		OperationClusterTest,
+		"Probe Kubernetes cluster reachability through kubeconfig.",
 		kubernetesReadOptions(core.OperationIdempotent)...,
 	)
 }

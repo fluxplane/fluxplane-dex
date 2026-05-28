@@ -197,6 +197,9 @@ Scope:
 - Added endpoint test reports: SQL endpoints are probed through `sql.query`
   using endpoint refs, and other network endpoints use a bounded TCP connect
   fallback.
+- Added Kubernetes cluster endpoints from kubeconfig contexts and a
+  `kubernetes.cluster.test` probe so cluster reachability is represented as
+  endpoint health, not only as product discovery inside a cluster.
 - Added Kubernetes-discovered MySQL connection-secret candidates so SQL can
   consume cluster-intrinsic credentials without copying secret material into
   the host.
@@ -209,6 +212,8 @@ Acceptance:
 - Done: endpoint refs can carry secret refs without exposing secret material.
 - Done: Prometheus, Loki, and SQL can consume registered endpoint refs.
 - Done: endpoint refs can be tested with a structured health report.
+- Done: Kubernetes cluster endpoint refs can be discovered and probed through
+  kubeconfig/client-go.
 - Done: credential-gated live validation against the dev Kubernetes cluster's
   `latest` namespace with Crossplane-managed MySQL/PostgreSQL connection
   secrets and SQL queries through registered endpoint refs.
@@ -836,7 +841,9 @@ The current plugin protocol can express operations, auth methods, datasources, c
    URLs/refs.
 5. Done: endpoint health/test reports exist for SQL endpoint refs and generic
    TCP-reachable network endpoints.
-6. Next: add a documented live-test matrix for Kubernetes service discovery and
+6. Done: Kubernetes cluster endpoints can be discovered from kubeconfig and
+   probed via `kubernetes.cluster.test`.
+7. Next: add a documented live-test matrix for Kubernetes service discovery and
    Crossplane-style SQL secret discovery.
 
 ### Phase 3: Port High-Value Daily Workflow Integrations

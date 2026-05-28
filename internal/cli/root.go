@@ -1125,10 +1125,50 @@ func mergeStringMaps(base, override map[string]string) map[string]string {
 }
 
 func testEndpoint(ctx context.Context, runner runtime.Runner, instance string, endpoint runtime.EndpointRecord) endpointTestResult {
+	if isKubernetesEndpoint(endpoint) {
+		return testKubernetesEndpoint(ctx, runner, instance, endpoint)
+	}
 	if isSQLEndpoint(endpoint) {
 		return testSQLEndpoint(ctx, runner, instance, endpoint)
 	}
 	return testTCPEndpoint(ctx, endpoint)
+}
+
+func testKubernetesEndpoint(ctx context.Context, runner runtime.Runner, instance string, endpoint runtime.EndpointRecord) endpointTestResult {
+	start := time.Now()
+	result := endpointTestResult{
+		ID:       endpoint.ID,
+		URL:      redactEndpointURL(endpoint.URL),
+		Product:  endpoint.Product,
+		Protocol: endpoint.Protocol,
+		Method:   "kubernetes.cluster.test",
+	}
+	inputRaw, err := json.Marshal(map[string]any{"endpoint_ref": endpoint.ID})
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	resp, err := runner.InvokeInstance(ctx, "kubernetes", instance, protocol.CommandOperationsCall, protocol.OperationCall{Name: "kubernetes.cluster.test", Input: inputRaw})
+	result.DurationMS = time.Since(start).Milliseconds()
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	if !resp.OK {
+		if resp.Error != nil {
+			result.Error = resp.Error.Message
+		}
+		if result.Error == "" {
+			result.Error = "kubernetes cluster test failed"
+		}
+		return result
+	}
+	var details map[string]any
+	if err := json.Unmarshal(resp.Result, &details); err == nil {
+		result.Details = details
+	}
+	result.OK = true
+	return result
 }
 
 func testSQLEndpoint(ctx context.Context, runner runtime.Runner, instance string, endpoint runtime.EndpointRecord) endpointTestResult {
@@ -1202,6 +1242,20 @@ func testTCPEndpoint(ctx context.Context, endpoint runtime.EndpointRecord) endpo
 	result.OK = true
 	result.Details = map[string]any{"address": hostPort}
 	return result
+}
+
+func isKubernetesEndpoint(endpoint runtime.EndpointRecord) bool {
+	values := []string{endpoint.Product, endpoint.Protocol}
+	if parsed, err := url.Parse(endpoint.URL); err == nil {
+		values = append(values, parsed.Scheme)
+	}
+	for _, value := range values {
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "kubernetes", "k8s", "kube", "cluster":
+			return true
+		}
+	}
+	return false
 }
 
 func isSQLEndpoint(endpoint runtime.EndpointRecord) bool {

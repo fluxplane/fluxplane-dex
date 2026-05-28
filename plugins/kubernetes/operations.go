@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
@@ -20,9 +21,10 @@ import (
 )
 
 type Service struct {
-	Contexts func() (ClusterListResult, error)
-	Services func(context.Context, EndpointDiscoverInput) ([]corev1.Service, error)
-	Secrets  func(context.Context, EndpointDiscoverInput) ([]corev1.Secret, error)
+	Contexts     func() (ClusterListResult, error)
+	ClusterProbe func(context.Context, ClusterTestInput) (ClusterTestResult, error)
+	Services     func(context.Context, EndpointDiscoverInput) ([]corev1.Service, error)
+	Secrets      func(context.Context, EndpointDiscoverInput) ([]corev1.Secret, error)
 }
 
 func NewService() Service {
@@ -40,6 +42,20 @@ type ClusterContext struct {
 	Current bool   `json:"current,omitempty"`
 	Cluster string `json:"cluster,omitempty"`
 	User    string `json:"user,omitempty"`
+}
+
+type ClusterTestInput struct {
+	EndpointRef string `json:"endpoint_ref,omitempty" jsonschema:"description=Registered endpoint ref resolved by the host."`
+	URL         string `json:"url,omitempty" jsonschema:"description=Kubernetes endpoint URL, usually kubernetes://context/<escaped-context>."`
+	Context     string `json:"context,omitempty" jsonschema:"description=Kubeconfig context override."`
+}
+
+type ClusterTestResult struct {
+	Context       string `json:"context,omitempty"`
+	OK            bool   `json:"ok"`
+	ServerVersion string `json:"server_version,omitempty"`
+	Platform      string `json:"platform,omitempty"`
+	DurationMS    int64  `json:"duration_ms,omitempty"`
 }
 
 type EndpointDiscoverInput struct {
@@ -61,7 +77,22 @@ func (s Service) ClusterList(ctx pluginbinding.Context, input ClusterListInput) 
 	return result, nil
 }
 
+func (s Service) ClusterTest(ctx pluginbinding.Context, input ClusterTestInput) (ClusterTestResult, error) {
+	result, err := s.clusterProbe()(context.Background(), input)
+	if err != nil {
+		return ClusterTestResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
+	}
+	return result, nil
+}
+
 func (s Service) EndpointDiscover(ctx pluginbinding.Context, input EndpointDiscoverInput) (EndpointDiscoverResult, error) {
+	if shouldDiscoverKubernetesCluster(input.Product) {
+		result, err := s.contexts()()
+		if err != nil {
+			return EndpointDiscoverResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
+		}
+		return EndpointDiscoverResult{Candidates: limitCandidates(clusterEndpointCandidates(result.Contexts, input), input.Limit)}, nil
+	}
 	services, err := s.services()(context.Background(), input)
 	if err != nil {
 		return EndpointDiscoverResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
@@ -100,6 +131,13 @@ func (s Service) contexts() func() (ClusterListResult, error) {
 	return loadKubeconfigContexts
 }
 
+func (s Service) clusterProbe() func(context.Context, ClusterTestInput) (ClusterTestResult, error) {
+	if s.ClusterProbe != nil {
+		return s.ClusterProbe
+	}
+	return probeKubernetesCluster
+}
+
 func (s Service) services() func(context.Context, EndpointDiscoverInput) ([]corev1.Service, error) {
 	if s.Services != nil {
 		return s.Services
@@ -128,6 +166,25 @@ func loadKubeconfigContexts() (ClusterListResult, error) {
 	return ClusterListResult{Contexts: contexts}, nil
 }
 
+func probeKubernetesCluster(ctx context.Context, input ClusterTestInput) (ClusterTestResult, error) {
+	contextName := clusterContextFromTestInput(input)
+	start := time.Now()
+	clientset, _, err := kubernetesClientWithTimeout(EndpointDiscoverInput{Context: contextName}, 10*time.Second)
+	if err != nil {
+		return ClusterTestResult{}, err
+	}
+	version, err := clientset.Discovery().ServerVersion()
+	if err != nil {
+		return ClusterTestResult{}, err
+	}
+	out := ClusterTestResult{Context: contextName, OK: true, DurationMS: time.Since(start).Milliseconds()}
+	if version != nil {
+		out.ServerVersion = version.GitVersion
+		out.Platform = version.Platform
+	}
+	return out, nil
+}
+
 func listKubernetesServices(ctx context.Context, input EndpointDiscoverInput) ([]corev1.Service, error) {
 	clientset, namespace, err := kubernetesClient(input)
 	if err != nil {
@@ -153,6 +210,10 @@ func listKubernetesSecrets(ctx context.Context, input EndpointDiscoverInput) ([]
 }
 
 func kubernetesClient(input EndpointDiscoverInput) (*kubernetes.Clientset, string, error) {
+	return kubernetesClientWithTimeout(input, 0)
+}
+
+func kubernetesClientWithTimeout(input EndpointDiscoverInput, timeout time.Duration) (*kubernetes.Clientset, string, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	overrides := &clientcmd.ConfigOverrides{}
 	if strings.TrimSpace(input.Context) != "" {
@@ -161,6 +222,9 @@ func kubernetesClient(input EndpointDiscoverInput) (*kubernetes.Clientset, strin
 	restConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
 	if err != nil {
 		return nil, "", err
+	}
+	if timeout > 0 {
+		restConfig.Timeout = timeout
 	}
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
@@ -171,6 +235,76 @@ func kubernetesClient(input EndpointDiscoverInput) (*kubernetes.Clientset, strin
 		namespace = metav1.NamespaceAll
 	}
 	return clientset, namespace, nil
+}
+
+func shouldDiscoverKubernetesCluster(product string) bool {
+	switch strings.ToLower(strings.TrimSpace(product)) {
+	case "kubernetes", "k8s", "kube", "cluster":
+		return true
+	default:
+		return false
+	}
+}
+
+func kubernetesClusterEndpointURL(contextName string) string {
+	return "kubernetes://context/" + url.PathEscape(strings.TrimSpace(contextName))
+}
+
+func clusterContextFromTestInput(input ClusterTestInput) string {
+	if strings.TrimSpace(input.Context) != "" {
+		return strings.TrimSpace(input.Context)
+	}
+	parsed, err := url.Parse(strings.TrimSpace(input.URL))
+	if err != nil {
+		return ""
+	}
+	if parsed.Scheme != "kubernetes" && parsed.Scheme != "k8s" {
+		return ""
+	}
+	if parsed.Host == "context" && strings.Trim(parsed.Path, "/") != "" {
+		path := strings.TrimPrefix(parsed.Path, "/")
+		if value, err := url.PathUnescape(path); err == nil {
+			return value
+		}
+		return path
+	}
+	return parsed.Host
+}
+
+func clusterEndpointCandidates(contexts []ClusterContext, input EndpointDiscoverInput) []core.EndpointCandidate {
+	filter := strings.TrimSpace(input.Context)
+	candidates := make([]core.EndpointCandidate, 0, len(contexts))
+	for _, item := range contexts {
+		if filter != "" && item.Name != filter {
+			continue
+		}
+		endpoint := kubernetesClusterEndpointURL(item.Name)
+		labels := map[string]string{"context": item.Name}
+		if item.Cluster != "" {
+			labels["cluster"] = item.Cluster
+		}
+		if item.User != "" {
+			labels["user"] = item.User
+		}
+		if item.Current {
+			labels["current"] = "true"
+		}
+		score := 0.8
+		if item.Current {
+			score = 1
+		}
+		candidates = append(candidates, core.EndpointCandidate{
+			ID:          endpointCandidateID("kubernetes", endpoint, "", item.Name),
+			URL:         endpoint,
+			Product:     "kubernetes",
+			Protocol:    "kubernetes",
+			Source:      "kubeconfig",
+			Score:       score,
+			Labels:      labels,
+			Annotations: map[string]string{"cluster": item.Cluster, "user": item.User},
+		})
+	}
+	return candidates
 }
 
 func serviceCandidates(services []corev1.Service, input EndpointDiscoverInput) []core.EndpointCandidate {

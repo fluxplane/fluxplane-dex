@@ -8,7 +8,7 @@ import (
 
 const (
 	PluginName        = "slack"
-	PluginVersion     = "0.6.0"
+	PluginVersion     = "0.7.0"
 	PluginDescription = "Slack token info, messaging, file upload, search, thread, channel member, and reverse lookup operations."
 
 	AuthMethodTokenSet = "token_set"

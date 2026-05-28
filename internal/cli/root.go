@@ -17,10 +17,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"text/template"
 	"time"
 
+	dex "github.com/fluxplane/fluxplane-dex"
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/internal/defaults"
@@ -695,11 +695,11 @@ func newPluginCommand(opts *options) *cobra.Command {
 		Short: "Show marketplace index",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
-			return renderValue(cmd.OutOrStdout(), opts.output, runner.Marketplace.Data())
+			return renderValue(cmd.OutOrStdout(), opts.output, engine.Marketplace().Data())
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
@@ -708,19 +708,19 @@ func newPluginCommand(opts *options) *cobra.Command {
 		Short:   "List marketplace, installed, and activated plugins",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
-			installed, err := runner.State.LoadInstalledPlugins()
+			installed, err := engine.Plugins().List(cmd.Context())
 			if err != nil {
 				return err
 			}
-			statuses, err := runner.State.PluginStatuses(runner.Marketplace)
+			statuses, err := engine.Plugins().Statuses(cmd.Context())
 			if err != nil {
 				return err
 			}
-			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"plugins": runner.Marketplace.Plugins(), "installed": installed.Plugins, "status": statuses})
+			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"plugins": engine.Plugins().All(cmd.Context()), "installed": installed, "status": statuses})
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
@@ -728,12 +728,12 @@ func newPluginCommand(opts *options) *cobra.Command {
 		Short: "Search marketplace plugins",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
 			query := strings.Join(args, " ")
-			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"query": query, "plugins": runtime.SearchPlugins(runner.Marketplace, query)})
+			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"query": query, "plugins": engine.Plugins().Search(cmd.Context(), query)})
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
@@ -741,15 +741,15 @@ func newPluginCommand(opts *options) *cobra.Command {
 		Short: "Show plugin manifest",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
-			resp, err := runner.Invoke(cmd.Context(), args[0], protocol.CommandManifest, nil)
+			manifest, err := engine.Manifest(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
-			return render(cmd.OutOrStdout(), opts.output, resp.Result)
+			return renderValue(cmd.OutOrStdout(), opts.output, manifest)
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
@@ -757,22 +757,18 @@ func newPluginCommand(opts *options) *cobra.Command {
 		Short: "Show plugin installation and activation status",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
 			if len(args) == 0 {
-				statuses, err := runner.State.PluginStatuses(runner.Marketplace)
+				statuses, err := engine.Plugins().Statuses(cmd.Context())
 				if err != nil {
 					return err
 				}
 				return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"status": statuses})
 			}
-			entry, ok := runner.Marketplace.Resolve(args[0])
-			if !ok {
-				return fmt.Errorf("unknown plugin %q", args[0])
-			}
-			status, err := runner.State.PluginStatus(entry)
+			status, err := engine.Plugins().Status(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
@@ -784,16 +780,16 @@ func newPluginCommand(opts *options) *cobra.Command {
 		Short: "Install a plugin from marketplace metadata",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
-			installed, err := runner.InstallPlugin(cmd.Context(), args[0])
+			installed, err := engine.Plugins().Install(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
 			result := map[string]any{"plugin": installed.Name, "installed": true, "record": installed}
-			addSkillRefreshResult(cmd.Context(), opts, runner, result)
+			addSkillRefreshResult(cmd.Context(), opts, engine.Runner(), result)
 			return renderValue(cmd.OutOrStdout(), opts.output, result)
 		},
 	})
@@ -802,21 +798,21 @@ func newPluginCommand(opts *options) *cobra.Command {
 		Short: "Upgrade an installed plugin from marketplace metadata",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
-			if installed, ok, err := runner.State.InstalledPlugin(args[0]); err != nil {
+			if installed, ok, err := engine.Runner().State.InstalledPlugin(args[0]); err != nil {
 				return err
 			} else if !ok || !installed.Managed {
 				return fmt.Errorf("plugin %q is not a managed installed plugin", args[0])
 			}
-			installed, err := runner.UpgradePlugin(cmd.Context(), args[0])
+			installed, err := engine.Plugins().Upgrade(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
 			result := map[string]any{"plugin": installed.Name, "upgraded": true, "record": installed}
-			addSkillRefreshResult(cmd.Context(), opts, runner, result)
+			addSkillRefreshResult(cmd.Context(), opts, engine.Runner(), result)
 			return renderValue(cmd.OutOrStdout(), opts.output, result)
 		},
 	})
@@ -825,18 +821,14 @@ func newPluginCommand(opts *options) *cobra.Command {
 		Short: "Activate an installed or builtin plugin",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
-			entry, ok := runner.Marketplace.Resolve(args[0])
-			if !ok {
-				return fmt.Errorf("unknown plugin %q", args[0])
-			}
-			if err := runner.State.ActivatePlugin(entry); err != nil {
+			if err := engine.Plugins().Activate(cmd.Context(), args[0]); err != nil {
 				return err
 			}
-			status, err := runner.State.PluginStatus(entry)
+			status, err := engine.Plugins().Status(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
@@ -848,19 +840,15 @@ func newPluginCommand(opts *options) *cobra.Command {
 		Short: "Deactivate a plugin without removing its install record",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
-			entry, ok := runner.Marketplace.Resolve(args[0])
-			if !ok {
-				return fmt.Errorf("unknown plugin %q", args[0])
-			}
-			changed, err := runner.State.DeactivatePlugin(entry.Name)
+			changed, err := engine.Plugins().Deactivate(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
-			status, err := runner.State.PluginStatus(entry)
+			status, err := engine.Plugins().Status(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
@@ -872,11 +860,11 @@ func newPluginCommand(opts *options) *cobra.Command {
 		Short: "Uninstall a managed plugin and remove its local state record",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
-			result, err := runner.State.UninstallPlugin(args[0])
+			result, err := engine.Plugins().Uninstall(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
@@ -887,7 +875,7 @@ func newPluginCommand(opts *options) *cobra.Command {
 			if strings.TrimSpace(result.Path) != "" {
 				out["path"] = result.Path
 			}
-			addSkillRefreshResult(cmd.Context(), opts, runner, out)
+			addSkillRefreshResult(cmd.Context(), opts, engine.Runner(), out)
 			return renderValue(cmd.OutOrStdout(), opts.output, out)
 		},
 	})
@@ -901,18 +889,18 @@ func newOpCommand(opts *options) *cobra.Command {
 		Short: "List operations",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
 			if len(args) == 1 {
-				resp, err := runner.Invoke(cmd.Context(), args[0], protocol.CommandOperationsList, nil)
+				ops, err := engine.Operations().List(cmd.Context(), args[0])
 				if err != nil {
 					return err
 				}
-				return render(cmd.OutOrStdout(), opts.output, resp.Result)
+				return renderValue(cmd.OutOrStdout(), opts.output, ops)
 			}
-			return renderValue(cmd.OutOrStdout(), opts.output, fanout(cmd.Context(), runner, opts.instanceName(), protocol.CommandOperationsList, nil))
+			return renderValue(cmd.OutOrStdout(), opts.output, fanout(cmd.Context(), engine.Runner(), opts.instanceName(), protocol.CommandOperationsList, nil))
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
@@ -920,11 +908,11 @@ func newOpCommand(opts *options) *cobra.Command {
 		Short: "Show one operation",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
-			operation, err := findOperationSpec(cmd.Context(), runner, args[0])
+			operation, err := findOperationSpec(cmd.Context(), engine.Runner(), args[0])
 			if err != nil {
 				return err
 			}
@@ -940,12 +928,19 @@ func newOpCommand(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
-			runner.EventSink = cliEventSink(cmd.ErrOrStderr())
-			return callOperation(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), args[0], input)
+			plugin, _, ok := strings.Cut(args[0], ".")
+			if !ok || strings.TrimSpace(plugin) == "" {
+				return fmt.Errorf("operation name must start with plugin prefix, got %q", args[0])
+			}
+			resp, err := engine.Operations().RunInstance(cmd.Context(), plugin, opts.instanceName(), args[0], input)
+			if err != nil {
+				return err
+			}
+			return render(cmd.OutOrStdout(), opts.output, resp.Result)
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
@@ -962,12 +957,11 @@ func newOpCommand(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
-			runner.EventSink = cliEventSink(cmd.ErrOrStderr())
-			result, err := runner.OperationBatch(cmd.Context(), args[0], opts.instanceName(), calls)
+			result, err := engine.Operations().BatchInstance(cmd.Context(), args[0], opts.instanceName(), calls)
 			if err != nil {
 				return err
 			}
@@ -984,22 +978,18 @@ func newDatasourceCommand(opts *options) *cobra.Command {
 		Short: "List datasources",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
 			if len(args) == 1 {
-				plugin, ok := runner.Marketplace.Resolve(args[0])
-				if !ok {
-					return fmt.Errorf("unknown plugin %q", args[0])
-				}
-				resp, err := runner.InvokeInstance(cmd.Context(), plugin.Name, opts.instanceName(), protocol.CommandDatasourcesList, nil)
+				datasources, err := engine.Datasources().List(cmd.Context(), args[0])
 				if err != nil {
 					return err
 				}
-				return render(cmd.OutOrStdout(), opts.output, resp.Result)
+				return renderValue(cmd.OutOrStdout(), opts.output, datasources)
 			}
-			return renderValue(cmd.OutOrStdout(), opts.output, fanout(cmd.Context(), runner, opts.instanceName(), protocol.CommandDatasourcesList, nil))
+			return renderValue(cmd.OutOrStdout(), opts.output, fanout(cmd.Context(), engine.Runner(), opts.instanceName(), protocol.CommandDatasourcesList, nil))
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
@@ -1007,11 +997,11 @@ func newDatasourceCommand(opts *options) *cobra.Command {
 		Short: "Show one datasource",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
-			datasource, err := findDatasourceSpec(cmd.Context(), runner, args[0])
+			datasource, err := findDatasourceSpec(cmd.Context(), engine.Runner(), args[0])
 			if err != nil {
 				return err
 			}
@@ -1775,14 +1765,14 @@ func newAuthCommand(opts *options) *cobra.Command {
 		Short: "List plugin auth methods",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
 			if len(args) == 0 {
-				return renderValue(cmd.OutOrStdout(), opts.output, authInfoOverview(cmd.Context(), runner, opts.instanceName()))
+				return renderValue(cmd.OutOrStdout(), opts.output, authInfoOverview(cmd.Context(), engine.Runner(), opts.instanceName()))
 			}
-			info, err := authInfoForPlugin(cmd.Context(), runner, args[0], opts.instanceName())
+			info, err := authInfoForPlugin(cmd.Context(), engine.Runner(), args[0], opts.instanceName())
 			if err != nil {
 				return err
 			}
@@ -1794,18 +1784,18 @@ func newAuthCommand(opts *options) *cobra.Command {
 		Short: "Show host-side secret readiness",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
 			if len(args) == 0 {
-				return renderValue(cmd.OutOrStdout(), opts.output, authStatusOverview(cmd.Context(), runner, opts.instanceName()))
+				return renderValue(cmd.OutOrStdout(), opts.output, authStatusOverview(cmd.Context(), engine.Runner(), opts.instanceName()))
 			}
-			purposes, err := authPurposeSpecs(cmd.Context(), runner, args[0])
+			purposes, err := authPurposeSpecs(cmd.Context(), engine.Runner(), args[0])
 			if err != nil {
 				return err
 			}
-			status := runner.State.SecretStatus(args[0], opts.instanceName(), purposes)
+			status := engine.Runner().State.SecretStatus(args[0], opts.instanceName(), purposes)
 			out := map[string]any{"plugin": args[0], "instance": opts.instanceName(), "auth_required": len(purposes) > 0, "status": status}
 			return renderValue(cmd.OutOrStdout(), opts.output, out)
 		},
@@ -1819,11 +1809,7 @@ func newAuthCommand(opts *options) *cobra.Command {
 		Short: "Connect plugin auth for humans or agents",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
-			if err != nil {
-				return err
-			}
-			fields, err := authFields(cmd.Context(), runner, args[0])
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
@@ -1831,26 +1817,16 @@ func newAuthCommand(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if len(values) == 0 {
-				values, err = promptAuthFields(cmd.InOrStdin(), cmd.OutOrStdout(), args[0], opts.instanceName(), fields)
-				if err != nil {
-					return err
-				}
-			}
-			saved, missing, err := saveAuthValues(runner.State, args[0], opts.instanceName(), fields, values)
+			out, err := engine.Auth().Connect(cmd.Context(), args[0], dex.ConnectOptions{
+				Instance:        opts.instanceName(),
+				PrefilledFields: values,
+				AllowPartial:    connectOpts.yes,
+			})
 			if err != nil {
 				return err
 			}
-			if len(missing) > 0 && !connectOpts.yes {
-				return fmt.Errorf("missing required auth fields: %s", strings.Join(missing, ", "))
-			}
-			if saved > 0 {
-				if err := markPluginAvailable(runner, args[0]); err != nil {
-					return err
-				}
-			}
-			result := map[string]any{"plugin": args[0], "instance": opts.instanceName(), "saved": saved, "missing": missing}
-			addSkillRefreshResult(cmd.Context(), opts, runner, result)
+			result := map[string]any{"plugin": out.Plugin, "instance": out.Instance, "saved": len(out.Saved), "missing": out.Missing}
+			addSkillRefreshResult(cmd.Context(), opts, engine.Runner(), result)
 			return renderValue(cmd.OutOrStdout(), opts.output, result)
 		},
 	}
@@ -1861,37 +1837,38 @@ func newAuthCommand(opts *options) *cobra.Command {
 		Short: "Connect auth by reading manifest-declared environment variables",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
 			if len(args) == 1 {
-				plugin, ok := runner.Marketplace.Resolve(args[0])
+				plugin, ok := engine.Marketplace().Resolve(args[0])
 				if !ok {
 					return fmt.Errorf("unknown plugin %q", args[0])
 				}
-				result, err := autoConnectPlugin(cmd.Context(), runner, plugin.Name, opts.instanceName())
+				result, err := engine.Auth().AutoConnect(cmd.Context(), plugin.Name, opts.instanceName())
 				if err != nil {
 					return err
 				}
 				out := map[string]any{"plugin": result.Plugin, "instance": result.Instance, "saved": result.Saved, "missing": result.Missing, "skipped": result.Skipped}
-				addSkillRefreshResult(cmd.Context(), opts, runner, out)
+				addSkillRefreshResult(cmd.Context(), opts, engine.Runner(), out)
 				if result.Error != "" {
 					out["error"] = result.Error
 				}
 				return renderValue(cmd.OutOrStdout(), opts.output, out)
 			}
-			results := make([]autoConnectResult, 0, len(runner.Marketplace.Plugins()))
-			for _, plugin := range runner.Marketplace.Plugins() {
-				result, err := autoConnectPlugin(cmd.Context(), runner, plugin.Name, opts.instanceName())
+			plugins := engine.Marketplace().Plugins()
+			results := make([]dex.AutoConnectResult, 0, len(plugins))
+			for _, plugin := range plugins {
+				result, err := engine.Auth().AutoConnect(cmd.Context(), plugin.Name, opts.instanceName())
 				if err != nil {
-					results = append(results, autoConnectResult{Plugin: plugin.Name, Instance: opts.instanceName(), Error: err.Error()})
+					results = append(results, dex.AutoConnectResult{Plugin: plugin.Name, Instance: opts.instanceName(), Error: err.Error()})
 					continue
 				}
 				results = append(results, result)
 			}
 			out := map[string]any{"instance": opts.instanceName(), "plugins": results}
-			addSkillRefreshResult(cmd.Context(), opts, runner, out)
+			addSkillRefreshResult(cmd.Context(), opts, engine.Runner(), out)
 			return renderValue(cmd.OutOrStdout(), opts.output, out)
 		},
 	})
@@ -2112,7 +2089,7 @@ func newEndpointCommand(opts *options) *cobra.Command {
 		Short: "List registered endpoints",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
@@ -2120,7 +2097,7 @@ func newEndpointCommand(opts *options) *cobra.Command {
 			if len(args) == 1 {
 				product = args[0]
 			}
-			endpoints, err := runner.State.ListEndpoints(product)
+			endpoints, err := engine.Endpoints().List(cmd.Context(), product)
 			if err != nil {
 				return err
 			}
@@ -2132,11 +2109,11 @@ func newEndpointCommand(opts *options) *cobra.Command {
 		Short: "Show a registered endpoint",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
-			endpoint, ok, err := runner.State.GetEndpoint(args[0])
+			endpoint, ok, err := engine.Endpoints().Get(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
@@ -2151,19 +2128,19 @@ func newEndpointCommand(opts *options) *cobra.Command {
 		Short: "Test a registered endpoint",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
-			endpoint, ok, err := runner.State.GetEndpoint(args[0])
+			endpoint, ok, err := engine.Endpoints().Get(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
 			if !ok {
 				return fmt.Errorf("unknown endpoint %q", args[0])
 			}
-			result := testEndpoint(cmd.Context(), runner, opts.instanceName(), endpoint)
-			if _, err := runner.State.SaveEndpointHealth(endpoint.ID, endpointHealthFromTestResult(result)); err != nil {
+			result := testEndpoint(cmd.Context(), engine.Runner(), opts.instanceName(), endpoint)
+			if _, err := engine.Endpoints().SaveHealth(cmd.Context(), endpoint.ID, endpointHealthFromTestResult(result)); err != nil {
 				return err
 			}
 			if err := renderValue(cmd.OutOrStdout(), opts.output, result); err != nil {
@@ -2192,7 +2169,7 @@ func newEndpointCommand(opts *options) *cobra.Command {
 		Short: "Register an endpoint",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
@@ -2204,7 +2181,7 @@ func newEndpointCommand(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			record, err := runner.State.SaveEndpoint(core.EndpointRef{
+			record, err := engine.Endpoints().Save(cmd.Context(), core.EndpointRef{
 				ID:            addOpts.id,
 				URL:           args[0],
 				Product:       addOpts.product,
@@ -2233,11 +2210,11 @@ func newEndpointCommand(opts *options) *cobra.Command {
 		Short: "Remove a registered endpoint",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
-			removed, err := runner.State.RemoveEndpoint(args[0])
+			removed, err := engine.Endpoints().Remove(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
@@ -2312,7 +2289,7 @@ func newEndpointCommand(opts *options) *cobra.Command {
 		Short: "Discover endpoint candidates",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
@@ -2330,12 +2307,12 @@ func newEndpointCommand(opts *options) *cobra.Command {
 			if discoverOpts.limit > 0 {
 				input["limit"] = discoverOpts.limit
 			}
-			result, err := discoverEndpoints(cmd.Context(), runner, opts.instanceName(), product, discoverOpts.plugin, input, discoverOpts.raw)
+			result, err := discoverEndpoints(cmd.Context(), engine.Runner(), opts.instanceName(), product, discoverOpts.plugin, input, discoverOpts.raw)
 			if err != nil {
 				return err
 			}
 			if discoverOpts.interactive {
-				saved, err := importEndpointSelections(cmd.InOrStdin(), cmd.ErrOrStderr(), runner.State, result.Candidates)
+				saved, err := importEndpointSelections(cmd.InOrStdin(), cmd.ErrOrStderr(), engine.Runner().State, result.Candidates)
 				if err != nil {
 					return err
 				}
@@ -3264,7 +3241,7 @@ func newIndexCommand(opts *options) *cobra.Command {
 		Short: "Build plugin index",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
@@ -3275,7 +3252,7 @@ func newIndexCommand(opts *options) *cobra.Command {
 			if strings.TrimSpace(buildOpts.entity) != "" {
 				input["entity"] = strings.TrimSpace(buildOpts.entity)
 			}
-			result, err := runner.BuildIndex(cmd.Context(), args[0], opts.instanceName(), input)
+			result, err := engine.Index().Build(cmd.Context(), args[0], opts.instanceName(), input)
 			if err != nil {
 				return err
 			}
@@ -3290,18 +3267,18 @@ func newIndexCommand(opts *options) *cobra.Command {
 		Short: "Show plugin index status",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
+			engine, err := opts.engine(cmd)
 			if err != nil {
 				return err
 			}
 			if len(args) == 0 {
-				return renderValue(cmd.OutOrStdout(), opts.output, indexStatusOverview(runner, opts.instanceName()))
+				return renderValue(cmd.OutOrStdout(), opts.output, indexStatusOverview(engine.Runner(), opts.instanceName()))
 			}
-			plugin, ok := runner.Marketplace.Resolve(args[0])
+			plugin, ok := engine.Marketplace().Resolve(args[0])
 			if !ok {
 				return fmt.Errorf("unknown plugin %q", args[0])
 			}
-			status, err := runner.State.IndexStatus(plugin.Name, opts.instanceName())
+			status, err := engine.Index().Status(cmd.Context(), plugin.Name, opts.instanceName())
 			if err != nil {
 				return err
 			}
@@ -3815,84 +3792,6 @@ func authFields(ctx context.Context, runner runtime.Runner, plugin string) ([]co
 	return fields, nil
 }
 
-type autoConnectResult struct {
-	Plugin   string   `json:"plugin"`
-	Instance string   `json:"instance"`
-	Saved    []string `json:"saved,omitempty"`
-	Missing  []string `json:"missing,omitempty"`
-	Skipped  []string `json:"skipped,omitempty"`
-	Error    string   `json:"error,omitempty"`
-}
-
-func autoConnectPlugin(ctx context.Context, runner runtime.Runner, plugin, instance string) (autoConnectResult, error) {
-	fields, err := authFields(ctx, runner, plugin)
-	if err != nil {
-		return autoConnectResult{}, err
-	}
-	result := autoConnectResult{Plugin: plugin, Instance: runtime.NormalizeInstance(instance)}
-	for _, field := range dedupeAuthFields(fields) {
-		name := strings.TrimSpace(field.Name)
-		if name == "" {
-			continue
-		}
-		value, ok := firstEnvValue(field.Env)
-		if ok {
-			kind := "bearer_token"
-			if !field.Sensitive && !field.Secret {
-				kind = "config"
-			}
-			if err := runner.State.SaveSecret(plugin, instance, name, runtime.StoredSecret{Kind: kind, Value: value}); err != nil {
-				return result, err
-			}
-			result.Saved = append(result.Saved, name)
-			continue
-		}
-		if field.Required {
-			result.Missing = append(result.Missing, name)
-		} else {
-			result.Skipped = append(result.Skipped, name)
-		}
-	}
-	if len(result.Saved) > 0 && len(result.Missing) == 0 {
-		if err := markPluginAvailable(runner, plugin); err != nil {
-			return result, err
-		}
-	}
-	return result, nil
-}
-
-func markPluginAvailable(runner runtime.Runner, pluginName string) error {
-	entry, ok := runner.Marketplace.Resolve(pluginName)
-	if !ok {
-		return fmt.Errorf("unknown plugin %q", pluginName)
-	}
-	return runner.State.MarkPluginInstalled(entry, false)
-}
-
-func dedupeAuthFields(fields []core.AuthField) []core.AuthField {
-	seen := map[string]bool{}
-	var out []core.AuthField
-	for _, field := range fields {
-		name := strings.TrimSpace(field.Name)
-		if name == "" || seen[name] {
-			continue
-		}
-		field.Name = name
-		seen[name] = true
-		out = append(out, field)
-	}
-	return out
-}
-
-func firstEnvValue(candidates []string) (string, bool) {
-	for _, key := range candidates {
-		if value := strings.TrimSpace(os.Getenv(strings.TrimSpace(key))); value != "" {
-			return value, true
-		}
-	}
-	return "", false
-}
-
 func authPurposeSpecs(ctx context.Context, runner runtime.Runner, plugin string) ([]runtime.SecretPurpose, error) {
 	fields, err := authFields(ctx, runner, plugin)
 	if err != nil {
@@ -3946,77 +3845,6 @@ func parseConnectFields(raw []string) (map[string]string, error) {
 		values[strings.TrimSpace(purpose)] = strings.TrimSpace(value)
 	}
 	return values, nil
-}
-
-func promptAuthFields(in io.Reader, out io.Writer, plugin, instance string, fields []core.AuthField) (map[string]string, error) {
-	values := map[string]string{}
-	reader := bufio.NewReader(in)
-	_, _ = fmt.Fprintf(out, "Connecting %s/%s\n", plugin, instance)
-	for _, field := range fields {
-		if strings.TrimSpace(field.Name) == "" {
-			continue
-		}
-		label := field.Name
-		if field.Description != "" {
-			label += " (" + field.Description + ")"
-		}
-		_, _ = fmt.Fprintf(out, "%s: ", label)
-		var value string
-		var err error
-		if field.Sensitive && stdinIsTerminal(in) {
-			var data []byte
-			data, err = term.ReadPassword(int(syscall.Stdin))
-			_, _ = fmt.Fprintln(out)
-			value = string(data)
-		} else {
-			value, err = reader.ReadString('\n')
-		}
-		if err != nil {
-			return nil, err
-		}
-		value = strings.TrimSpace(value)
-		if value != "" {
-			values[field.Name] = value
-		}
-	}
-	return values, nil
-}
-
-func saveAuthValues(state runtime.State, plugin, instance string, fields []core.AuthField, values map[string]string) (int, []string, error) {
-	declared := map[string]core.AuthField{}
-	for _, field := range fields {
-		declared[field.Name] = field
-	}
-	saved := 0
-	for purpose, value := range values {
-		field := declared[purpose]
-		if field.Name == "" {
-			field = core.AuthField{Name: purpose, Sensitive: true, Secret: true}
-		}
-		kind := "bearer_token"
-		if !field.Sensitive && !field.Secret {
-			kind = "config"
-		}
-		if err := state.SaveSecret(plugin, instance, purpose, runtime.StoredSecret{Kind: kind, Value: value}); err != nil {
-			return saved, nil, err
-		}
-		saved++
-	}
-	var missing []string
-	for _, field := range fields {
-		if field.Required && strings.TrimSpace(values[field.Name]) == "" {
-			missing = append(missing, field.Name)
-		}
-	}
-	return saved, missing, nil
-}
-
-func stdinIsTerminal(in io.Reader) bool {
-	file, ok := in.(*os.File)
-	if !ok {
-		return false
-	}
-	return term.IsTerminal(int(file.Fd()))
 }
 
 func batchCalls(input any) ([]protocol.OperationCall, error) {

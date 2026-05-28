@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-28
+
+### Added
+- Added the public `dex` Go library package at the repo root with a top-level
+  `Engine` constructed via `dex.New(dex.Config{...})` and dedicated services
+  for `Auth`, `Plugins`, `Operations`, `Datasources`, `Endpoints`, `Secrets`,
+  `Index`, and `Contexts`.
+- Added a pluggable `dex.Prompter` interface (with a `NoopPrompter` default)
+  so embedders can route interactive auth/connect flows through their own UI
+  instead of a TTY.
+- Added a `dex.EventSink` callback hook on `Config` for surfacing plugin
+  progress/status events to embedders.
+- Added typed sentinel errors (`ErrPluginNotFound`, `ErrPluginNotInstalled`,
+  `ErrAuthRequired`, `ErrInstanceUnknown`, `ErrNoPrompter`,
+  `ErrMissingFields`) and a `PluginError` wrapper preserving the underlying
+  `protocol.Error` code and message.
+- Added `examples/embed/main.go` demonstrating library embedding: marketplace
+  iteration, manifest fetch, and operation listing.
+- Added `dex_test.go` covering bundled marketplace load, manifest fetch,
+  operation listing, prompter wiring, and unknown-plugin error paths.
+
+### Changed
+- The `dex` CLI now consumes the public library API through an internal
+  `cli.options.engine(cmd)` helper that wires a terminal-backed `Prompter`
+  and stderr event sink, in place of the previous direct `runtime.Runner`
+  access.
+- Extracted the terminal-backed prompter into `internal/cli/prompter.go` and
+  removed the inline `promptAuthFields`/`saveAuthValues`/`stdinIsTerminal`
+  helpers from `internal/cli/root.go`.
+- Auto-connect, plugin install/upgrade/activate/deactivate, endpoint
+  discovery, and index build/status flows now route through the library
+  services so embedders get the same behavior as the CLI.
+- Updated plugin module requirements, workspace replacement, plugin manifest
+  versions, and builtin vision and websearch plugin versions for the `v0.7.0`
+  release.
+
 ## [0.6.0] - 2026-05-28
 
 ### Added

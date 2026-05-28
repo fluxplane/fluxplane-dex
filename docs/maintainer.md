@@ -189,14 +189,14 @@ the root checkout while plugin module `go.mod` files stay release-ready. The
 workspace contains the only local replacement:
 
 ```go
-replace github.com/fluxplane/fluxplane-dex v0.6.0 => .
+replace github.com/fluxplane/fluxplane-dex v0.7.0 => .
 ```
 
 Plugin modules should require the root release version and must not carry local
 `replace` directives:
 
 ```go
-require github.com/fluxplane/fluxplane-dex v0.6.0
+require github.com/fluxplane/fluxplane-dex v0.7.0
 ```
 
 Release packaging should use this sequence:
@@ -208,7 +208,7 @@ Release packaging should use this sequence:
 4. Update release version references in `go.work`, plugin module requirements,
    plugin manifest versions, and docs.
 5. Commit the release-ready tree.
-6. Tag the root module version, for example `v0.6.0`.
+6. Tag the root module version, for example `v0.7.0`.
 7. Tag plugin modules at matching versions so marketplace `go_install` targets
    resolve through the public module proxy.
 8. Push the branch and all release tags.
@@ -219,41 +219,41 @@ Release packaging should use this sequence:
 Use module-scoped tags for plugin modules:
 
 ```bash
-git tag v0.6.0
-git tag plugins/gitlab/v0.6.0
-git tag plugins/slack/v0.6.0
-git tag plugins/system/v0.6.0
-git tag plugins/tavily/v0.6.0
-git tag plugins/duckduckgo/v0.6.0
-git tag plugins/docker/v0.6.0
-git tag plugins/grafana/v0.6.0
-git tag plugins/kubernetes/v0.6.0
-git tag plugins/loki/v0.6.0
-git tag plugins/ollama/v0.6.0
-git tag plugins/openai/v0.6.0
-git tag plugins/prometheus/v0.6.0
-git tag plugins/sql/v0.6.0
-git tag plugins/jira/v0.6.0
-git tag plugins/confluence/v0.6.0
+git tag v0.7.0
+git tag plugins/gitlab/v0.7.0
+git tag plugins/slack/v0.7.0
+git tag plugins/system/v0.7.0
+git tag plugins/tavily/v0.7.0
+git tag plugins/duckduckgo/v0.7.0
+git tag plugins/docker/v0.7.0
+git tag plugins/grafana/v0.7.0
+git tag plugins/kubernetes/v0.7.0
+git tag plugins/loki/v0.7.0
+git tag plugins/ollama/v0.7.0
+git tag plugins/openai/v0.7.0
+git tag plugins/prometheus/v0.7.0
+git tag plugins/sql/v0.7.0
+git tag plugins/jira/v0.7.0
+git tag plugins/confluence/v0.7.0
 ```
 
 The corresponding install checks are:
 
 ```bash
-go install github.com/fluxplane/fluxplane-dex/cmd/dex@v0.6.0
-go install github.com/fluxplane/fluxplane-dex/plugins/gitlab/cmd/dex-plugin-gitlab@v0.6.0
-go install github.com/fluxplane/fluxplane-dex/plugins/slack/cmd/dex-plugin-slack@v0.6.0
-go install github.com/fluxplane/fluxplane-dex/plugins/system/cmd/dex-plugin-system@v0.6.0
-go install github.com/fluxplane/fluxplane-dex/plugins/tavily/cmd/dex-plugin-tavily@v0.6.0
-go install github.com/fluxplane/fluxplane-dex/plugins/duckduckgo/cmd/dex-plugin-duckduckgo@v0.6.0
-go install github.com/fluxplane/fluxplane-dex/plugins/docker/cmd/dex-plugin-docker@v0.6.0
-go install github.com/fluxplane/fluxplane-dex/plugins/grafana/cmd/dex-plugin-grafana@v0.6.0
-go install github.com/fluxplane/fluxplane-dex/plugins/kubernetes/cmd/dex-plugin-kubernetes@v0.6.0
-go install github.com/fluxplane/fluxplane-dex/plugins/loki/cmd/dex-plugin-loki@v0.6.0
-go install github.com/fluxplane/fluxplane-dex/plugins/ollama/cmd/dex-plugin-ollama@v0.6.0
-go install github.com/fluxplane/fluxplane-dex/plugins/openai/cmd/dex-plugin-openai@v0.6.0
-go install github.com/fluxplane/fluxplane-dex/plugins/prometheus/cmd/dex-plugin-prometheus@v0.6.0
-go install github.com/fluxplane/fluxplane-dex/plugins/sql/cmd/dex-plugin-sql@v0.6.0
-go install github.com/fluxplane/fluxplane-dex/plugins/jira/cmd/dex-plugin-jira@v0.6.0
-go install github.com/fluxplane/fluxplane-dex/plugins/confluence/cmd/dex-plugin-confluence@v0.6.0
+go install github.com/fluxplane/fluxplane-dex/cmd/dex@v0.7.0
+go install github.com/fluxplane/fluxplane-dex/plugins/gitlab/cmd/dex-plugin-gitlab@v0.7.0
+go install github.com/fluxplane/fluxplane-dex/plugins/slack/cmd/dex-plugin-slack@v0.7.0
+go install github.com/fluxplane/fluxplane-dex/plugins/system/cmd/dex-plugin-system@v0.7.0
+go install github.com/fluxplane/fluxplane-dex/plugins/tavily/cmd/dex-plugin-tavily@v0.7.0
+go install github.com/fluxplane/fluxplane-dex/plugins/duckduckgo/cmd/dex-plugin-duckduckgo@v0.7.0
+go install github.com/fluxplane/fluxplane-dex/plugins/docker/cmd/dex-plugin-docker@v0.7.0
+go install github.com/fluxplane/fluxplane-dex/plugins/grafana/cmd/dex-plugin-grafana@v0.7.0
+go install github.com/fluxplane/fluxplane-dex/plugins/kubernetes/cmd/dex-plugin-kubernetes@v0.7.0
+go install github.com/fluxplane/fluxplane-dex/plugins/loki/cmd/dex-plugin-loki@v0.7.0
+go install github.com/fluxplane/fluxplane-dex/plugins/ollama/cmd/dex-plugin-ollama@v0.7.0
+go install github.com/fluxplane/fluxplane-dex/plugins/openai/cmd/dex-plugin-openai@v0.7.0
+go install github.com/fluxplane/fluxplane-dex/plugins/prometheus/cmd/dex-plugin-prometheus@v0.7.0
+go install github.com/fluxplane/fluxplane-dex/plugins/sql/cmd/dex-plugin-sql@v0.7.0
+go install github.com/fluxplane/fluxplane-dex/plugins/jira/cmd/dex-plugin-jira@v0.7.0
+go install github.com/fluxplane/fluxplane-dex/plugins/confluence/cmd/dex-plugin-confluence@v0.7.0
 ```

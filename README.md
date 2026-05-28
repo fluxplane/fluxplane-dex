@@ -265,12 +265,12 @@ replacement for the root release version.
 Plugin modules intentionally require the release root module version:
 
 ```go
-require github.com/fluxplane/fluxplane-dex v0.6.0
+require github.com/fluxplane/fluxplane-dex v0.7.0
 ```
 
 Do not add local `replace` directives to plugin modules for release. The release
-tags must include the root tag `v0.6.0` and matching plugin module tags such as
-`plugins/gitlab/v0.6.0`.
+tags must include the root tag `v0.7.0` and matching plugin module tags such as
+`plugins/gitlab/v0.7.0`.
 
 Release checks live in [Maintainer Notes](docs/maintainer.md).
 

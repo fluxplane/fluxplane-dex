@@ -3,9 +3,11 @@ go 1.26.0
 use (
 	.
 	./plugins/duckduckgo
+	./plugins/docker
 	./plugins/gitlab
 	./plugins/kubernetes
 	./plugins/loki
+	./plugins/ollama
 	./plugins/prometheus
 	./plugins/slack
 	./plugins/sql

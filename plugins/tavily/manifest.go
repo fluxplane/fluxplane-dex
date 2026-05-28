@@ -8,7 +8,7 @@ import (
 
 const (
 	PluginName        = "tavily"
-	PluginVersion     = "0.5.0"
+	PluginVersion     = "0.6.0"
 	PluginDescription = "Tavily web search provider."
 
 	AuthMethodAPIKey  = "api_key"

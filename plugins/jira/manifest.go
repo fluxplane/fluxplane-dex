@@ -8,7 +8,7 @@ import (
 
 const (
 	PluginName        = "jira"
-	PluginVersion     = "0.5.0"
+	PluginVersion     = "0.6.0"
 	PluginDescription = "Jira Cloud issue operations, comments, attachments, transitions, datasources, indexes, and reverse lookups."
 
 	AuthMethodAtlassianCloud = "atlassian_cloud_basic"

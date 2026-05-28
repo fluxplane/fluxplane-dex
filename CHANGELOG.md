@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-28
+
+### Added
+- Added the Jira plugin with issue CRUD, Markdown-to-ADF conversion, comments,
+  attachments, transitions with optional auto-walk, create/edit metadata, user
+  search, indexed datasources, and reverse lookup of `BASE-123` issue keys and
+  `/browse/` URLs.
+- Added the Confluence plugin with page CRUD on storage-format bodies, page and
+  user search, attachments, indexed datasources, and reverse lookup of
+  `/wiki/spaces/.../pages/{id}` URLs.
+- Added the shared `internal/atlassian` package with the Atlassian Cloud
+  gateway URL builder, bearer-token HTTP client, bounded JSON and byte
+  response decoding, multipart attachment upload helpers, and Atlassian-shaped
+  error decoding.
+- Added GitLab merge request write operations `gitlab.mr.create`,
+  `gitlab.mr.approve`, and `gitlab.mr.merge`, plus
+  `gitlab.repository.tag.create`.
+- Added Slack parity operations for bookmarks (add/edit/delete/list), channels
+  (join/list/mark-read), files (delete/download/info/list/upload), messages
+  (edit/delete), reactions (add/remove), presence (get/set), mentions,
+  unreads, thread reads, search, emoji list, user list, info, and download.
+- Added the `dex.plugin.v2` framed protocol with request/response/event frames,
+  plugin-to-host event emission, host-call dispatch, and `dex.plugin.v1`
+  fallback negotiation.
+- Added `core/pluginbinding/events.go` and `core/pluginbinding/host.go` for
+  plugin-side event publishing and host-side call routing.
+
+### Changed
+- The plugin runner now negotiates protocol v2 with v1 fallback and frames
+  stdio traffic through `protocol.Frame`.
+- pluginbinding secret resolution and plugintest utilities now flow secrets
+  through the new host-call surface used by protocol v2.
+- Updated plugin module requirements, workspace replacement, plugin manifest
+  versions, and builtin vision and websearch plugin versions for the `v0.6.0`
+  release.
+
+### Documentation
+- Reorganized the roadmap document to reflect protocol v2 and the Atlassian
+  plugin additions.
+- Updated README and maintainer notes for the new release version examples and
+  plugin coverage.
+
 ## [0.5.0] - 2026-05-28
 
 ### Added

@@ -7,7 +7,7 @@ import (
 
 const (
 	PluginName        = "gitlab"
-	PluginVersion     = "0.3.0"
+	PluginVersion     = "0.3.1"
 	PluginDescription = "GitLab operations, datasources, indexes, and reverse lookups."
 
 	AuthMethodPersonalAccessToken = "personal_access_token"
@@ -121,7 +121,7 @@ func projectListSpec() core.OperationSpec {
 }
 
 func projectShowSpec() core.OperationSpec {
-	return gitlabReadOperation[ProjectShowInput, pluginbinding.ShowResult[Project]](OperationProjectShow, "Show one GitLab project.")
+	return gitlabReadOperation[ProjectShowInput, Project](OperationProjectShow, "Show one GitLab project.")
 }
 
 func mergeRequestListSpec() core.OperationSpec {

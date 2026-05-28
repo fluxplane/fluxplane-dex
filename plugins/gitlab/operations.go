@@ -1,6 +1,8 @@
 package gitlab
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -50,6 +52,19 @@ type ProjectShowInput struct {
 	ID      string `json:"id,omitempty" jsonschema:"description=Numeric project ID or path"`
 	Project string `json:"project,omitempty" jsonschema:"description=Alias for id"`
 	Path    string `json:"path,omitempty" jsonschema:"description=Alias for id"`
+}
+
+func (input *ProjectShowInput) UnmarshalJSON(raw []byte) error {
+	var values map[string]any
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&values); err != nil {
+		return err
+	}
+	input.ID = flexibleJSONString(values["id"])
+	input.Project = flexibleJSONString(values["project"])
+	input.Path = flexibleJSONString(values["path"])
+	return nil
 }
 
 type MergeRequestListInput struct {
@@ -119,20 +134,20 @@ func (s Service) ProjectList(ctx pluginbinding.Context, input ProjectListInput) 
 	return pluginbinding.NewListResult(projects), nil
 }
 
-func (s Service) ProjectShow(ctx pluginbinding.Context, input ProjectShowInput) (pluginbinding.ShowResult[Project], error) {
+func (s Service) ProjectShow(ctx pluginbinding.Context, input ProjectShowInput) (Project, error) {
 	client, err := s.client(ctx)
 	if err != nil {
-		return pluginbinding.ShowResult[Project]{}, pluginbinding.Errorf("secret", "%s", err)
+		return Project{}, pluginbinding.Errorf("secret", "%s", err)
 	}
 	id := strings.TrimSpace(pluginbinding.FirstString(pluginbinding.InputMap(input), "id", "project", "path"))
 	if id == "" {
-		return pluginbinding.ShowResult[Project]{}, pluginbinding.Fail("bad_input", "project id or path is required")
+		return Project{}, pluginbinding.Fail("bad_input", "project id or path is required")
 	}
 	project, err := client.GetProject(projectID(id))
 	if err != nil {
-		return pluginbinding.ShowResult[Project]{}, pluginbinding.Errorf("gitlab", "%s", err)
+		return Project{}, pluginbinding.Errorf("gitlab", "%s", err)
 	}
-	return pluginbinding.NewShowResult(project, nil), nil
+	return project, nil
 }
 
 func (s Service) MergeRequestList(ctx pluginbinding.Context, input MergeRequestListInput) (pluginbinding.ListResult[MergeRequest], error) {
@@ -685,4 +700,25 @@ func projectID(value string) any {
 		return id
 	}
 	return value
+}
+
+func flexibleJSONString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case json.Number:
+		return strings.TrimSpace(typed.String())
+	case float64:
+		if typed == 0 {
+			return ""
+		}
+		return strconv.FormatInt(int64(typed), 10)
+	case int:
+		if typed == 0 {
+			return ""
+		}
+		return strconv.Itoa(typed)
+	default:
+		return ""
+	}
 }

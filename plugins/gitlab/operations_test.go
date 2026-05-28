@@ -28,14 +28,14 @@ func TestServiceProjectListUsesClient(t *testing.T) {
 }
 
 func TestServiceProjectShowParsesNumericID(t *testing.T) {
-	client := &fakeClient{project: Project{ID: 42, Name: "dex"}}
+	client := &fakeClient{project: Project{ID: 42, Name: "dex", PathWithNamespace: "group/dex", WebURL: "https://gitlab.example.com/group/dex"}}
 	plugin := testPlugin(client, nil)
 
-	out := plugintest.RunOK[pluginbinding.ShowResult[Project]](t, plugin, OperationProjectShow, map[string]any{"id": "42"})
+	out := plugintest.RunOK[Project](t, plugin, OperationProjectShow, map[string]any{"id": 42})
 	if client.projectID != int64(42) {
 		t.Fatalf("project id = %#v", client.projectID)
 	}
-	if out.Record.ID != 42 {
+	if out.ID != 42 || out.Name != "dex" || out.PathWithNamespace != "group/dex" || out.WebURL == "" {
 		t.Fatalf("project output = %#v", out)
 	}
 }

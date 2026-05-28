@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-28
+
+### Fixed
+- Fixed GitLab `project.show` so numeric JSON IDs such as `{"id":231}`
+  decode correctly and the operation returns the project fields directly.
+- Removed direct-list output bloat from synthetic `records` aliases and reduced
+  duplicate Kubernetes inventory metadata.
+- Fixed generated skill alias deduplication and installed/activated labels.
+- Removed host-side Kubernetes `pod.logs` caps for explicit `tail_lines` and
+  `limit_bytes` values.
+- Clarified SQL datasource read-only query errors.
+
+### Documentation
+- Documented the repository release process in `AGENTS.md`, including
+  changelog, version bump, commit, tag, push, and GitHub release steps.
+
 ## [0.3.0] - 2026-05-28
 
 ### Added

@@ -21,6 +21,21 @@ type Client interface {
 	ApproveMergeRequest(any, int64, MergeRequestApproveOptions) (MergeRequestApproval, error)
 	MergeMergeRequest(any, int64, MergeRequestMergeOptions) (MergeRequest, error)
 	CreateRepositoryTag(any, RepositoryTagCreateOptions) (RepositoryTag, error)
+	CreateBranch(any, BranchCreateOptions) (Branch, error)
+	DeleteBranch(any, string) error
+	DeleteMergedBranches(any) error
+	CreateRepositoryFile(any, RepoFileCreateOptions) (RepoFile, error)
+	UpdateRepositoryFile(any, RepoFileUpdateOptions) (RepoFile, error)
+	DeleteRepositoryFile(any, RepoFileDeleteOptions) error
+	CreateCommit(any, CommitCreateOptions) (Commit, error)
+	CreateCIVariable(any, CIVariableCreateOptions) (CIVariable, error)
+	UpdateCIVariable(any, string, CIVariableUpdateOptions) (CIVariable, error)
+	DeleteCIVariable(any, string, CIVariableDeleteOptions) error
+	CreatePipeline(any, PipelineCreateOptions) (Pipeline, error)
+	RetryPipeline(any, int64) (Pipeline, error)
+	CancelPipeline(any, int64) (Pipeline, error)
+	CreateSnippet(SnippetCreateOptions) (Snippet, error)
+	DeleteSnippet(int64) error
 }
 
 type ClientFactory func(reqSecretSet SecretSet) (Client, error)
@@ -335,6 +350,414 @@ func (c liveClient) CreateRepositoryTag(project any, input RepositoryTagCreateOp
 		return RepositoryTag{}, err
 	}
 	return repositoryTagFromAPI(tag), nil
+}
+
+func (c liveClient) CreateBranch(project any, input BranchCreateOptions) (Branch, error) {
+	opt := &gitlabapi.CreateBranchOptions{
+		Branch: gitlabapi.Ptr(input.Branch),
+		Ref:    gitlabapi.Ptr(input.Ref),
+	}
+	branch, _, err := c.client.Branches.CreateBranch(project, opt)
+	if err != nil {
+		return Branch{}, err
+	}
+	return branchFromAPI(branch), nil
+}
+
+func (c liveClient) DeleteBranch(project any, branch string) error {
+	_, err := c.client.Branches.DeleteBranch(project, branch)
+	return err
+}
+
+func (c liveClient) DeleteMergedBranches(project any) error {
+	_, err := c.client.Branches.DeleteMergedBranches(project)
+	return err
+}
+
+func (c liveClient) CreateRepositoryFile(project any, input RepoFileCreateOptions) (RepoFile, error) {
+	opt := &gitlabapi.CreateFileOptions{
+		Branch:        gitlabapi.Ptr(input.Branch),
+		Content:       gitlabapi.Ptr(input.Content),
+		CommitMessage: gitlabapi.Ptr(input.CommitMessage),
+	}
+	if input.ExecuteFilemode != nil {
+		opt.ExecuteFilemode = input.ExecuteFilemode
+	}
+	if input.StartBranch != "" {
+		opt.StartBranch = gitlabapi.Ptr(input.StartBranch)
+	}
+	if input.Encoding != "" {
+		opt.Encoding = gitlabapi.Ptr(input.Encoding)
+	}
+	if input.AuthorEmail != "" {
+		opt.AuthorEmail = gitlabapi.Ptr(input.AuthorEmail)
+	}
+	if input.AuthorName != "" {
+		opt.AuthorName = gitlabapi.Ptr(input.AuthorName)
+	}
+	info, _, err := c.client.RepositoryFiles.CreateFile(project, input.FilePath, opt)
+	if err != nil {
+		return RepoFile{}, err
+	}
+	return repoFileFromAPI(info), nil
+}
+
+func (c liveClient) UpdateRepositoryFile(project any, input RepoFileUpdateOptions) (RepoFile, error) {
+	opt := &gitlabapi.UpdateFileOptions{
+		Branch:        gitlabapi.Ptr(input.Branch),
+		Content:       gitlabapi.Ptr(input.Content),
+		CommitMessage: gitlabapi.Ptr(input.CommitMessage),
+	}
+	if input.ExecuteFilemode != nil {
+		opt.ExecuteFilemode = input.ExecuteFilemode
+	}
+	if input.StartBranch != "" {
+		opt.StartBranch = gitlabapi.Ptr(input.StartBranch)
+	}
+	if input.Encoding != "" {
+		opt.Encoding = gitlabapi.Ptr(input.Encoding)
+	}
+	if input.AuthorEmail != "" {
+		opt.AuthorEmail = gitlabapi.Ptr(input.AuthorEmail)
+	}
+	if input.AuthorName != "" {
+		opt.AuthorName = gitlabapi.Ptr(input.AuthorName)
+	}
+	if input.LastCommitID != "" {
+		opt.LastCommitID = gitlabapi.Ptr(input.LastCommitID)
+	}
+	info, _, err := c.client.RepositoryFiles.UpdateFile(project, input.FilePath, opt)
+	if err != nil {
+		return RepoFile{}, err
+	}
+	return repoFileFromAPI(info), nil
+}
+
+func (c liveClient) DeleteRepositoryFile(project any, input RepoFileDeleteOptions) error {
+	opt := &gitlabapi.DeleteFileOptions{
+		Branch:        gitlabapi.Ptr(input.Branch),
+		CommitMessage: gitlabapi.Ptr(input.CommitMessage),
+	}
+	if input.StartBranch != "" {
+		opt.StartBranch = gitlabapi.Ptr(input.StartBranch)
+	}
+	if input.AuthorEmail != "" {
+		opt.AuthorEmail = gitlabapi.Ptr(input.AuthorEmail)
+	}
+	if input.AuthorName != "" {
+		opt.AuthorName = gitlabapi.Ptr(input.AuthorName)
+	}
+	if input.LastCommitID != "" {
+		opt.LastCommitID = gitlabapi.Ptr(input.LastCommitID)
+	}
+	_, err := c.client.RepositoryFiles.DeleteFile(project, input.FilePath, opt)
+	return err
+}
+
+func (c liveClient) CreateCommit(project any, input CommitCreateOptions) (Commit, error) {
+	opt := &gitlabapi.CreateCommitOptions{
+		Branch:        gitlabapi.Ptr(input.Branch),
+		CommitMessage: gitlabapi.Ptr(input.CommitMessage),
+		Actions:       make([]*gitlabapi.CommitActionOptions, 0, len(input.Actions)),
+	}
+	if input.Force != nil {
+		opt.Force = input.Force
+	}
+	if input.StartBranch != "" {
+		opt.StartBranch = gitlabapi.Ptr(input.StartBranch)
+	}
+	if input.StartSHA != "" {
+		opt.StartSHA = gitlabapi.Ptr(input.StartSHA)
+	}
+	if input.StartProject != "" {
+		opt.StartProject = gitlabapi.Ptr(input.StartProject)
+	}
+	if input.AuthorEmail != "" {
+		opt.AuthorEmail = gitlabapi.Ptr(input.AuthorEmail)
+	}
+	if input.AuthorName != "" {
+		opt.AuthorName = gitlabapi.Ptr(input.AuthorName)
+	}
+	for _, action := range input.Actions {
+		opt.Actions = append(opt.Actions, commitActionToAPI(action))
+	}
+	commit, _, err := c.client.Commits.CreateCommit(project, opt)
+	if err != nil {
+		return Commit{}, err
+	}
+	return commitFromAPI(commit), nil
+}
+
+func (c liveClient) CreateCIVariable(project any, input CIVariableCreateOptions) (CIVariable, error) {
+	opt := &gitlabapi.CreateProjectVariableOptions{
+		Key:   gitlabapi.Ptr(input.Key),
+		Value: gitlabapi.Ptr(input.Value),
+	}
+	if input.Masked != nil {
+		opt.Masked = input.Masked
+	}
+	if input.MaskedAndHidden != nil {
+		opt.MaskedAndHidden = input.MaskedAndHidden
+	}
+	if input.Protected != nil {
+		opt.Protected = input.Protected
+	}
+	if input.Raw != nil {
+		opt.Raw = input.Raw
+	}
+	if input.Description != "" {
+		opt.Description = gitlabapi.Ptr(input.Description)
+	}
+	if input.EnvironmentScope != "" {
+		opt.EnvironmentScope = gitlabapi.Ptr(input.EnvironmentScope)
+	}
+	if typ := variableTypeValue(input.VariableType); typ != "" {
+		opt.VariableType = &typ
+	}
+	variable, _, err := c.client.ProjectVariables.CreateVariable(project, opt)
+	if err != nil {
+		return CIVariable{}, err
+	}
+	return ciVariableFromAPI(variable), nil
+}
+
+func (c liveClient) UpdateCIVariable(project any, key string, input CIVariableUpdateOptions) (CIVariable, error) {
+	opt := &gitlabapi.UpdateProjectVariableOptions{
+		Value:  gitlabapi.Ptr(input.Value),
+		Filter: variableFilter(input.EnvironmentScope),
+	}
+	if input.Masked != nil {
+		opt.Masked = input.Masked
+	}
+	if input.Protected != nil {
+		opt.Protected = input.Protected
+	}
+	if input.Raw != nil {
+		opt.Raw = input.Raw
+	}
+	if input.Description != "" {
+		opt.Description = gitlabapi.Ptr(input.Description)
+	}
+	if input.EnvironmentScope != "" {
+		opt.EnvironmentScope = gitlabapi.Ptr(input.EnvironmentScope)
+	}
+	if typ := variableTypeValue(input.VariableType); typ != "" {
+		opt.VariableType = &typ
+	}
+	variable, _, err := c.client.ProjectVariables.UpdateVariable(project, key, opt)
+	if err != nil {
+		return CIVariable{}, err
+	}
+	return ciVariableFromAPI(variable), nil
+}
+
+func (c liveClient) DeleteCIVariable(project any, key string, input CIVariableDeleteOptions) error {
+	opt := &gitlabapi.RemoveProjectVariableOptions{Filter: variableFilter(input.EnvironmentScope)}
+	_, err := c.client.ProjectVariables.RemoveVariable(project, key, opt)
+	return err
+}
+
+func (c liveClient) CreatePipeline(project any, input PipelineCreateOptions) (Pipeline, error) {
+	opt := &gitlabapi.CreatePipelineOptions{Ref: gitlabapi.Ptr(input.Ref)}
+	if len(input.Variables) > 0 {
+		variables := make([]*gitlabapi.PipelineVariableOptions, 0, len(input.Variables))
+		for _, variable := range input.Variables {
+			item := &gitlabapi.PipelineVariableOptions{
+				Key:   gitlabapi.Ptr(variable.Key),
+				Value: gitlabapi.Ptr(variable.Value),
+			}
+			if typ := variableTypeValue(variable.VariableType); typ != "" {
+				item.VariableType = &typ
+			}
+			variables = append(variables, item)
+		}
+		opt.Variables = &variables
+	}
+	pipeline, _, err := c.client.Pipelines.CreatePipeline(project, opt)
+	if err != nil {
+		return Pipeline{}, err
+	}
+	return pipelineFromAPI(pipeline), nil
+}
+
+func (c liveClient) RetryPipeline(project any, pipeline int64) (Pipeline, error) {
+	out, _, err := c.client.Pipelines.RetryPipelineBuild(project, pipeline)
+	if err != nil {
+		return Pipeline{}, err
+	}
+	return pipelineFromAPI(out), nil
+}
+
+func (c liveClient) CancelPipeline(project any, pipeline int64) (Pipeline, error) {
+	out, _, err := c.client.Pipelines.CancelPipelineBuild(project, pipeline)
+	if err != nil {
+		return Pipeline{}, err
+	}
+	return pipelineFromAPI(out), nil
+}
+
+func (c liveClient) CreateSnippet(input SnippetCreateOptions) (Snippet, error) {
+	files := make([]*gitlabapi.CreateSnippetFileOptions, 0, len(input.Files))
+	for _, file := range input.Files {
+		files = append(files, &gitlabapi.CreateSnippetFileOptions{
+			FilePath: gitlabapi.Ptr(file.FilePath),
+			Content:  gitlabapi.Ptr(file.Content),
+		})
+	}
+	opt := &gitlabapi.CreateSnippetOptions{
+		Title: gitlabapi.Ptr(input.Title),
+		Files: &files,
+	}
+	if input.Description != "" {
+		opt.Description = gitlabapi.Ptr(input.Description)
+	}
+	visibility := gitlabapi.VisibilityValue(input.Visibility)
+	opt.Visibility = &visibility
+	snippet, _, err := c.client.Snippets.CreateSnippet(opt)
+	if err != nil {
+		return Snippet{}, err
+	}
+	return snippetFromAPI(snippet), nil
+}
+
+func (c liveClient) DeleteSnippet(snippetID int64) error {
+	_, err := c.client.Snippets.DeleteSnippet(snippetID)
+	return err
+}
+
+func variableFilter(scope string) *gitlabapi.VariableFilter {
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		return nil
+	}
+	return &gitlabapi.VariableFilter{EnvironmentScope: scope}
+}
+
+func variableTypeValue(value string) gitlabapi.VariableTypeValue {
+	switch strings.TrimSpace(value) {
+	case "env_var":
+		return gitlabapi.EnvVariableType
+	case "file":
+		return gitlabapi.FileVariableType
+	default:
+		return ""
+	}
+}
+
+func commitActionToAPI(action CommitFileAction) *gitlabapi.CommitActionOptions {
+	value := gitlabapi.FileActionValue(strings.ToLower(action.Action))
+	opt := &gitlabapi.CommitActionOptions{
+		Action:   &value,
+		FilePath: gitlabapi.Ptr(action.FilePath),
+	}
+	if action.ExecuteFilemode != nil {
+		opt.ExecuteFilemode = action.ExecuteFilemode
+	}
+	if action.PreviousPath != "" {
+		opt.PreviousPath = gitlabapi.Ptr(action.PreviousPath)
+	}
+	if action.Content != "" {
+		opt.Content = gitlabapi.Ptr(action.Content)
+	}
+	if action.Encoding != "" {
+		opt.Encoding = gitlabapi.Ptr(action.Encoding)
+	}
+	if action.LastCommitID != "" {
+		opt.LastCommitID = gitlabapi.Ptr(action.LastCommitID)
+	}
+	return opt
+}
+
+func branchFromAPI(branch *gitlabapi.Branch) Branch {
+	if branch == nil {
+		return Branch{}
+	}
+	return Branch{
+		Name:               branch.Name,
+		WebURL:             branch.WebURL,
+		Merged:             branch.Merged,
+		Protected:          branch.Protected,
+		Default:            branch.Default,
+		CanPush:            branch.CanPush,
+		DevelopersCanPush:  branch.DevelopersCanPush,
+		DevelopersCanMerge: branch.DevelopersCanMerge,
+	}
+}
+
+func repoFileFromAPI(info *gitlabapi.FileInfo) RepoFile {
+	if info == nil {
+		return RepoFile{}
+	}
+	return RepoFile{FilePath: info.FilePath, Branch: info.Branch}
+}
+
+func commitFromAPI(commit *gitlabapi.Commit) Commit {
+	if commit == nil {
+		return Commit{}
+	}
+	return Commit{
+		ID:            commit.ID,
+		ShortID:       commit.ShortID,
+		Title:         commit.Title,
+		Message:       commit.Message,
+		AuthorName:    commit.AuthorName,
+		AuthorEmail:   commit.AuthorEmail,
+		CreatedAt:     formatTime(commit.CreatedAt),
+		CommittedDate: formatTime(commit.CommittedDate),
+		WebURL:        commit.WebURL,
+	}
+}
+
+func ciVariableFromAPI(variable *gitlabapi.ProjectVariable) CIVariable {
+	if variable == nil {
+		return CIVariable{}
+	}
+	return CIVariable{
+		Key:              variable.Key,
+		Value:            variable.Value,
+		VariableType:     string(variable.VariableType),
+		EnvironmentScope: variable.EnvironmentScope,
+		Description:      variable.Description,
+		Protected:        variable.Protected,
+		Masked:           variable.Masked,
+		Raw:              variable.Raw,
+	}
+}
+
+func pipelineFromAPI(pipeline *gitlabapi.Pipeline) Pipeline {
+	if pipeline == nil {
+		return Pipeline{}
+	}
+	return Pipeline{
+		ID:         pipeline.ID,
+		ProjectID:  pipeline.ProjectID,
+		Status:     pipeline.Status,
+		Ref:        pipeline.Ref,
+		SHA:        pipeline.SHA,
+		WebURL:     pipeline.WebURL,
+		Source:     string(pipeline.Source),
+		CreatedAt:  formatTime(pipeline.CreatedAt),
+		UpdatedAt:  formatTime(pipeline.UpdatedAt),
+		StartedAt:  formatTime(pipeline.StartedAt),
+		FinishedAt: formatTime(pipeline.FinishedAt),
+		Duration:   pipeline.Duration,
+	}
+}
+
+func snippetFromAPI(snippet *gitlabapi.Snippet) Snippet {
+	if snippet == nil {
+		return Snippet{}
+	}
+	return Snippet{
+		ID:          snippet.ID,
+		Title:       snippet.Title,
+		Description: snippet.Description,
+		Visibility:  snippet.Visibility,
+		WebURL:      snippet.WebURL,
+		RawURL:      snippet.RawURL,
+		CreatedAt:   formatTime(snippet.CreatedAt),
+		UpdatedAt:   formatTime(snippet.UpdatedAt),
+	}
 }
 
 func mergeRequestListOptions(input MergeRequestListOptions) *gitlabapi.ListMergeRequestsOptions {

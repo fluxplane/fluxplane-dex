@@ -3,7 +3,7 @@ module github.com/fluxplane/fluxplane-dex/plugins/gitlab
 go 1.26
 
 require (
-	github.com/fluxplane/fluxplane-dex v0.7.0
+	github.com/fluxplane/fluxplane-dex v0.8.0
 	gitlab.com/gitlab-org/api/client-go/v2 v2.34.0
 )
 

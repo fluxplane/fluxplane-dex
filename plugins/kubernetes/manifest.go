@@ -7,7 +7,7 @@ import (
 
 const (
 	PluginName        = "kubernetes"
-	PluginVersion     = "0.7.0"
+	PluginVersion     = "0.8.0"
 	PluginDescription = "Kubernetes cluster discovery using kubeconfig and kubectl."
 
 	OperationClusterList      = "kubernetes.cluster.list"

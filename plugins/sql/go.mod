@@ -3,7 +3,7 @@ module github.com/fluxplane/fluxplane-dex/plugins/sql
 go 1.26.0
 
 require (
-	github.com/fluxplane/fluxplane-dex v0.7.0
+	github.com/fluxplane/fluxplane-dex v0.8.0
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/testcontainers/testcontainers-go v0.42.0

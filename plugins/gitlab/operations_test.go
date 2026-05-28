@@ -164,6 +164,312 @@ func TestServiceMRMergeUsesProjectIIDAndOptions(t *testing.T) {
 	}
 }
 
+func TestServiceBranchCreateUsesClient(t *testing.T) {
+	client := &fakeClient{branch: Branch{Name: "feature/x", WebURL: "https://gitlab.example.com/group/dex/-/tree/feature/x"}}
+	plugin := testPlugin(client, nil)
+
+	out := plugintest.RunOK[Branch](t, plugin, OperationBranchCreate, map[string]any{
+		"project": "group/dex",
+		"branch":  "feature/x",
+		"ref":     "main",
+	})
+	if client.branchProject != "group/dex" {
+		t.Fatalf("branch project = %#v", client.branchProject)
+	}
+	if client.branchCreateOptions.Branch != "feature/x" || client.branchCreateOptions.Ref != "main" {
+		t.Fatalf("branch options = %#v", client.branchCreateOptions)
+	}
+	if out.Name != "feature/x" {
+		t.Fatalf("branch output = %#v", out)
+	}
+}
+
+func TestServiceBranchCreateValidatesInput(t *testing.T) {
+	client := &fakeClient{}
+	plugin := testPlugin(client, nil)
+	plugintest.RunError(t, plugin, OperationBranchCreate, map[string]any{"branch": "x", "ref": "main"})
+	plugintest.RunError(t, plugin, OperationBranchCreate, map[string]any{"project": "p", "ref": "main"})
+	plugintest.RunError(t, plugin, OperationBranchCreate, map[string]any{"project": "p", "branch": "x"})
+}
+
+func TestServiceBranchDeleteUsesClient(t *testing.T) {
+	client := &fakeClient{}
+	plugin := testPlugin(client, nil)
+
+	out := plugintest.RunOK[BranchActionResult](t, plugin, OperationBranchDelete, map[string]any{
+		"project": "group/dex",
+		"branch":  "feature/x",
+	})
+	if client.branchProject != "group/dex" || client.branchDeleted != "feature/x" {
+		t.Fatalf("branch delete = %#v %#v", client.branchProject, client.branchDeleted)
+	}
+	if out.Branch != "feature/x" || out.Message == "" {
+		t.Fatalf("delete output = %#v", out)
+	}
+}
+
+func TestServiceBranchDeleteMergedUsesClient(t *testing.T) {
+	client := &fakeClient{}
+	plugin := testPlugin(client, nil)
+
+	plugintest.RunOK[BranchActionResult](t, plugin, OperationBranchDeleteMerged, map[string]any{"project": "group/dex"})
+	if client.mergedBranchProject != "group/dex" {
+		t.Fatalf("merged branch project = %#v", client.mergedBranchProject)
+	}
+}
+
+func TestServiceRepoFileCreateUsesClient(t *testing.T) {
+	client := &fakeClient{repoFile: RepoFile{FilePath: "README.md", Branch: "main"}}
+	plugin := testPlugin(client, nil)
+
+	out := plugintest.RunOK[RepoFile](t, plugin, OperationRepoFileCreate, map[string]any{
+		"project":        "group/dex",
+		"file_path":      "README.md",
+		"branch":         "main",
+		"content":        "# hi",
+		"commit_message": "init",
+	})
+	if client.repoFileProject != "group/dex" {
+		t.Fatalf("repo file project = %#v", client.repoFileProject)
+	}
+	if client.repoFileCreate.FilePath != "README.md" || client.repoFileCreate.Branch != "main" || client.repoFileCreate.Content != "# hi" || client.repoFileCreate.CommitMessage != "init" {
+		t.Fatalf("repo file create options = %#v", client.repoFileCreate)
+	}
+	if out.FilePath != "README.md" {
+		t.Fatalf("repo file output = %#v", out)
+	}
+}
+
+func TestServiceRepoFileCreateRequiresContent(t *testing.T) {
+	client := &fakeClient{}
+	plugin := testPlugin(client, nil)
+	plugintest.RunError(t, plugin, OperationRepoFileCreate, map[string]any{
+		"project":        "group/dex",
+		"file_path":      "README.md",
+		"branch":         "main",
+		"commit_message": "init",
+	})
+}
+
+func TestServiceRepoFileUpdateUsesClient(t *testing.T) {
+	client := &fakeClient{repoFile: RepoFile{FilePath: "README.md", Branch: "main"}}
+	plugin := testPlugin(client, nil)
+
+	plugintest.RunOK[RepoFile](t, plugin, OperationRepoFileUpdate, map[string]any{
+		"project":        "group/dex",
+		"file_path":      "README.md",
+		"branch":         "main",
+		"content":        "# v2",
+		"commit_message": "update",
+		"last_commit_id": "abc",
+	})
+	if client.repoFileUpdate.LastCommitID != "abc" || client.repoFileUpdate.Content != "# v2" {
+		t.Fatalf("repo file update options = %#v", client.repoFileUpdate)
+	}
+}
+
+func TestServiceRepoFileDeleteUsesClient(t *testing.T) {
+	client := &fakeClient{}
+	plugin := testPlugin(client, nil)
+
+	out := plugintest.RunOK[RepoFileActionResult](t, plugin, OperationRepoFileDelete, map[string]any{
+		"project":        "group/dex",
+		"file_path":      "README.md",
+		"branch":         "main",
+		"commit_message": "remove",
+	})
+	if client.repoFileDelete.FilePath != "README.md" || client.repoFileDelete.Branch != "main" || client.repoFileDelete.CommitMessage != "remove" {
+		t.Fatalf("repo file delete options = %#v", client.repoFileDelete)
+	}
+	if out.Message == "" {
+		t.Fatalf("delete output = %#v", out)
+	}
+}
+
+func TestServiceCommitCreateUsesClient(t *testing.T) {
+	client := &fakeClient{commit: Commit{ID: "deadbeef", ShortID: "dead", Title: "init"}}
+	plugin := testPlugin(client, nil)
+
+	out := plugintest.RunOK[Commit](t, plugin, OperationCommitCreate, map[string]any{
+		"project":        "group/dex",
+		"branch":         "main",
+		"commit_message": "bundle",
+		"actions": []any{
+			map[string]any{"action": "create", "file_path": "a.txt", "content": "a"},
+			map[string]any{"action": "update", "file_path": "b.txt", "content": "b"},
+		},
+	})
+	if client.commitProject != "group/dex" {
+		t.Fatalf("commit project = %#v", client.commitProject)
+	}
+	if len(client.commitOptions.Actions) != 2 || client.commitOptions.Actions[0].Action != "create" || client.commitOptions.Actions[1].Action != "update" {
+		t.Fatalf("commit actions = %#v", client.commitOptions.Actions)
+	}
+	if out.ID != "deadbeef" {
+		t.Fatalf("commit output = %#v", out)
+	}
+}
+
+func TestServiceCommitCreateValidatesActions(t *testing.T) {
+	client := &fakeClient{}
+	plugin := testPlugin(client, nil)
+	plugintest.RunError(t, plugin, OperationCommitCreate, map[string]any{
+		"project":        "group/dex",
+		"branch":         "main",
+		"commit_message": "bundle",
+	})
+	plugintest.RunError(t, plugin, OperationCommitCreate, map[string]any{
+		"project":        "group/dex",
+		"branch":         "main",
+		"commit_message": "bundle",
+		"actions": []any{
+			map[string]any{"action": "create"},
+		},
+	})
+	plugintest.RunError(t, plugin, OperationCommitCreate, map[string]any{
+		"project":        "group/dex",
+		"branch":         "main",
+		"commit_message": "bundle",
+		"actions": []any{
+			map[string]any{"action": "bogus", "file_path": "a.txt"},
+		},
+	})
+}
+
+func TestServiceCIVariableCreateUsesClient(t *testing.T) {
+	client := &fakeClient{ciVariable: CIVariable{Key: "K", Value: "V", EnvironmentScope: "*"}}
+	plugin := testPlugin(client, nil)
+
+	out := plugintest.RunOK[CIVariable](t, plugin, OperationCIVariableCreate, map[string]any{
+		"project":           "group/dex",
+		"key":               "K",
+		"value":             "V",
+		"environment_scope": "*",
+		"variable_type":     "env_var",
+	})
+	if client.ciVariableProject != "group/dex" || client.ciVariableCreate.Key != "K" || client.ciVariableCreate.Value != "V" || client.ciVariableCreate.VariableType != "env_var" {
+		t.Fatalf("ci variable create options = %#v", client.ciVariableCreate)
+	}
+	if out.Key != "K" {
+		t.Fatalf("ci variable output = %#v", out)
+	}
+}
+
+func TestServiceCIVariableUpdateUsesClient(t *testing.T) {
+	client := &fakeClient{ciVariable: CIVariable{Key: "K", Value: "V2"}}
+	plugin := testPlugin(client, nil)
+
+	plugintest.RunOK[CIVariable](t, plugin, OperationCIVariableUpdate, map[string]any{
+		"project": "group/dex",
+		"key":     "K",
+		"value":   "V2",
+	})
+	if client.ciVariableUpdateKey != "K" || client.ciVariableUpdate.Value != "V2" {
+		t.Fatalf("ci variable update = %#v %#v", client.ciVariableUpdateKey, client.ciVariableUpdate)
+	}
+}
+
+func TestServiceCIVariableDeleteUsesClient(t *testing.T) {
+	client := &fakeClient{}
+	plugin := testPlugin(client, nil)
+
+	plugintest.RunOK[CIVariableActionResult](t, plugin, OperationCIVariableDelete, map[string]any{
+		"project":           "group/dex",
+		"key":               "K",
+		"environment_scope": "prod",
+	})
+	if client.ciVariableDeleteKey != "K" || client.ciVariableDelete.EnvironmentScope != "prod" {
+		t.Fatalf("ci variable delete = %#v %#v", client.ciVariableDeleteKey, client.ciVariableDelete)
+	}
+}
+
+func TestServicePipelineCreateUsesClient(t *testing.T) {
+	client := &fakeClient{pipeline: Pipeline{ID: 5, Ref: "main", Status: "pending"}}
+	plugin := testPlugin(client, nil)
+
+	out := plugintest.RunOK[Pipeline](t, plugin, OperationPipelineCreate, map[string]any{
+		"project": "group/dex",
+		"ref":     "main",
+		"variables": []any{
+			map[string]any{"key": "TOKEN", "value": "v", "variable_type": "env_var"},
+		},
+	})
+	if client.pipelineProject != "group/dex" || client.pipelineCreate.Ref != "main" {
+		t.Fatalf("pipeline create = %#v %#v", client.pipelineProject, client.pipelineCreate)
+	}
+	if len(client.pipelineCreate.Variables) != 1 || client.pipelineCreate.Variables[0].Key != "TOKEN" {
+		t.Fatalf("pipeline variables = %#v", client.pipelineCreate.Variables)
+	}
+	if out.ID != 5 {
+		t.Fatalf("pipeline output = %#v", out)
+	}
+}
+
+func TestServicePipelineRetryAndCancelUseClient(t *testing.T) {
+	client := &fakeClient{pipeline: Pipeline{ID: 7, Status: "running"}}
+	plugin := testPlugin(client, nil)
+
+	plugintest.RunOK[Pipeline](t, plugin, OperationPipelineRetry, map[string]any{"project": "group/dex", "pipeline_id": 7})
+	if client.pipelineRetryProj != "group/dex" || client.pipelineRetryID != 7 {
+		t.Fatalf("pipeline retry = %#v %d", client.pipelineRetryProj, client.pipelineRetryID)
+	}
+
+	plugintest.RunOK[Pipeline](t, plugin, OperationPipelineCancel, map[string]any{"project": "group/dex", "pipeline_id": 7})
+	if client.pipelineCancelProj != "group/dex" || client.pipelineCancelID != 7 {
+		t.Fatalf("pipeline cancel = %#v %d", client.pipelineCancelProj, client.pipelineCancelID)
+	}
+}
+
+func TestServicePipelineRetryRequiresID(t *testing.T) {
+	client := &fakeClient{}
+	plugin := testPlugin(client, nil)
+	plugintest.RunError(t, plugin, OperationPipelineRetry, map[string]any{"project": "group/dex"})
+}
+
+func TestServiceSnippetCreateUsesClient(t *testing.T) {
+	client := &fakeClient{snippet: Snippet{ID: 99, Title: "Note"}}
+	plugin := testPlugin(client, nil)
+
+	out := plugintest.RunOK[Snippet](t, plugin, OperationSnippetCreate, map[string]any{
+		"title":      "Note",
+		"visibility": "private",
+		"files": []any{
+			map[string]any{"file_path": "note.txt", "content": "hi"},
+		},
+	})
+	if client.snippetCreate.Title != "Note" || client.snippetCreate.Visibility != "private" {
+		t.Fatalf("snippet create options = %#v", client.snippetCreate)
+	}
+	if len(client.snippetCreate.Files) != 1 || client.snippetCreate.Files[0].FilePath != "note.txt" {
+		t.Fatalf("snippet files = %#v", client.snippetCreate.Files)
+	}
+	if out.ID != 99 {
+		t.Fatalf("snippet output = %#v", out)
+	}
+}
+
+func TestServiceSnippetCreateRejectsInvalidVisibility(t *testing.T) {
+	client := &fakeClient{}
+	plugin := testPlugin(client, nil)
+	plugintest.RunError(t, plugin, OperationSnippetCreate, map[string]any{
+		"title":      "Note",
+		"visibility": "secret",
+		"files": []any{
+			map[string]any{"file_path": "note.txt", "content": "hi"},
+		},
+	})
+}
+
+func TestServiceSnippetDeleteUsesClient(t *testing.T) {
+	client := &fakeClient{}
+	plugin := testPlugin(client, nil)
+
+	plugintest.RunOK[SnippetActionResult](t, plugin, OperationSnippetDelete, map[string]any{"snippet_id": 99})
+	if client.snippetDeleted != 99 {
+		t.Fatalf("snippet deleted = %d", client.snippetDeleted)
+	}
+}
+
 func TestServiceRepositoryTagCreateUsesClient(t *testing.T) {
 	client := &fakeClient{repositoryTag: RepositoryTag{Name: "v1.2.3", Target: "abc"}}
 	plugin := testPlugin(client, nil)
@@ -340,6 +646,12 @@ type fakeClient struct {
 	mergeRequests        []MergeRequest
 	approval             MergeRequestApproval
 	repositoryTag        RepositoryTag
+	branch               Branch
+	repoFile             RepoFile
+	commit               Commit
+	ciVariable           CIVariable
+	pipeline             Pipeline
+	snippet              Snippet
 	listOptions          ProjectListOptions
 	userListOptions      UserListOptions
 	groupListOptions     GroupListOptions
@@ -349,6 +661,16 @@ type fakeClient struct {
 	mrApproveOptions     MergeRequestApproveOptions
 	mrMergeOptions       MergeRequestMergeOptions
 	repositoryTagOptions RepositoryTagCreateOptions
+	branchCreateOptions  BranchCreateOptions
+	repoFileCreate       RepoFileCreateOptions
+	repoFileUpdate       RepoFileUpdateOptions
+	repoFileDelete       RepoFileDeleteOptions
+	commitOptions        CommitCreateOptions
+	ciVariableCreate     CIVariableCreateOptions
+	ciVariableUpdate     CIVariableUpdateOptions
+	ciVariableDelete     CIVariableDeleteOptions
+	pipelineCreate       PipelineCreateOptions
+	snippetCreate        SnippetCreateOptions
 	projectID            any
 	mrProject            any
 	mrIID                int64
@@ -358,6 +680,20 @@ type fakeClient struct {
 	mrMergeProject       any
 	mrMergeIID           int64
 	repositoryTagProject any
+	branchProject        any
+	branchDeleted        string
+	mergedBranchProject  any
+	repoFileProject      any
+	commitProject        any
+	ciVariableProject    any
+	ciVariableUpdateKey  string
+	ciVariableDeleteKey  string
+	pipelineProject      any
+	pipelineRetryID      int64
+	pipelineCancelID     int64
+	pipelineRetryProj    any
+	pipelineCancelProj   any
+	snippetDeleted       int64
 }
 
 func (c *fakeClient) CurrentUser() (User, error) {
@@ -424,4 +760,93 @@ func (c *fakeClient) CreateRepositoryTag(project any, options RepositoryTagCreat
 	c.repositoryTagProject = project
 	c.repositoryTagOptions = options
 	return c.repositoryTag, nil
+}
+
+func (c *fakeClient) CreateBranch(project any, options BranchCreateOptions) (Branch, error) {
+	c.branchProject = project
+	c.branchCreateOptions = options
+	return c.branch, nil
+}
+
+func (c *fakeClient) DeleteBranch(project any, branch string) error {
+	c.branchProject = project
+	c.branchDeleted = branch
+	return nil
+}
+
+func (c *fakeClient) DeleteMergedBranches(project any) error {
+	c.mergedBranchProject = project
+	return nil
+}
+
+func (c *fakeClient) CreateRepositoryFile(project any, options RepoFileCreateOptions) (RepoFile, error) {
+	c.repoFileProject = project
+	c.repoFileCreate = options
+	return c.repoFile, nil
+}
+
+func (c *fakeClient) UpdateRepositoryFile(project any, options RepoFileUpdateOptions) (RepoFile, error) {
+	c.repoFileProject = project
+	c.repoFileUpdate = options
+	return c.repoFile, nil
+}
+
+func (c *fakeClient) DeleteRepositoryFile(project any, options RepoFileDeleteOptions) error {
+	c.repoFileProject = project
+	c.repoFileDelete = options
+	return nil
+}
+
+func (c *fakeClient) CreateCommit(project any, options CommitCreateOptions) (Commit, error) {
+	c.commitProject = project
+	c.commitOptions = options
+	return c.commit, nil
+}
+
+func (c *fakeClient) CreateCIVariable(project any, options CIVariableCreateOptions) (CIVariable, error) {
+	c.ciVariableProject = project
+	c.ciVariableCreate = options
+	return c.ciVariable, nil
+}
+
+func (c *fakeClient) UpdateCIVariable(project any, key string, options CIVariableUpdateOptions) (CIVariable, error) {
+	c.ciVariableProject = project
+	c.ciVariableUpdateKey = key
+	c.ciVariableUpdate = options
+	return c.ciVariable, nil
+}
+
+func (c *fakeClient) DeleteCIVariable(project any, key string, options CIVariableDeleteOptions) error {
+	c.ciVariableProject = project
+	c.ciVariableDeleteKey = key
+	c.ciVariableDelete = options
+	return nil
+}
+
+func (c *fakeClient) CreatePipeline(project any, options PipelineCreateOptions) (Pipeline, error) {
+	c.pipelineProject = project
+	c.pipelineCreate = options
+	return c.pipeline, nil
+}
+
+func (c *fakeClient) RetryPipeline(project any, id int64) (Pipeline, error) {
+	c.pipelineRetryProj = project
+	c.pipelineRetryID = id
+	return c.pipeline, nil
+}
+
+func (c *fakeClient) CancelPipeline(project any, id int64) (Pipeline, error) {
+	c.pipelineCancelProj = project
+	c.pipelineCancelID = id
+	return c.pipeline, nil
+}
+
+func (c *fakeClient) CreateSnippet(options SnippetCreateOptions) (Snippet, error) {
+	c.snippetCreate = options
+	return c.snippet, nil
+}
+
+func (c *fakeClient) DeleteSnippet(id int64) error {
+	c.snippetDeleted = id
+	return nil
 }

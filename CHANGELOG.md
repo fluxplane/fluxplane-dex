@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-28
+
+### Added
+- Added GitLab branch write operations `gitlab.branch.create`,
+  `gitlab.branch.delete`, and `gitlab.branch.delete_merged`.
+- Added GitLab repository file write operations
+  `gitlab.repository.file.create`, `gitlab.repository.file.update`, and
+  `gitlab.repository.file.delete`.
+- Added GitLab multi-file commit operation
+  `gitlab.repository.commit.create` supporting `create`/`update`/`delete`/
+  `move`/`chmod` actions in a single commit.
+- Added GitLab project CI/CD variable write operations
+  `gitlab.ci.variable.create`, `gitlab.ci.variable.update`, and
+  `gitlab.ci.variable.delete` with environment scope, masked/protected/raw
+  flags, and `env_var`/`file` variable types.
+- Added GitLab CI pipeline write operations `gitlab.pipeline.create`,
+  `gitlab.pipeline.retry`, and `gitlab.pipeline.cancel`, including typed
+  pipeline variables on create.
+- Added GitLab personal snippet write operations `gitlab.snippet.create`
+  and `gitlab.snippet.delete` with multi-file snippet bodies and
+  private/internal/public visibility.
+
+### Changed
+- Extended the GitLab plugin's risk model with high-risk write and
+  destructive operation helpers so CI variable mutations and pipeline
+  control surface as high risk while delete operations surface as
+  destructive.
+- Updated plugin module requirements, workspace replacement, plugin manifest
+  versions, and builtin vision and websearch plugin versions for the `v0.8.0`
+  release.
+
 ## [0.7.0] - 2026-05-28
 
 ### Added

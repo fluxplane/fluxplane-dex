@@ -8,7 +8,7 @@ import (
 
 const (
 	PluginName        = "gitlab"
-	PluginVersion     = "0.7.0"
+	PluginVersion     = "0.8.0"
 	PluginDescription = "GitLab operations, datasources, indexes, and reverse lookups."
 
 	AuthMethodPersonalAccessToken = "personal_access_token"
@@ -20,16 +20,31 @@ const (
 	EnvGitLabToken         = "GITLAB_TOKEN"
 	EnvGitLabURL           = "GITLAB_URL"
 
-	OperationAuthTest    = "gitlab.auth.test"
-	OperationIndexBuild  = "gitlab.index.build"
-	OperationProjectList = "gitlab.project.list"
-	OperationProjectShow = "gitlab.project.show"
-	OperationMRList      = "gitlab.mr.list"
-	OperationMRShow      = "gitlab.mr.show"
-	OperationMRCreate    = "gitlab.mr.create"
-	OperationMRApprove   = "gitlab.mr.approve"
-	OperationMRMerge     = "gitlab.mr.merge"
-	OperationTagCreate   = "gitlab.repository.tag.create"
+	OperationAuthTest               = "gitlab.auth.test"
+	OperationIndexBuild             = "gitlab.index.build"
+	OperationProjectList            = "gitlab.project.list"
+	OperationProjectShow            = "gitlab.project.show"
+	OperationMRList                 = "gitlab.mr.list"
+	OperationMRShow                 = "gitlab.mr.show"
+	OperationMRCreate               = "gitlab.mr.create"
+	OperationMRApprove              = "gitlab.mr.approve"
+	OperationMRMerge                = "gitlab.mr.merge"
+	OperationTagCreate              = "gitlab.repository.tag.create"
+	OperationBranchCreate           = "gitlab.branch.create"
+	OperationBranchDelete           = "gitlab.branch.delete"
+	OperationBranchDeleteMerged     = "gitlab.branch.delete_merged"
+	OperationRepoFileCreate         = "gitlab.repository.file.create"
+	OperationRepoFileUpdate         = "gitlab.repository.file.update"
+	OperationRepoFileDelete         = "gitlab.repository.file.delete"
+	OperationCommitCreate           = "gitlab.repository.commit.create"
+	OperationCIVariableCreate       = "gitlab.ci.variable.create"
+	OperationCIVariableUpdate       = "gitlab.ci.variable.update"
+	OperationCIVariableDelete       = "gitlab.ci.variable.delete"
+	OperationPipelineCreate         = "gitlab.pipeline.create"
+	OperationPipelineRetry          = "gitlab.pipeline.retry"
+	OperationPipelineCancel         = "gitlab.pipeline.cancel"
+	OperationSnippetCreate          = "gitlab.snippet.create"
+	OperationSnippetDelete          = "gitlab.snippet.delete"
 
 	DatasourceProjects      = "gitlab.projects"
 	DatasourceUsers         = "gitlab.users"
@@ -111,6 +126,21 @@ func operationSpecs() []core.OperationSpec {
 		mergeRequestApproveSpec(),
 		mergeRequestMergeSpec(),
 		repositoryTagCreateSpec(),
+		branchCreateSpec(),
+		branchDeleteSpec(),
+		branchDeleteMergedSpec(),
+		repoFileCreateSpec(),
+		repoFileUpdateSpec(),
+		repoFileDeleteSpec(),
+		commitCreateSpec(),
+		ciVariableCreateSpec(),
+		ciVariableUpdateSpec(),
+		ciVariableDeleteSpec(),
+		pipelineCreateSpec(),
+		pipelineRetrySpec(),
+		pipelineCancelSpec(),
+		snippetCreateSpec(),
+		snippetDeleteSpec(),
 	}
 }
 
@@ -158,6 +188,66 @@ func repositoryTagCreateSpec() core.OperationSpec {
 	return gitlabWriteOperation[RepositoryTagCreateInput, RepositoryTag](OperationTagCreate, "Create a GitLab repository tag.", core.OperationNonIdempotent)
 }
 
+func branchCreateSpec() core.OperationSpec {
+	return gitlabWriteOperation[BranchCreateInput, Branch](OperationBranchCreate, "Create a GitLab repository branch.", core.OperationNonIdempotent)
+}
+
+func branchDeleteSpec() core.OperationSpec {
+	return gitlabDestructiveOperation[BranchDeleteInput, BranchActionResult](OperationBranchDelete, "Delete a GitLab repository branch.")
+}
+
+func branchDeleteMergedSpec() core.OperationSpec {
+	return gitlabDestructiveOperation[BranchDeleteMergedInput, BranchActionResult](OperationBranchDeleteMerged, "Delete all merged branches in a GitLab project.")
+}
+
+func repoFileCreateSpec() core.OperationSpec {
+	return gitlabWriteOperation[RepoFileCreateInput, RepoFile](OperationRepoFileCreate, "Create a file in a GitLab repository.", core.OperationNonIdempotent)
+}
+
+func repoFileUpdateSpec() core.OperationSpec {
+	return gitlabWriteOperation[RepoFileUpdateInput, RepoFile](OperationRepoFileUpdate, "Update a file in a GitLab repository.", core.OperationNonIdempotent)
+}
+
+func repoFileDeleteSpec() core.OperationSpec {
+	return gitlabDestructiveOperation[RepoFileDeleteInput, RepoFileActionResult](OperationRepoFileDelete, "Delete a file from a GitLab repository.")
+}
+
+func commitCreateSpec() core.OperationSpec {
+	return gitlabWriteOperation[CommitCreateInput, Commit](OperationCommitCreate, "Create a GitLab commit with one or more file actions.", core.OperationNonIdempotent)
+}
+
+func ciVariableCreateSpec() core.OperationSpec {
+	return gitlabHighRiskWriteOperation[CIVariableCreateInput, CIVariable](OperationCIVariableCreate, "Create a GitLab project CI/CD variable.", core.OperationNonIdempotent)
+}
+
+func ciVariableUpdateSpec() core.OperationSpec {
+	return gitlabHighRiskWriteOperation[CIVariableUpdateInput, CIVariable](OperationCIVariableUpdate, "Update a GitLab project CI/CD variable.", core.OperationNonIdempotent)
+}
+
+func ciVariableDeleteSpec() core.OperationSpec {
+	return gitlabDestructiveOperation[CIVariableDeleteInput, CIVariableActionResult](OperationCIVariableDelete, "Delete a GitLab project CI/CD variable.")
+}
+
+func pipelineCreateSpec() core.OperationSpec {
+	return gitlabHighRiskWriteOperation[PipelineCreateInput, Pipeline](OperationPipelineCreate, "Create a GitLab CI pipeline.", core.OperationNonIdempotent)
+}
+
+func pipelineRetrySpec() core.OperationSpec {
+	return gitlabHighRiskWriteOperation[PipelineRetryInput, Pipeline](OperationPipelineRetry, "Retry a GitLab CI pipeline.", core.OperationNonIdempotent)
+}
+
+func pipelineCancelSpec() core.OperationSpec {
+	return gitlabHighRiskWriteOperation[PipelineCancelInput, Pipeline](OperationPipelineCancel, "Cancel a GitLab CI pipeline.", core.OperationNonIdempotent)
+}
+
+func snippetCreateSpec() core.OperationSpec {
+	return gitlabWriteOperation[SnippetCreateInput, Snippet](OperationSnippetCreate, "Create a personal GitLab snippet.", core.OperationNonIdempotent)
+}
+
+func snippetDeleteSpec() core.OperationSpec {
+	return gitlabDestructiveOperation[SnippetDeleteInput, SnippetActionResult](OperationSnippetDelete, "Delete a personal GitLab snippet.")
+}
+
 func gitlabReadOperation[I any, O any](name, description string) core.OperationSpec {
 	return pluginbinding.TypedOperationSpec[I, O](name, description, gitlabReadOptions(core.OperationIdempotent)...)
 }
@@ -179,15 +269,23 @@ func gitlabReadOptions(idempotency core.OperationIdempotency) []pluginbinding.Op
 }
 
 func gitlabWriteOperation[I any, O any](name, description string, idempotency core.OperationIdempotency) core.OperationSpec {
-	return pluginbinding.TypedOperationSpec[I, O](name, description, gitlabWriteOptions(idempotency)...)
+	return pluginbinding.TypedOperationSpec[I, O](name, description, gitlabWriteOptions(idempotency, core.OperationRiskMedium)...)
 }
 
-func gitlabWriteOptions(idempotency core.OperationIdempotency) []pluginbinding.OperationSpecOption {
+func gitlabHighRiskWriteOperation[I any, O any](name, description string, idempotency core.OperationIdempotency) core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[I, O](name, description, gitlabWriteOptions(idempotency, core.OperationRiskHigh)...)
+}
+
+func gitlabDestructiveOperation[I any, O any](name, description string) core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[I, O](name, description, gitlabWriteOptions(core.OperationNonIdempotent, core.OperationRiskDestructive)...)
+}
+
+func gitlabWriteOptions(idempotency core.OperationIdempotency, risk core.OperationRisk) []pluginbinding.OperationSpecOption {
 	return []pluginbinding.OperationSpecOption{
 		pluginbinding.SecretPurposes(AuthPurposeAccessToken, AuthPurposeGitLabURL),
 		pluginbinding.Effects(core.OperationEffectWrite, core.OperationEffectNetwork),
 		pluginbinding.Access(core.OperationAccessAuth, core.OperationAccessSecret, core.OperationAccessNetwork),
-		pluginbinding.Risk(core.OperationRiskMedium),
+		pluginbinding.Risk(risk),
 		pluginbinding.Idempotency(idempotency),
 	}
 }

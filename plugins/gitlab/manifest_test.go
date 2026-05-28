@@ -43,13 +43,43 @@ func TestManifestDeclaresGitLabWriteOperations(t *testing.T) {
 	for _, operation := range manifest.Operations {
 		operations[operation.Name] = operation
 	}
-	for _, name := range []string{OperationMRCreate, OperationMRApprove, OperationMRMerge, OperationTagCreate} {
-		operation, ok := operations[name]
+	cases := []struct {
+		name string
+		risk core.OperationRisk
+	}{
+		{OperationMRCreate, core.OperationRiskMedium},
+		{OperationMRApprove, core.OperationRiskMedium},
+		{OperationMRMerge, core.OperationRiskMedium},
+		{OperationTagCreate, core.OperationRiskMedium},
+		{OperationBranchCreate, core.OperationRiskMedium},
+		{OperationBranchDelete, core.OperationRiskDestructive},
+		{OperationBranchDeleteMerged, core.OperationRiskDestructive},
+		{OperationRepoFileCreate, core.OperationRiskMedium},
+		{OperationRepoFileUpdate, core.OperationRiskMedium},
+		{OperationRepoFileDelete, core.OperationRiskDestructive},
+		{OperationCommitCreate, core.OperationRiskMedium},
+		{OperationCIVariableCreate, core.OperationRiskHigh},
+		{OperationCIVariableUpdate, core.OperationRiskHigh},
+		{OperationCIVariableDelete, core.OperationRiskDestructive},
+		{OperationPipelineCreate, core.OperationRiskHigh},
+		{OperationPipelineRetry, core.OperationRiskHigh},
+		{OperationPipelineCancel, core.OperationRiskHigh},
+		{OperationSnippetCreate, core.OperationRiskMedium},
+		{OperationSnippetDelete, core.OperationRiskDestructive},
+	}
+	for _, tc := range cases {
+		operation, ok := operations[tc.name]
 		if !ok {
-			t.Fatalf("missing operation %s", name)
+			t.Fatalf("missing operation %s", tc.name)
 		}
-		if operation.ReadOnly || operation.Risk != core.OperationRiskMedium || operation.Idempotency == "" {
-			t.Fatalf("operation %s metadata = %#v", name, operation)
+		if operation.ReadOnly {
+			t.Fatalf("operation %s should not be read-only", tc.name)
+		}
+		if operation.Risk != tc.risk {
+			t.Fatalf("operation %s risk = %q, want %q", tc.name, operation.Risk, tc.risk)
+		}
+		if operation.Idempotency == "" {
+			t.Fatalf("operation %s missing idempotency", tc.name)
 		}
 	}
 }

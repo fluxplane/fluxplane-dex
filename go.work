@@ -3,20 +3,20 @@ go 1.26.0
 use (
 	.
 	./plugins/confluence
-	./plugins/duckduckgo
 	./plugins/docker
+	./plugins/duckduckgo
 	./plugins/gitlab
 	./plugins/grafana
+	./plugins/jira
 	./plugins/kubernetes
 	./plugins/loki
 	./plugins/ollama
 	./plugins/openai
 	./plugins/prometheus
-	./plugins/jira
 	./plugins/slack
 	./plugins/sql
 	./plugins/system
 	./plugins/tavily
 )
 
-replace github.com/fluxplane/fluxplane-dex v0.7.0 => .
+replace github.com/fluxplane/fluxplane-dex v0.8.0 => .

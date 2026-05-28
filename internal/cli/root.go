@@ -69,15 +69,12 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newOpCommand(opts))
 	root.AddCommand(newAuthCommand(opts))
 	root.AddCommand(newSecretCommand(opts))
+	root.AddCommand(newShortcutCommand(opts))
 	root.AddCommand(newSearchCommand(opts))
 	root.AddCommand(newLookupCommand(opts))
 	root.AddCommand(newContextCommand(opts))
 	root.AddCommand(newEndpointCommand(opts))
 	root.AddCommand(newIndexCommand(opts))
-	root.AddCommand(newGitLabCommand(opts))
-	root.AddCommand(newSlackCommand(opts))
-	root.AddCommand(newSystemCommand(opts))
-	root.AddCommand(newWebsearchCommand(opts))
 	root.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
@@ -87,6 +84,61 @@ func NewRootCommand() *cobra.Command {
 		},
 	})
 	return root
+}
+
+type shortcutView struct {
+	Plugin      string         `json:"plugin"`
+	Use         string         `json:"use"`
+	Description string         `json:"description,omitempty"`
+	Target      string         `json:"target"`
+	Operation   string         `json:"operation,omitempty"`
+	Datasource  string         `json:"datasource,omitempty"`
+	Capability  string         `json:"capability,omitempty"`
+	Entity      string         `json:"entity,omitempty"`
+	Defaults    map[string]any `json:"defaults,omitempty"`
+}
+
+func newShortcutCommand(opts *options) *cobra.Command {
+	cmd := &cobra.Command{Use: "shortcut", Short: "Inspect CLI shortcut bindings"}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "ls [PLUGIN]",
+		Short: "List shortcut bindings",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			var plugin string
+			if len(args) == 1 {
+				entry, ok := runner.Marketplace.Resolve(args[0])
+				if !ok {
+					return fmt.Errorf("unknown plugin %q", args[0])
+				}
+				plugin = entry.Name
+			}
+			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"shortcuts": shortcutViews(runner.Marketplace, plugin)})
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "show USE",
+		Short: "Show one shortcut binding",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			use := strings.Join(args, " ")
+			for _, shortcut := range shortcutViews(runner.Marketplace, "") {
+				if shortcut.Use == use {
+					return renderValue(cmd.OutOrStdout(), opts.output, shortcut)
+				}
+			}
+			return fmt.Errorf("unknown shortcut %q", use)
+		},
+	})
+	return cmd
 }
 
 func newPluginCommand(opts *options) *cobra.Command {
@@ -105,7 +157,7 @@ func newPluginCommand(opts *options) *cobra.Command {
 	})
 	cmd.AddCommand(&cobra.Command{
 		Use:   "ls",
-		Short: "List installed and marketplace plugins",
+		Short: "List marketplace, installed, and activated plugins",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			runner, err := opts.runner()
@@ -116,7 +168,11 @@ func newPluginCommand(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"plugins": runner.Marketplace.Plugins(), "installed": installed.Plugins})
+			statuses, err := runner.State.PluginStatuses(runner.Marketplace)
+			if err != nil {
+				return err
+			}
+			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"plugins": runner.Marketplace.Plugins(), "installed": installed.Plugins, "status": statuses})
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
@@ -149,6 +205,26 @@ func newPluginCommand(opts *options) *cobra.Command {
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
+		Use:   "status NAME",
+		Short: "Show plugin installation and activation status",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			entry, ok := runner.Marketplace.Resolve(args[0])
+			if !ok {
+				return fmt.Errorf("unknown plugin %q", args[0])
+			}
+			status, err := runner.State.PluginStatus(entry)
+			if err != nil {
+				return err
+			}
+			return renderValue(cmd.OutOrStdout(), opts.output, status)
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
 		Use:   "install NAME",
 		Short: "Install a plugin from marketplace metadata",
 		Args:  cobra.ExactArgs(1),
@@ -161,6 +237,53 @@ func newPluginCommand(opts *options) *cobra.Command {
 				return err
 			}
 			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"plugin": args[0], "installed": true})
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "activate NAME",
+		Short: "Activate an installed or builtin plugin",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			entry, ok := runner.Marketplace.Resolve(args[0])
+			if !ok {
+				return fmt.Errorf("unknown plugin %q", args[0])
+			}
+			if err := runner.State.ActivatePlugin(entry); err != nil {
+				return err
+			}
+			status, err := runner.State.PluginStatus(entry)
+			if err != nil {
+				return err
+			}
+			return renderValue(cmd.OutOrStdout(), opts.output, status)
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "deactivate NAME",
+		Short: "Deactivate a plugin without removing its install record",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			entry, ok := runner.Marketplace.Resolve(args[0])
+			if !ok {
+				return fmt.Errorf("unknown plugin %q", args[0])
+			}
+			changed, err := runner.State.DeactivatePlugin(entry.Name)
+			if err != nil {
+				return err
+			}
+			status, err := runner.State.PluginStatus(entry)
+			if err != nil {
+				return err
+			}
+			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"changed": changed, "status": status})
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
@@ -562,257 +685,6 @@ func newIndexCommand(opts *options) *cobra.Command {
 	return cmd
 }
 
-func newGitLabCommand(opts *options) *cobra.Command {
-	cmd := &cobra.Command{Use: "gl", Aliases: []string{"gitlab"}, Short: "GitLab commands"}
-	indexOpts := struct {
-		index  string
-		entity string
-	}{}
-	index := &cobra.Command{
-		Use:   "index",
-		Short: "Build GitLab index",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			runner, err := opts.runner()
-			if err != nil {
-				return err
-			}
-			input := map[string]any{}
-			if strings.TrimSpace(indexOpts.index) != "" {
-				input["index"] = strings.TrimSpace(indexOpts.index)
-			}
-			if strings.TrimSpace(indexOpts.entity) != "" {
-				input["entity"] = strings.TrimSpace(indexOpts.entity)
-			}
-			result, err := runner.BuildIndex(cmd.Context(), "gitlab", opts.instanceName(), input)
-			if err != nil {
-				return err
-			}
-			return renderValue(cmd.OutOrStdout(), opts.output, result)
-		},
-	}
-	index.Flags().StringVar(&indexOpts.index, "index", "", "Index name to build")
-	index.Flags().StringVar(&indexOpts.entity, "entity", "", "Entity type to build")
-	cmd.AddCommand(index)
-	mr := &cobra.Command{Use: "mr", Short: "GitLab merge request commands"}
-	mrListOpts := struct {
-		project string
-		state   string
-		search  string
-		limit   int
-	}{state: "opened", limit: 20}
-	mrList := &cobra.Command{
-		Use:   "ls",
-		Short: "List merge requests",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			runner, err := opts.runner()
-			if err != nil {
-				return err
-			}
-			return callOperation(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), "gitlab.mr.list", map[string]any{
-				"project": mrListOpts.project,
-				"state":   mrListOpts.state,
-				"search":  mrListOpts.search,
-				"limit":   mrListOpts.limit,
-			})
-		},
-	}
-	mrList.Flags().StringVar(&mrListOpts.project, "project", "", "Project ID or path")
-	mrList.Flags().StringVar(&mrListOpts.state, "state", "opened", "Merge request state: opened, closed, merged, all")
-	mrList.Flags().StringVar(&mrListOpts.search, "search", "", "Search merge requests")
-	mrList.Flags().IntVar(&mrListOpts.limit, "limit", 20, "Maximum merge requests to return")
-	mr.AddCommand(mrList)
-	mr.AddCommand(&cobra.Command{
-		Use:   "show PROJECT!IID",
-		Short: "Show merge request",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
-			if err != nil {
-				return err
-			}
-			return callOperation(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), "gitlab.mr.show", map[string]any{"ref": args[0]})
-		},
-	})
-	cmd.AddCommand(mr)
-
-	proj := &cobra.Command{Use: "proj", Aliases: []string{"project"}, Short: "GitLab project commands"}
-	proj.AddCommand(&cobra.Command{
-		Use:   "ls",
-		Short: "List indexed projects",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			runner, err := opts.runner()
-			if err != nil {
-				return err
-			}
-			return callOperation(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), "gitlab.project.list", map[string]any{})
-		},
-	})
-	proj.AddCommand(&cobra.Command{
-		Use:   "show ID_OR_PATH",
-		Short: "Show indexed project",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
-			if err != nil {
-				return err
-			}
-			return callOperation(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), "gitlab.project.show", map[string]any{"id": args[0]})
-		},
-	})
-	cmd.AddCommand(proj)
-	return cmd
-}
-
-func newSlackCommand(opts *options) *cobra.Command {
-	cmd := &cobra.Command{Use: "slack", Short: "Slack commands"}
-	indexOpts := struct {
-		index  string
-		entity string
-	}{}
-	index := &cobra.Command{
-		Use:   "index",
-		Short: "Build Slack index",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			runner, err := opts.runner()
-			if err != nil {
-				return err
-			}
-			input := map[string]any{}
-			if strings.TrimSpace(indexOpts.index) != "" {
-				input["index"] = strings.TrimSpace(indexOpts.index)
-			}
-			if strings.TrimSpace(indexOpts.entity) != "" {
-				input["entity"] = strings.TrimSpace(indexOpts.entity)
-			}
-			result, err := runner.BuildIndex(cmd.Context(), "slack", opts.instanceName(), input)
-			if err != nil {
-				return err
-			}
-			return renderValue(cmd.OutOrStdout(), opts.output, result)
-		},
-	}
-	index.Flags().StringVar(&indexOpts.index, "index", "", "Index name to build")
-	index.Flags().StringVar(&indexOpts.entity, "entity", "", "Entity type to build")
-	cmd.AddCommand(index)
-	cmd.AddCommand(&cobra.Command{
-		Use:   "send CHANNEL TEXT",
-		Short: "Send Slack message",
-		Args:  cobra.MinimumNArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
-			if err != nil {
-				return err
-			}
-			return callOperation(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), "slack.message.send", map[string]any{"channel": args[0], "text": strings.Join(args[1:], " ")})
-		},
-	})
-	cmd.AddCommand(&cobra.Command{
-		Use:   "search QUERY",
-		Short: "Search Slack",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
-			if err != nil {
-				return err
-			}
-			return callOperation(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), "slack.search", map[string]any{"query": strings.Join(args, " ")})
-		},
-	})
-	cmd.AddCommand(&cobra.Command{
-		Use:   "thread CHANNEL TS",
-		Short: "Show Slack thread",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
-			if err != nil {
-				return err
-			}
-			return callOperation(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), "slack.thread", map[string]any{"channel": args[0], "ts": args[1]})
-		},
-	})
-	return cmd
-}
-
-func newSystemCommand(opts *options) *cobra.Command {
-	cmd := &cobra.Command{Use: "sys", Aliases: []string{"system"}, Short: "Local system information"}
-	infoOpts := struct {
-		categories []string
-		include    []string
-		exclude    []string
-	}{}
-	info := &cobra.Command{
-		Use:   "info",
-		Short: "Show local system information",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			runner, err := opts.runner()
-			if err != nil {
-				return err
-			}
-			input := map[string]any{}
-			if len(infoOpts.categories) > 0 {
-				input["categories"] = infoOpts.categories
-			}
-			if len(infoOpts.include) > 0 {
-				input["include"] = infoOpts.include
-			}
-			if len(infoOpts.exclude) > 0 {
-				input["exclude"] = infoOpts.exclude
-			}
-			return callOperation(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), "system.info", input)
-		},
-	}
-	info.Flags().StringArrayVar(&infoOpts.categories, "category", nil, "Category to include")
-	info.Flags().StringArrayVar(&infoOpts.include, "include", nil, "Category to include")
-	info.Flags().StringArrayVar(&infoOpts.exclude, "exclude", nil, "Category to exclude")
-	cmd.AddCommand(info)
-	return cmd
-}
-
-func newWebsearchCommand(opts *options) *cobra.Command {
-	cmd := &cobra.Command{Use: "websearch", Aliases: []string{"web"}, Short: "Search the web through provider plugins"}
-	cmd.AddCommand(&cobra.Command{
-		Use:   "providers",
-		Short: "List web search providers",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			runner, err := opts.runner()
-			if err != nil {
-				return err
-			}
-			return callOperation(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), "websearch.provider.list", map[string]any{})
-		},
-	})
-	searchOpts := struct {
-		providers []string
-		max       int
-	}{max: 10}
-	search := &cobra.Command{
-		Use:   "search QUERY",
-		Short: "Search the web",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
-			if err != nil {
-				return err
-			}
-			input := map[string]any{"query": strings.Join(args, " "), "max": searchOpts.max}
-			if len(searchOpts.providers) > 0 {
-				input["providers"] = searchOpts.providers
-			}
-			return callOperation(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), "websearch.search", input)
-		},
-	}
-	search.Flags().StringArrayVar(&searchOpts.providers, "provider", nil, "Provider to use")
-	search.Flags().IntVar(&searchOpts.max, "max", 10, "Maximum results per provider")
-	cmd.AddCommand(search)
-	return cmd
-}
-
 func (o *options) runner() (runtime.Runner, error) {
 	var marketplace runtime.Marketplace
 	var err error
@@ -858,6 +730,40 @@ func parseDevPlugins(values []string) (map[string]string, error) {
 	return out, nil
 }
 
+func shortcutViews(marketplace runtime.Marketplace, pluginFilter string) []shortcutView {
+	var out []shortcutView
+	for _, plugin := range marketplace.Plugins() {
+		if pluginFilter != "" && plugin.Name != pluginFilter {
+			continue
+		}
+		for _, command := range plugin.Commands {
+			target := strings.TrimSpace(command.Target)
+			if target == "" {
+				switch {
+				case strings.TrimSpace(command.Operation) != "":
+					target = "operation"
+				case strings.TrimSpace(command.Datasource) != "":
+					target = "datasource"
+				default:
+					target = "command"
+				}
+			}
+			out = append(out, shortcutView{
+				Plugin:      plugin.Name,
+				Use:         command.Use,
+				Description: command.Description,
+				Target:      target,
+				Operation:   command.Operation,
+				Datasource:  command.Datasource,
+				Capability:  command.Capability,
+				Entity:      command.Entity,
+				Defaults:    command.Defaults,
+			})
+		}
+	}
+	return out
+}
+
 func fanout(ctx context.Context, runner runtime.Runner, instance, command string, payload any) map[string]any {
 	instance = runtime.NormalizeInstance(instance)
 	results := map[string]any{}
@@ -869,6 +775,12 @@ func fanout(ctx context.Context, runner runtime.Runner, instance, command string
 			capability = "lookup"
 		}
 		plugins, err = datasourceCapableAvailablePlugins(ctx, runner, instance, capability)
+		if err != nil {
+			return map[string]any{"error": err.Error()}
+		}
+	} else if command == protocol.CommandEndpointsDiscover {
+		var err error
+		plugins, err = endpointDiscovererAvailablePlugins(ctx, runner, instance)
 		if err != nil {
 			return map[string]any{"error": err.Error()}
 		}
@@ -884,6 +796,28 @@ func fanout(ctx context.Context, runner runtime.Runner, instance, command string
 		results[plugin.Name] = value
 	}
 	return results
+}
+
+func endpointDiscovererAvailablePlugins(ctx context.Context, runner runtime.Runner, instance string) ([]core.PluginEntry, error) {
+	var out []core.PluginEntry
+	instance = runtime.NormalizeInstance(instance)
+	for _, plugin := range runner.Marketplace.Plugins() {
+		available, err := pluginAvailable(runner, plugin.Name, instance)
+		if err != nil {
+			return nil, err
+		}
+		if !available {
+			continue
+		}
+		manifest, err := pluginManifest(ctx, runner, plugin.Name)
+		if err != nil {
+			continue
+		}
+		if len(manifest.Endpoints) > 0 {
+			out = append(out, plugin)
+		}
+	}
+	return out, nil
 }
 
 func fanoutSearch(ctx context.Context, runner runtime.Runner, instance string, payload any, pluginFilter string) map[string]any {
@@ -949,24 +883,18 @@ func datasourceCapableAvailablePlugins(ctx context.Context, runner runtime.Runne
 }
 
 func pluginAvailable(runner runtime.Runner, plugin, instance string) (bool, error) {
-	if entry, ok := runner.Marketplace.Resolve(plugin); ok && (entry.Metadata["kind"] == "builtin" || entry.Metadata["builtin"] == "true") {
-		return true, nil
+	entry, ok := runner.Marketplace.Resolve(plugin)
+	if !ok {
+		return false, nil
 	}
-	installed, err := runner.State.IsPluginInstalled(plugin)
+	activated, err := runner.State.IsPluginActivated(entry.Name)
 	if err != nil {
 		return false, err
 	}
-	if installed {
+	if activated {
 		return true, nil
 	}
-	connected, err := runner.State.HasStoredAuth(plugin, instance)
-	if err != nil {
-		return false, err
-	}
-	if connected {
-		return true, nil
-	}
-	return runner.State.HasIndexRecords(plugin, instance)
+	return false, nil
 }
 
 func pluginManifest(ctx context.Context, runner runtime.Runner, plugin string) (core.PluginManifest, error) {

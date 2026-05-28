@@ -16,9 +16,9 @@ func NewPluginWithService(service Service) *pluginbinding.Plugin {
 		pluginbinding.WithIndexBuildOperation(OperationIndexBuild),
 		pluginbinding.WithHostOwnedIndexStatus("Slack"),
 		pluginbinding.RegisterOperation(indexBuildSpec(), service.IndexBuild),
-		pluginbinding.RegisterOperation(messageSendSpec(), pluginbinding.NotImplementedOperation[MessageSendInput, MessageSendResult]("requires live Slack client migration")),
-		pluginbinding.RegisterOperation(searchSpec(), pluginbinding.NotImplementedOperation[SearchInput, SearchResult]("requires live Slack client migration")),
-		pluginbinding.RegisterOperation(threadSpec(), pluginbinding.NotImplementedOperation[ThreadInput, ThreadResult]("requires live Slack client migration")),
+		pluginbinding.RegisterOperation(messageSendSpec(), service.SendMessage),
+		pluginbinding.RegisterOperation(searchSpec(), service.Search),
+		pluginbinding.RegisterOperation(threadSpec(), service.Thread),
 		pluginbinding.RegisterDatasourceLookup(slackUsersLookupSpec(), service.Lookup),
 		pluginbinding.RegisterDatasourceLookup(slackChannelsLookupSpec(), service.Lookup),
 	)

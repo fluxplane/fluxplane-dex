@@ -25,6 +25,12 @@ shape of near-term plugin implementations. First build the local contracts,
 prove them with real plugins, and only then expose the resulting catalog to
 `fluxplane-core`.
 
+Parity gate: do not start fluxplane-core integration until this repository has
+functional parity with the public `codewandler/dex` CLI. Parity does not mean
+copying the old command tree internally; it means every legacy workflow has a
+working local mapping to a dex plugin operation, datasource capability, or
+explicit host CLI feature with comparable behavior.
+
 ## Current fluxplane-dex Plugin Surface
 
 Implemented or scaffolded now:
@@ -45,7 +51,7 @@ work:
 
 1. Build the local host contracts that dex itself needs.
 2. Stabilize the plugins that already exist against those contracts.
-3. Prove endpoint discovery with a real plugin, starting with Prometheus.
+3. Prove endpoint discovery with a real discoverer, starting with Kubernetes.
 4. Port broad integrations by composing datasources, typed operations, context,
    endpoint discovery, and shortcuts.
 5. Preserve legacy ergonomics through CLI shortcuts without freezing the legacy
@@ -79,13 +85,19 @@ vision, and roadmap. They are intentionally smaller than the broad P0 themes.
 
 Current recommended order:
 1. Implement Shortcut Binding v1.
-2. Stabilize current plugins, especially Slack live behavior, GitLab read
+2. Stabilize the plugin install/activation model so plugin-specific surfaces
+   are driven by state, not hardcoded host commands.
+3. Stabilize current plugins, especially Slack live behavior, GitLab read
    coverage, and provider-neutral websearch hardening.
-3. Add the Prometheus plugin as the first endpoint discovery proof point.
-4. Reuse the endpoint model for Loki/Kubernetes/SQL/Homer after Prometheus
-   proves it.
-5. Keep `fluxplane-core` contribution-provider work as the final integration
-   phase.
+4. Add Kubernetes as the first endpoint discovery proof point. Kubernetes uses
+   kubeconfig/client-go to discover cluster endpoints for products such as
+   Prometheus and Loki; Prometheus and Loki do not discover themselves.
+5. Add Prometheus and Loki as endpoint consumers with test/query/labels style
+   operations over configured or discovered URLs.
+6. Add SQL/MySQL using endpoint/secret-aware read-only query semantics.
+7. Continue through the remaining codewandler/dex parity gaps.
+8. Keep `fluxplane-core` contribution-provider work as the final integration
+   phase, after functional parity.
 
 ### 1. Operation Metadata v1 - Implemented
 
@@ -162,27 +174,27 @@ Acceptance:
 - Context blocks include source identity and stable IDs.
 - Empty context is a successful empty result, not a protocol error.
 
-### 5. Endpoint Discovery Proof Point
+### 5. Kubernetes Endpoint Discovery Proof Point
 
 Goal: create the shared endpoint model through the first real endpoint
 discovery plugin instead of designing a registry without endpoints to discover.
 
 Scope:
-- Add a minimal Prometheus plugin focused on endpoint discovery, connection
-  test, labels, targets, alerts, and instant/range query.
+- Add a minimal Kubernetes plugin that uses kubeconfig and `client-go` to list
+  clusters and discover product endpoints from Kubernetes services.
 - Define endpoint refs, registry storage, endpoint candidate normalization, and
-  endpoint test/report shape as Prometheus needs them.
+  endpoint test/report shape as Kubernetes discovery needs them.
 - Keep discovery providers separate from stored endpoint refs.
 - Add CLI inspection commands for endpoint candidates and registered endpoints.
-- Use Prometheus cluster endpoint discovery as the proof point before Loki,
-  Kubernetes, SQL, or Homer depend on the endpoint registry.
+- Use Kubernetes-discovered Prometheus and Loki services as the proof point
+  before SQL or Homer depend on the endpoint registry.
 
 Acceptance:
 - Plugins can return endpoint candidates through the protocol.
 - The host can store and reference endpoint refs by stable ID.
 - Endpoint refs can carry secret refs without exposing secret material.
-- Prometheus can use discovered or registered endpoint refs for its read
-  operations.
+- Prometheus and Loki can use discovered or registered endpoint refs for their
+  read operations, but they do not act as their own discoverers.
 
 ### 6. Current Plugin Stabilization
 
@@ -202,9 +214,10 @@ Acceptance:
 - `operations.call_batch` and datasource search behave consistently across
   builtins and external plugins.
 
-Do not start Jira, Kubernetes, Loki, SQL, Homer, or GitHub as large ports before
-the relevant contract slice exists. Prometheus is the exception because it is
-the smallest useful endpoint discovery proof point.
+Do not start Jira, Loki, SQL, Homer, or GitHub as large ports before the
+relevant contract slice exists. Kubernetes is the exception because it is the
+actual endpoint discovery proof point for cluster-local products such as
+Prometheus and Loki.
 
 ## fluxplane-core Plugin Overlap Review
 
@@ -302,7 +315,7 @@ Concepts to port into this repo:
 
 Immediate concept priority:
 - P0: maintain operation semantics/access metadata, datasource entity/view model, and context providers; implement shortcut binding.
-- P1: Prometheus-driven endpoint registry/discovery, auth test reports,
+- P1: Kubernetes-driven endpoint registry/discovery, auth test reports,
   secret resolution/migration, runtime system boundary, and managed process
   handles.
 - P2: current plugin stabilization, richer render metadata, and high-value
@@ -785,18 +798,18 @@ The current plugin protocol can express operations, auth methods, datasources, c
 6. Do not add broad write operations without Operation Metadata v1 fields for
    their effect/risk/idempotency/access profile.
 
-### Phase 2: Prometheus and Endpoint Discovery Proof Point
+### Phase 2: Kubernetes and Endpoint Discovery Proof Point
 
-1. Add a Prometheus plugin with endpoint discovery, test, instant/range query,
-   labels, targets, and alerts.
-2. Implement Endpoint Registry/Discovery v1 from the Prometheus use case:
+1. Add a Kubernetes plugin using kubeconfig/client-go for cluster context
+   listing and product endpoint discovery from services.
+2. Implement Endpoint Registry/Discovery v1 from the Kubernetes use case:
    endpoint candidates, registered endpoint refs, endpoint health/test reports,
    and secret refs.
 3. Add CLI inspection for discovered candidates and registered endpoints.
-4. Keep Kubernetes-assisted discovery narrow at first; only add the minimal
-   cluster endpoint discovery path needed to prove the endpoint model.
-5. Reuse the endpoint model later for Loki, Kubernetes, SQL/MySQL, Homer, and
-   any hosted product endpoints.
+4. Add Prometheus and Loki as endpoint consumers: test/query/labels style
+   operations over configured or discovered endpoint URLs.
+5. Reuse the endpoint model later for SQL/MySQL, Homer, and any hosted product
+   endpoints.
 
 ### Phase 3: Port High-Value Daily Workflow Integrations
 
@@ -847,6 +860,10 @@ The current plugin protocol can express operations, auth methods, datasources, c
 
 Goal: expose the mature `fluxplane-dex` plugin surface as a contribution source
 for `fluxplane-core` without importing `fluxplane-core` into this repository.
+
+Prerequisite: functional parity with the public `codewandler/dex` CLI must be
+complete or explicitly waived for specific legacy workflows before this phase
+starts.
 
 Scope:
 - Define a local contribution catalog format that can describe plugins,

@@ -34,6 +34,7 @@ type MessageSendResult struct {
 
 type SearchInput struct {
 	Query string `json:"query,omitempty" jsonschema:"required,description=Slack search query"`
+	Limit int    `json:"limit,omitempty" jsonschema:"description=Maximum messages to return"`
 }
 
 type SearchResult struct {
@@ -51,6 +52,7 @@ type SearchMessage struct {
 type ThreadInput struct {
 	Channel string `json:"channel,omitempty" jsonschema:"required,description=Slack channel ID"`
 	TS      string `json:"ts,omitempty" jsonschema:"required,description=Slack message timestamp"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"description=Maximum replies to return"`
 }
 
 type ThreadResult struct {
@@ -100,6 +102,68 @@ func (s Service) Lookup(ctx pluginbinding.Context, input LookupInput) (LookupRes
 		}
 	}
 	return pluginbinding.NewDatasourceLookupResultFromCandidates(PluginName, input, candidates), nil
+}
+
+func (s Service) SendMessage(ctx pluginbinding.Context, input MessageSendInput) (MessageSendResult, error) {
+	channel := strings.TrimSpace(input.Channel)
+	text := strings.TrimSpace(input.Text)
+	if channel == "" {
+		return MessageSendResult{}, pluginbinding.Fail("bad_input", "channel is required")
+	}
+	if text == "" {
+		return MessageSendResult{}, pluginbinding.Fail("bad_input", "text is required")
+	}
+	material, err := ctx.Secret(AuthPurposeBot)
+	if err != nil {
+		return MessageSendResult{}, pluginbinding.Errorf("slack", "%s", err)
+	}
+	client, err := s.client(material)
+	if err != nil {
+		return MessageSendResult{}, pluginbinding.Errorf("slack", "%s", err)
+	}
+	ts, err := client.SendMessage(context.Background(), channel, text)
+	if err != nil {
+		return MessageSendResult{}, pluginbinding.Errorf("slack", "%s", err)
+	}
+	return MessageSendResult{Channel: channel, TS: ts, OK: true}, nil
+}
+
+func (s Service) Search(ctx pluginbinding.Context, input SearchInput) (SearchResult, error) {
+	query := strings.TrimSpace(input.Query)
+	if query == "" {
+		return SearchResult{}, pluginbinding.Fail("bad_input", "query is required")
+	}
+	messages, _, err := pluginbinding.ReadWithPreferredSecrets[Client, searchMessagesOutput](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) (searchMessagesOutput, error) {
+		messages, total, err := client.SearchMessages(context.Background(), query, input.Limit)
+		return searchMessagesOutput{Messages: messages, Total: total}, err
+	}, fallbackableSlackError)
+	if err != nil {
+		return SearchResult{}, pluginbinding.Errorf("slack", "%s", err)
+	}
+	return SearchResult{Count: messages.Total, Messages: messages.Messages}, nil
+}
+
+func (s Service) Thread(ctx pluginbinding.Context, input ThreadInput) (ThreadResult, error) {
+	channel := strings.TrimSpace(input.Channel)
+	ts := strings.TrimSpace(input.TS)
+	if channel == "" {
+		return ThreadResult{}, pluginbinding.Fail("bad_input", "channel is required")
+	}
+	if ts == "" {
+		return ThreadResult{}, pluginbinding.Fail("bad_input", "ts is required")
+	}
+	messages, _, err := pluginbinding.ReadWithPreferredSecrets[Client, []ThreadMessage](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) ([]ThreadMessage, error) {
+		return client.GetThread(context.Background(), channel, ts, input.Limit)
+	}, fallbackableSlackError)
+	if err != nil {
+		return ThreadResult{}, pluginbinding.Errorf("slack", "%s", err)
+	}
+	return ThreadResult{Channel: channel, TS: ts, Count: len(messages), Messages: messages}, nil
+}
+
+type searchMessagesOutput struct {
+	Messages []SearchMessage
+	Total    int
 }
 
 func (s Service) indexBuild(ctx pluginbinding.Context, input map[string]any) (pluginbinding.IndexBuildResult, error) {

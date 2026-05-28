@@ -145,6 +145,9 @@ func (r Runner) BuildIndex(ctx context.Context, pluginName, instance string, inp
 	if len(out.Indexes) == 1 {
 		out.Index = out.Indexes[0]
 	}
+	if err := r.State.ActivatePlugin(entry); err != nil {
+		return IndexBuildResult{}, err
+	}
 	return out, nil
 }
 

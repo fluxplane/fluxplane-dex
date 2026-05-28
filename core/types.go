@@ -21,7 +21,11 @@ type PluginEntry struct {
 type CommandShortcut struct {
 	Use         string         `json:"use"`
 	Description string         `json:"description,omitempty"`
+	Target      string         `json:"target,omitempty"`
 	Operation   string         `json:"operation,omitempty"`
+	Datasource  string         `json:"datasource,omitempty"`
+	Capability  string         `json:"capability,omitempty"`
+	Entity      string         `json:"entity,omitempty"`
 	Defaults    map[string]any `json:"defaults,omitempty"`
 }
 

@@ -48,7 +48,7 @@ func TestSystemInfoCommandFiltersCategories(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "--dev-plugin", "system=../../plugins/system", "sys", "info", "--category", "os", "--category", "time", "-o", "json"})
+	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "--dev-plugin", "system=../../plugins/system", "op", "run", "system.info", `{"categories":["os","time"]}`, "-o", "json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +64,44 @@ func TestSystemInfoCommandFiltersCategories(t *testing.T) {
 	}
 	if _, ok := result.System["cpu"]; ok {
 		t.Fatalf("unexpected cpu category in %#v", result.System)
+	}
+}
+
+func TestPluginStatusActivateDeactivate(t *testing.T) {
+	home := t.TempDir()
+	activate := NewRootCommand()
+	var activateOut bytes.Buffer
+	activate.SetOut(&activateOut)
+	activate.SetErr(&activateOut)
+	activate.SetArgs([]string{"--dex-home", home, "plugin", "activate", "websearch", "-o", "json"})
+	if err := activate.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var active runtime.PluginStatus
+	if err := json.Unmarshal(activateOut.Bytes(), &active); err != nil {
+		t.Fatal(err)
+	}
+	if active.Name != "websearch" || !active.Installed || !active.Activated {
+		t.Fatalf("active status = %#v", active)
+	}
+
+	deactivate := NewRootCommand()
+	var deactivateOut bytes.Buffer
+	deactivate.SetOut(&deactivateOut)
+	deactivate.SetErr(&deactivateOut)
+	deactivate.SetArgs([]string{"--dex-home", home, "plugin", "deactivate", "websearch", "-o", "json"})
+	if err := deactivate.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Changed bool                 `json:"changed"`
+		Status  runtime.PluginStatus `json:"status"`
+	}
+	if err := json.Unmarshal(deactivateOut.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.Changed || result.Status.Activated {
+		t.Fatalf("deactivate result = %#v", result)
 	}
 }
 
@@ -85,6 +123,33 @@ func TestOperationShowIncludesMetadata(t *testing.T) {
 	}
 	if len(result.Effects) == 0 || result.Effects[0] != core.OperationEffectRead {
 		t.Fatalf("effects = %#v", result.Effects)
+	}
+}
+
+func TestShortcutShowTracesDatasourceBinding(t *testing.T) {
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "shortcut", "ls", "websearch", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Shortcuts []shortcutView `json:"shortcuts"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	var found shortcutView
+	for _, shortcut := range result.Shortcuts {
+		if shortcut.Target == "datasource" {
+			found = shortcut
+			break
+		}
+	}
+	if found.Plugin != "websearch" || found.Datasource != "websearch.results" || found.Capability != "search" {
+		t.Fatalf("shortcut = %#v", result)
 	}
 }
 
@@ -121,7 +186,7 @@ func TestWebsearchCommandSurfacesOperationFailure(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "websearch", "search", "fluxplane dex", "--provider", "missing-provider", "-o", "json"})
+	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "op", "run", "websearch.search", `{"query":"fluxplane dex","providers":["missing-provider"]}`, "-o", "json"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatalf("expected websearch command to fail, output:\n%s", out.String())
@@ -244,7 +309,7 @@ func TestAuthConnectPartialDoesNotMarkPluginAvailable(t *testing.T) {
 	}
 }
 
-func TestGitLabMRListCommandRoutesOperationInput(t *testing.T) {
+func TestOperationRunRoutesInput(t *testing.T) {
 	pluginDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(pluginDir, "go.mod"), []byte("module fakegitlab\n\ngo 1.26\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -288,11 +353,8 @@ func main() {
 	cmd.SetArgs([]string{
 		"--dex-home", t.TempDir(),
 		"--dev-plugin", "gitlab=" + pluginDir,
-		"gl", "mr", "ls",
-		"--project", "group/dex",
-		"--state", "merged",
-		"--search", "ship",
-		"--limit", "7",
+		"op", "run", "gitlab.mr.list",
+		`{"project":"group/dex","state":"merged","search":"ship","limit":7}`,
 		"-o", "json",
 	})
 	if err := cmd.Execute(); err != nil {
@@ -628,6 +690,9 @@ func main() {
 	if _, err := state.SaveIndexRecords("gitlab", "work", "gitlab.projects", []json.RawMessage{json.RawMessage(`{"entity":"gitlab.project","id":"work/project","name":"manager","web_url":"https://gitlab.example.com/work/project"}`)}); err != nil {
 		t.Fatal(err)
 	}
+	if err := state.ActivatePlugin(core.PluginEntry{Name: "gitlab", Binary: "dex-plugin-gitlab"}); err != nil {
+		t.Fatal(err)
+	}
 
 	search := NewRootCommand()
 	var searchOut bytes.Buffer
@@ -735,7 +800,7 @@ func main() {
 	var buildOut bytes.Buffer
 	build.SetOut(&buildOut)
 	build.SetErr(&buildOut)
-	build.SetArgs([]string{"--dex-home", home, "--dev-plugin", "slack=" + pluginDir, "slack", "index", "-o", "json"})
+	build.SetArgs([]string{"--dex-home", home, "--dev-plugin", "slack=" + pluginDir, "index", "build", "slack", "-o", "json"})
 	if err := build.Execute(); err != nil {
 		t.Fatal(err)
 	}

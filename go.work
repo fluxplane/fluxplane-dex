@@ -1,9 +1,12 @@
-go 1.26
+go 1.26.0
 
 use (
 	.
 	./plugins/duckduckgo
 	./plugins/gitlab
+	./plugins/kubernetes
+	./plugins/loki
+	./plugins/prometheus
 	./plugins/slack
 	./plugins/system
 	./plugins/tavily

@@ -13,6 +13,9 @@ import (
 type Client interface {
 	ListUsers(context.Context) ([]User, error)
 	ListChannels(context.Context) ([]Channel, error)
+	SendMessage(context.Context, string, string) (string, error)
+	SearchMessages(context.Context, string, int) ([]SearchMessage, int, error)
+	GetThread(context.Context, string, string, int) ([]ThreadMessage, error)
 }
 
 type ClientFactory func(pluginbinding.SecretMaterial) (Client, error)
@@ -55,6 +58,57 @@ func (c liveClient) ListChannels(ctx context.Context) ([]Channel, error) {
 	out := make([]Channel, 0, len(channels))
 	for _, channel := range channels {
 		out = append(out, channelFromAPI(channel))
+	}
+	return out, nil
+}
+
+func (c liveClient) SendMessage(ctx context.Context, channel, text string) (string, error) {
+	_, ts, err := c.client.PostMessageContext(ctx, channel, slackapi.MsgOptionText(text, false))
+	return ts, err
+}
+
+func (c liveClient) SearchMessages(ctx context.Context, query string, limit int) ([]SearchMessage, int, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	params := slackapi.NewSearchParameters()
+	params.Count = limit
+	messages, err := c.client.SearchMessagesContext(ctx, query, params)
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]SearchMessage, 0, len(messages.Matches))
+	for _, message := range messages.Matches {
+		out = append(out, SearchMessage{
+			Channel: message.Channel.ID,
+			TS:      message.Timestamp,
+			User:    firstNonEmpty(message.User, message.Username),
+			Text:    strings.TrimSpace(message.Text),
+		})
+	}
+	return out, messages.Total, nil
+}
+
+func (c liveClient) GetThread(ctx context.Context, channel, ts string, limit int) ([]ThreadMessage, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	replies, _, _, err := c.client.GetConversationRepliesContext(ctx, &slackapi.GetConversationRepliesParameters{
+		ChannelID: channel,
+		Timestamp: ts,
+		Limit:     limit,
+		Inclusive: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ThreadMessage, 0, len(replies))
+	for _, reply := range replies {
+		out = append(out, ThreadMessage{
+			TS:   reply.Timestamp,
+			User: reply.User,
+			Text: strings.TrimSpace(reply.Text),
+		})
 	}
 	return out, nil
 }
@@ -115,4 +169,14 @@ func fallbackableSlackError(err error) bool {
 	default:
 		return false
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

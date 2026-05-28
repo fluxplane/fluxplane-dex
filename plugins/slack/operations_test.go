@@ -175,6 +175,38 @@ func TestServiceLookupCanFilterEntity(t *testing.T) {
 	}
 }
 
+func TestServiceSendSearchAndThreadUseLiveClient(t *testing.T) {
+	factory := &capturingFactory{
+		clients: map[string]*fakeClient{
+			"bot_token": {
+				sendTS: "1710000000.123456",
+				thread: []ThreadMessage{{TS: "1710000000.123456", User: "U1", Text: "root"}},
+			},
+			"user_token": {
+				searchMessages: []SearchMessage{{Channel: "C1", TS: "1710000000.123456", User: "U1", Text: "hello"}},
+				searchTotal:    1,
+				thread:         []ThreadMessage{{TS: "1710000000.123456", User: "U1", Text: "root"}},
+			},
+		},
+	}
+	plugin := testPlugin(factory, nil)
+
+	send := plugintest.RunOK[MessageSendResult](t, plugin, OperationMessageSend, map[string]any{"channel": "C1", "text": "hello"})
+	if !send.OK || send.TS != "1710000000.123456" || factory.clients["bot_token"].sendCalls != 1 {
+		t.Fatalf("send result = %#v calls=%d", send, factory.clients["bot_token"].sendCalls)
+	}
+
+	search := plugintest.RunOK[SearchResult](t, plugin, OperationSearch, map[string]any{"query": "hello", "limit": 5})
+	if search.Count != 1 || len(search.Messages) != 1 || search.Messages[0].Channel != "C1" || factory.clients["user_token"].searchCalls != 1 {
+		t.Fatalf("search result = %#v calls=%d", search, factory.clients["user_token"].searchCalls)
+	}
+
+	thread := plugintest.RunOK[ThreadResult](t, plugin, OperationThread, map[string]any{"channel": "C1", "ts": "1710000000.123456"})
+	if thread.Count != 1 || thread.Messages[0].Text != "root" || factory.clients["user_token"].threadCalls != 1 {
+		t.Fatalf("thread result = %#v calls=%d", thread, factory.clients["user_token"].threadCalls)
+	}
+}
+
 func testPlugin(factory *capturingFactory, get pluginbinding.SecretGetter) *pluginbinding.Plugin {
 	if get == nil {
 		get = func(_ pluginbinding.Context, purpose string) (pluginbinding.SecretMaterial, error) {
@@ -202,12 +234,22 @@ func (f *capturingFactory) newClient(material pluginbinding.SecretMaterial) (Cli
 }
 
 type fakeClient struct {
-	users         []User
-	channels      []Channel
-	usersErr      error
-	channelsErr   error
-	usersCalls    int
-	channelsCalls int
+	users          []User
+	channels       []Channel
+	searchMessages []SearchMessage
+	thread         []ThreadMessage
+	sendTS         string
+	searchTotal    int
+	usersErr       error
+	channelsErr    error
+	sendErr        error
+	searchErr      error
+	threadErr      error
+	usersCalls     int
+	channelsCalls  int
+	sendCalls      int
+	searchCalls    int
+	threadCalls    int
 }
 
 func (c *fakeClient) ListUsers(_ context.Context) ([]User, error) {
@@ -218,4 +260,19 @@ func (c *fakeClient) ListUsers(_ context.Context) ([]User, error) {
 func (c *fakeClient) ListChannels(_ context.Context) ([]Channel, error) {
 	c.channelsCalls++
 	return c.channels, c.channelsErr
+}
+
+func (c *fakeClient) SendMessage(_ context.Context, _, _ string) (string, error) {
+	c.sendCalls++
+	return c.sendTS, c.sendErr
+}
+
+func (c *fakeClient) SearchMessages(_ context.Context, _ string, _ int) ([]SearchMessage, int, error) {
+	c.searchCalls++
+	return c.searchMessages, c.searchTotal, c.searchErr
+}
+
+func (c *fakeClient) GetThread(_ context.Context, _, _ string, _ int) ([]ThreadMessage, error) {
+	c.threadCalls++
+	return c.thread, c.threadErr
 }

@@ -299,7 +299,14 @@ func (s Service) PodLogs(ctx pluginbinding.Context, input PodLogsInput) (PodLogs
 }
 
 func (s Service) InventorySearch(ctx pluginbinding.Context, input pluginbinding.DatasourceSearchInput) (InventorySearchResult, error) {
-	inventoryInput := InventoryInput{Query: input.Query, Limit: input.Limit}
+	inventoryInput := InventoryInput{
+		EndpointRef: input.EndpointRef,
+		URL:         input.URL,
+		Context:     input.Context,
+		Namespace:   input.Namespace,
+		Query:       input.Query,
+		Limit:       input.Limit,
+	}
 	namespaces, nsErr := s.namespaces()(context.Background(), inventoryInput)
 	services, svcErr := s.services()(context.Background(), endpointInputFromInventory(inventoryInput))
 	pods, podErr := s.pods()(context.Background(), inventoryInput)

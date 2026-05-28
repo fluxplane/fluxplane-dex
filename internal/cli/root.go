@@ -633,9 +633,12 @@ func newSecretCommand(opts *options) *cobra.Command {
 
 func newSearchCommand(opts *options) *cobra.Command {
 	searchOpts := struct {
-		plugin string
-		entity string
-		limit  int
+		plugin      string
+		entity      string
+		endpointRef string
+		context     string
+		namespace   string
+		limit       int
 	}{limit: 20}
 	cmd := &cobra.Command{
 		Use:   "search QUERY",
@@ -647,14 +650,28 @@ func newSearchCommand(opts *options) *cobra.Command {
 				return err
 			}
 			query := strings.Join(args, " ")
+			payload := map[string]any{"query": query, "entity": searchOpts.entity, "limit": searchOpts.limit}
+			if strings.TrimSpace(searchOpts.endpointRef) != "" {
+				payload["endpoint_ref"] = strings.TrimSpace(searchOpts.endpointRef)
+			}
+			if strings.TrimSpace(searchOpts.context) != "" {
+				payload["context"] = strings.TrimSpace(searchOpts.context)
+			}
+			if strings.TrimSpace(searchOpts.namespace) != "" {
+				payload["namespace"] = strings.TrimSpace(searchOpts.namespace)
+			}
 			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{
 				"query":   query,
-				"results": fanoutSearch(cmd.Context(), runner, opts.instanceName(), map[string]any{"query": query, "entity": searchOpts.entity, "limit": searchOpts.limit}, searchOpts.plugin),
+				"results": fanoutSearch(cmd.Context(), runner, opts.instanceName(), payload, searchOpts.plugin),
 			})
 		},
 	}
 	cmd.Flags().StringVar(&searchOpts.plugin, "plugin", "", "Search one plugin")
 	cmd.Flags().StringVar(&searchOpts.entity, "entity", "", "Filter by entity type")
+	cmd.Flags().StringVar(&searchOpts.endpointRef, "endpoint", "", "Endpoint ref")
+	cmd.Flags().StringVar(&searchOpts.endpointRef, "endpoint-ref", "", "Endpoint ref")
+	cmd.Flags().StringVar(&searchOpts.context, "context", "", "Provider context")
+	cmd.Flags().StringVar(&searchOpts.namespace, "namespace", "", "Provider namespace")
 	cmd.Flags().IntVar(&searchOpts.limit, "limit", 20, "Maximum records per plugin")
 	return cmd
 }

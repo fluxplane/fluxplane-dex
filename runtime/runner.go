@@ -52,6 +52,11 @@ func (r Runner) InvokeInstance(ctx context.Context, pluginName, instance, comman
 		}
 	}
 	if isDatasourceCommand(command) {
+		if err := r.resolveDatasourceEndpointRef(&req); err != nil {
+			return protocol.Response{}, err
+		}
+	}
+	if isDatasourceCommand(command) {
 		resp, ok, err := (hostIndexDatasource{state: r.State, plugin: entry.Name, instance: req.Instance}).Response(command, payload)
 		if err != nil {
 			return protocol.Response{}, err
@@ -137,6 +142,45 @@ func (r Runner) resolveOperationEndpointRef(call *protocol.OperationCall) (bool,
 	if err := json.Unmarshal(call.Input, &input); err != nil {
 		return false, nil
 	}
+	changed, err := r.resolveEndpointRefInput(input)
+	if err != nil || !changed {
+		return changed, err
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return false, err
+	}
+	call.Input = raw
+	return true, nil
+}
+
+func (r Runner) resolveDatasourceEndpointRef(req *protocol.Request) error {
+	if req == nil || len(req.Payload) == 0 {
+		return nil
+	}
+	var input map[string]any
+	if err := json.Unmarshal(req.Payload, &input); err != nil {
+		return nil
+	}
+	changed, err := r.resolveEndpointRefInput(input)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return err
+	}
+	req.Payload = raw
+	return nil
+}
+
+func (r Runner) resolveEndpointRefInput(input map[string]any) (bool, error) {
+	if len(input) == 0 {
+		return false, nil
+	}
 	ref, _ := input["endpoint_ref"].(string)
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
@@ -159,11 +203,6 @@ func (r Runner) resolveOperationEndpointRef(call *protocol.OperationCall) (bool,
 	if _, ok := input["endpoint_product"]; !ok && endpoint.Product != "" {
 		input["endpoint_product"] = endpoint.Product
 	}
-	raw, err := json.Marshal(input)
-	if err != nil {
-		return false, err
-	}
-	call.Input = raw
 	return true, nil
 }
 

@@ -128,21 +128,33 @@ func TestInventoryOperationsListResources(t *testing.T) {
 
 func TestInventoryDatasourceSearchFindsServicesPodsAndDeployments(t *testing.T) {
 	plugin := NewPluginWithService(Service{
-		Namespaces: func(_ context.Context, _ InventoryInput) ([]corev1.Namespace, error) {
+		Namespaces: func(_ context.Context, input InventoryInput) ([]corev1.Namespace, error) {
+			if input.URL != "kubernetes://context/dev" || input.Namespace != "latest" {
+				t.Fatalf("namespace input = %#v", input)
+			}
 			return []corev1.Namespace{{ObjectMeta: metav1.ObjectMeta{Name: "latest"}}}, nil
 		},
-		Services: func(_ context.Context, _ EndpointDiscoverInput) ([]corev1.Service, error) {
+		Services: func(_ context.Context, input EndpointDiscoverInput) ([]corev1.Service, error) {
+			if input.Context != "dev" || input.Namespace != "latest" {
+				t.Fatalf("service input = %#v", input)
+			}
 			return []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "latest"}}}, nil
 		},
-		Pods: func(_ context.Context, _ InventoryInput) ([]corev1.Pod, error) {
+		Pods: func(_ context.Context, input InventoryInput) ([]corev1.Pod, error) {
+			if input.URL != "kubernetes://context/dev" || input.Namespace != "latest" {
+				t.Fatalf("pod input = %#v", input)
+			}
 			return []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "api-123", Namespace: "latest"}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}}, nil
 		},
-		Deployments: func(_ context.Context, _ InventoryInput) ([]appsv1.Deployment, error) {
+		Deployments: func(_ context.Context, input InventoryInput) ([]appsv1.Deployment, error) {
+			if input.URL != "kubernetes://context/dev" || input.Namespace != "latest" {
+				t.Fatalf("deployment input = %#v", input)
+			}
 			return []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "latest"}, Spec: appsv1.DeploymentSpec{Replicas: int32Ptr(1)}}}, nil
 		},
 	})
 
-	out := plugintest.DatasourceSearchOK[InventorySearchResult](t, plugin, map[string]any{"query": "api", "limit": 10})
+	out := plugintest.DatasourceSearchOK[InventorySearchResult](t, plugin, map[string]any{"query": "api", "limit": 10, "url": "kubernetes://context/dev", "namespace": "latest"})
 	if out.Count != 3 {
 		t.Fatalf("search = %#v", out)
 	}

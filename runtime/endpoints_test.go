@@ -100,3 +100,33 @@ func TestRunnerResolvesEndpointRefIntoOperationInput(t *testing.T) {
 		t.Fatalf("input = %#v", input)
 	}
 }
+
+func TestRunnerResolvesEndpointRefIntoDatasourcePayload(t *testing.T) {
+	state, err := NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveEndpoint(core.EndpointRef{
+		ID:       "dev-kubernetes",
+		URL:      "kubernetes://context/dev",
+		Product:  "kubernetes",
+		Protocol: "kubernetes",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runner := Runner{State: state}
+	req, err := protocol.NewRequest(protocol.CommandDatasourcesSearch, "kubernetes", map[string]any{"endpoint_ref": "dev-kubernetes", "query": "api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.resolveDatasourceEndpointRef(&req); err != nil {
+		t.Fatal(err)
+	}
+	var input map[string]any
+	if err := json.Unmarshal(req.Payload, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input["url"] != "kubernetes://context/dev" || input["endpoint_product"] != "kubernetes" {
+		t.Fatalf("input = %#v", input)
+	}
+}

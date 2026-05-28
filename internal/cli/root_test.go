@@ -615,6 +615,59 @@ func main() {
 	return pluginDir
 }
 
+func writeFakeKubernetesDatasourcePlugin(t *testing.T) string {
+	t.Helper()
+	pluginDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pluginDir, "go.mod"), []byte("module fakekubernetesdatasource\n\ngo 1.26\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmdDir := filepath.Join(pluginDir, "cmd", "dex-plugin-kubernetes")
+	if err := os.MkdirAll(cmdDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mainGo := `package main
+
+import (
+	"encoding/json"
+	"os"
+)
+
+func main() {
+	var req struct {
+		Command string ` + "`json:\"command\"`" + `
+		Payload json.RawMessage ` + "`json:\"payload\"`" + `
+	}
+	_ = json.NewDecoder(os.Stdin).Decode(&req)
+	if req.Command == "manifest" {
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"protocol": "dex.plugin.v1",
+			"ok": true,
+			"result": map[string]any{
+				"name": "kubernetes",
+				"datasources": []map[string]any{{
+					"name": "kubernetes.inventory",
+					"entity": "kubernetes.resource",
+					"capabilities": []string{"search"},
+				}},
+			},
+		})
+		return
+	}
+	var input map[string]any
+	_ = json.Unmarshal(req.Payload, &input)
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"protocol": "dex.plugin.v1",
+		"ok": true,
+		"result": map[string]any{"source": "kubernetes", "count": 1, "records": []map[string]any{{"entity": "kubernetes.resource", "id": "latest/api"}}, "input": input},
+	})
+}
+`
+	if err := os.WriteFile(filepath.Join(cmdDir, "main.go"), []byte(mainGo), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return pluginDir
+}
+
 func writeFailingEndpointDiscoverPlugin(t *testing.T) string {
 	t.Helper()
 	pluginDir := t.TempDir()
@@ -839,6 +892,38 @@ func TestShortcutArgParsingMapsEndpointFlag(t *testing.T) {
 	}
 	if flags["endpoint_ref"] != "dev-cluster" || flags["namespace"] != "latest" || flags["limit"] != 3 || flags["tail_lines"] != int64(25) || flags["timestamps"] != false {
 		t.Fatalf("flags = %#v", flags)
+	}
+}
+
+func TestSearchPassesEndpointContextAndNamespaceToDatasource(t *testing.T) {
+	pluginDir := writeFakeKubernetesDatasourcePlugin(t)
+	home := t.TempDir()
+	state, err := runtime.NewState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveEndpoint(core.EndpointRef{ID: "dev-kubernetes", URL: "kubernetes://context/dev", Product: "kubernetes", Protocol: "kubernetes"}); err != nil {
+		t.Fatal(err)
+	}
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", home, "--dev-plugin", "kubernetes=" + pluginDir, "search", "--plugin", "kubernetes", "api", "--endpoint", "dev-kubernetes", "--namespace", "latest", "--limit", "5", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Results map[string]struct {
+			Input map[string]any `json:"input"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	input := result.Results["kubernetes"].Input
+	if input["endpoint_ref"] != "dev-kubernetes" || input["url"] != "kubernetes://context/dev" || input["namespace"] != "latest" || input["query"] != "api" || input["limit"] != float64(5) {
+		t.Fatalf("input = %#v", input)
 	}
 }
 

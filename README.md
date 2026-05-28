@@ -94,6 +94,7 @@ dex kube svc ls --endpoint dev-kubernetes --namespace latest
 dex kube pod ls --endpoint dev-kubernetes --namespace latest --query api
 dex kube pod logs latest/api-123 --endpoint dev-kubernetes --tail-lines 50
 dex kube deploy ls --endpoint dev-kubernetes --namespace latest
+dex search --plugin kubernetes --endpoint dev-kubernetes --namespace latest api
 ```
 
 ## Current Status

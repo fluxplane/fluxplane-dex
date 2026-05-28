@@ -399,11 +399,24 @@ func (r Runner) installPlugin(ctx context.Context, name string, activated bool) 
 	if strings.TrimSpace(entry.Binary) == "" {
 		return InstalledPlugin{}, fmt.Errorf("plugin %q has no binary name", entry.Name)
 	}
+	path := r.State.PluginBinaryPath(executableName(entry.Binary))
+	if pluginDir, ok := localPluginPath(r.WorkDir, entry.LocalPath); ok {
+		if err := InstallLocalGoTarget(ctx, pluginDir, executableName(entry.Binary), r.State.PluginBinDir()); err != nil {
+			return InstalledPlugin{}, err
+		}
+		if err := r.State.SaveInstalledPluginVersionActivated(entry, true, path, "local", activated); err != nil {
+			return InstalledPlugin{}, err
+		}
+		installed, _, err := r.State.InstalledPlugin(entry.Name)
+		return installed, err
+	}
+	if strings.TrimSpace(entry.GoInstall) == "" {
+		return InstalledPlugin{}, fmt.Errorf("plugin %q has no go_install target", entry.Name)
+	}
 	version := ""
 	if info, err := ResolveGoModuleVersion(ctx, entry.GoInstall, "latest"); err == nil {
 		version = info.Version
 	}
-	path := r.State.PluginBinaryPath(executableName(entry.Binary))
 	if err := InstallGoTarget(ctx, entry.GoInstall, r.State.PluginBinDir()); err != nil {
 		return InstalledPlugin{}, err
 	}

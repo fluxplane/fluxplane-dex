@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-28
+
+### Added
+- Added the installable Grafana plugin with datasource catalog, health checks,
+  folders, dashboards, dashboard query extraction, annotations, Loki,
+  Prometheus, Alertmanager, and Tempo operations.
+- Added Grafana datasource cluster alias resolution from the live Grafana
+  catalog so callers can pass cluster aliases instead of datasource UIDs.
+- Added Kubernetes Grafana endpoint discovery through Services and Ingresses,
+  including path-based ingress URLs and `grafana-admin-creds` credential refs.
+- Added local-path plugin installation from marketplace metadata so checkout
+  plugins can be installed into dex's plugin bin/state before publication.
+
+### Changed
+- Grafana operations now request stored auth secret purposes, so endpoint-ref
+  calls can use `dex auth connect auto grafana` credentials without inline
+  username/password fields.
+- Grafana Loki query and recent-log operations now return normalized log
+  entries matching the direct Loki plugin while retaining the raw proxy
+  response.
+
+### Fixed
+- Avoided resolving Kubernetes `credential_ref` secrets when Grafana bearer
+  token auth is already complete.
+- Tightened Grafana endpoint discovery so Tempo internals are not classified as
+  Grafana endpoints.
+
 ## [0.3.1] - 2026-05-28
 
 ### Fixed

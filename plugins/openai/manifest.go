@@ -7,7 +7,7 @@ import (
 
 const (
 	PluginName        = "openai"
-	PluginVersion     = "0.3.1"
+	PluginVersion     = "0.4.0"
 	PluginDescription = "OpenAI API plugin. Currently exposes image generation and model listing."
 
 	AuthMethodAPIKey  = "api_key"

@@ -21,7 +21,23 @@ func InstallGoTarget(ctx context.Context, target, binDir string) error {
 	return InstallGoTargetWithLdflags(ctx, target, binDir, "")
 }
 
+func InstallLocalGoTarget(ctx context.Context, pluginDir, binary, binDir string) error {
+	pluginDir = strings.TrimSpace(pluginDir)
+	binary = strings.TrimSpace(binary)
+	if pluginDir == "" {
+		return fmt.Errorf("plugin dir is empty")
+	}
+	if binary == "" {
+		return fmt.Errorf("plugin binary is empty")
+	}
+	return installGoTargetInDir(ctx, "./cmd/"+binary, binDir, "", pluginDir)
+}
+
 func InstallGoTargetWithLdflags(ctx context.Context, target, binDir, ldflags string) error {
+	return installGoTargetInDir(ctx, target, binDir, ldflags, "")
+}
+
+func installGoTargetInDir(ctx context.Context, target, binDir, ldflags, dir string) error {
 	target = strings.TrimSpace(target)
 	if target == "" {
 		return fmt.Errorf("go install target is empty")
@@ -38,6 +54,9 @@ func InstallGoTargetWithLdflags(ctx context.Context, target, binDir, ldflags str
 	}
 	args = append(args, target)
 	cmd := exec.CommandContext(ctx, "go", args...)
+	if strings.TrimSpace(dir) != "" {
+		cmd.Dir = strings.TrimSpace(dir)
+	}
 	cmd.Env = withEnv(withEnv(os.Environ(), "GOBIN", binDir), "GO111MODULE", "on")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

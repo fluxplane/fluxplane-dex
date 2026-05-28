@@ -23,6 +23,7 @@ import (
 	"github.com/fluxplane/fluxplane-dex/protocol"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -33,6 +34,7 @@ type Service struct {
 	ClusterProbe func(context.Context, ClusterTestInput) (ClusterTestResult, error)
 	Namespaces   func(context.Context, InventoryInput) ([]corev1.Namespace, error)
 	Services     func(context.Context, EndpointDiscoverInput) ([]corev1.Service, error)
+	Ingresses    func(context.Context, EndpointDiscoverInput) ([]networkingv1.Ingress, error)
 	Pods         func(context.Context, InventoryInput) ([]corev1.Pod, error)
 	Deployments  func(context.Context, InventoryInput) ([]appsv1.Deployment, error)
 	Logs         func(context.Context, PodLogsInput) (PodLogsResult, error)
@@ -465,12 +467,24 @@ func (s Service) EndpointDiscover(ctx pluginbinding.Context, input EndpointDisco
 		return EndpointDiscoverResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
 	candidates := serviceCandidates(services, input)
-	if shouldDiscoverSQLSecret(input.Product) {
+	if shouldDiscoverIngress(input.Product) {
+		ingresses, err := s.ingresses()(context.Background(), input)
+		if err != nil {
+			return EndpointDiscoverResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
+		}
+		candidates = append(candidates, ingressCandidates(ingresses, input)...)
+	}
+	if shouldDiscoverSQLSecret(input.Product) || shouldDiscoverGrafanaCredential(input.Product) {
 		secrets, err := s.secrets()(context.Background(), input)
 		if err != nil {
 			return EndpointDiscoverResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 		}
-		candidates = append(candidates, secretCandidates(secrets, input)...)
+		if shouldDiscoverSQLSecret(input.Product) {
+			candidates = append(candidates, secretCandidates(secrets, input)...)
+		}
+		if shouldDiscoverGrafanaCredential(input.Product) {
+			candidates = attachGrafanaCredentials(candidates, secrets, input)
+		}
 	}
 	return EndpointDiscoverResult{Candidates: limitCandidates(candidates, input.Limit)}, nil
 }
@@ -517,6 +531,13 @@ func (s Service) services() func(context.Context, EndpointDiscoverInput) ([]core
 		return s.Services
 	}
 	return listKubernetesServices
+}
+
+func (s Service) ingresses() func(context.Context, EndpointDiscoverInput) ([]networkingv1.Ingress, error) {
+	if s.Ingresses != nil {
+		return s.Ingresses
+	}
+	return listKubernetesIngresses
 }
 
 func (s Service) pods() func(context.Context, InventoryInput) ([]corev1.Pod, error) {
@@ -612,6 +633,18 @@ func listKubernetesServices(ctx context.Context, input EndpointDiscoverInput) ([
 		return nil, err
 	}
 	list, err := clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
+func listKubernetesIngresses(ctx context.Context, input EndpointDiscoverInput) ([]networkingv1.Ingress, error) {
+	clientset, namespace, err := kubernetesClient(input)
+	if err != nil {
+		return nil, err
+	}
+	list, err := clientset.NetworkingV1().Ingresses(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -1195,6 +1228,96 @@ func serviceCandidates(services []corev1.Service, input EndpointDiscoverInput) [
 	return candidates
 }
 
+func ingressCandidates(ingresses []networkingv1.Ingress, input EndpointDiscoverInput) []core.EndpointCandidate {
+	productFilter := strings.ToLower(strings.TrimSpace(input.Product))
+	var candidates []core.EndpointCandidate
+	for _, item := range ingresses {
+		product, score := classifyIngress(item, productFilter)
+		if product == "" {
+			continue
+		}
+		for _, route := range ingressRoutes(item) {
+			scheme := ingressScheme(item, route.Host)
+			endpoint := scheme + "://" + route.Host + route.Path
+			labels := map[string]string{
+				"namespace": item.Namespace,
+				"ingress":   item.Name,
+				"host":      route.Host,
+			}
+			if route.Path != "" {
+				labels["path"] = route.Path
+			}
+			if route.Service != "" {
+				labels["service"] = route.Service
+			}
+			if strings.TrimSpace(input.Context) != "" {
+				labels["context"] = strings.TrimSpace(input.Context)
+			}
+			candidates = append(candidates, core.EndpointCandidate{
+				ID:          endpointCandidateID(product, endpoint, item.Namespace, item.Name),
+				URL:         endpoint,
+				Product:     product,
+				Protocol:    scheme,
+				Source:      "kubernetes_ingress",
+				Score:       score,
+				Labels:      labels,
+				Annotations: cloneStringMap(item.Annotations),
+			})
+		}
+	}
+	return candidates
+}
+
+type ingressRoute struct {
+	Host    string
+	Path    string
+	Service string
+}
+
+func ingressRoutes(item networkingv1.Ingress) []ingressRoute {
+	seen := map[string]bool{}
+	var routes []ingressRoute
+	for _, rule := range item.Spec.Rules {
+		host := strings.TrimSpace(rule.Host)
+		if host == "" {
+			continue
+		}
+		if rule.HTTP == nil || len(rule.HTTP.Paths) == 0 {
+			key := host + "\x00"
+			if !seen[key] {
+				seen[key] = true
+				routes = append(routes, ingressRoute{Host: host})
+			}
+			continue
+		}
+		for _, path := range rule.HTTP.Paths {
+			service := ""
+			if path.Backend.Service != nil {
+				service = strings.TrimSpace(path.Backend.Service.Name)
+			}
+			prefix := ingressPathPrefix(path.Path)
+			key := host + "\x00" + prefix + "\x00" + service
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			routes = append(routes, ingressRoute{Host: host, Path: prefix, Service: service})
+		}
+	}
+	return routes
+}
+
+func ingressPathPrefix(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" || path == "/" {
+		return ""
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return strings.TrimRight(path, "/")
+}
+
 func secretCandidates(secrets []corev1.Secret, input EndpointDiscoverInput) []core.EndpointCandidate {
 	var candidates []core.EndpointCandidate
 	for _, secret := range secrets {
@@ -1222,6 +1345,40 @@ func secretCandidates(secrets []corev1.Secret, input EndpointDiscoverInput) []co
 		candidates = append(candidates, candidate)
 	}
 	return candidates
+}
+
+func attachGrafanaCredentials(candidates []core.EndpointCandidate, secrets []corev1.Secret, input EndpointDiscoverInput) []core.EndpointCandidate {
+	refs := map[string]string{}
+	for _, secret := range secrets {
+		if !isGrafanaCredentialSecret(secret) {
+			continue
+		}
+		refs[secret.Namespace] = kubernetesCredentialRef(input.Context, secret.Namespace, secret.Name)
+	}
+	for i := range candidates {
+		if candidates[i].Product != "grafana" || candidates[i].CredentialRef != "" {
+			continue
+		}
+		namespace := candidates[i].Labels["namespace"]
+		if ref := refs[namespace]; ref != "" {
+			candidates[i].CredentialRef = ref
+			if candidates[i].Annotations == nil {
+				candidates[i].Annotations = map[string]string{}
+			}
+			candidates[i].Annotations["credential_keys"] = "adminuser,adminpassword"
+		}
+	}
+	return candidates
+}
+
+func isGrafanaCredentialSecret(secret corev1.Secret) bool {
+	haystack := strings.ToLower(secret.Name + " " + joinMap(secret.Labels) + " " + joinMap(secret.Annotations))
+	if !strings.Contains(haystack, "grafana") {
+		return false
+	}
+	_, hasAdminPassword := secret.Data["adminpassword"]
+	_, hasPassword := secret.Data["password"]
+	return hasAdminPassword || hasPassword
 }
 
 func sqlEndpointFromSecret(secret corev1.Secret, productFilter string) (string, string, string, bool) {
@@ -1312,6 +1469,16 @@ func shouldDiscoverSQLSecret(product string) bool {
 	return product == "" || product == "mysql" || product == "mariadb" || product == "postgres" || product == "postgresql" || product == "pg" || product == "database" || product == "sql"
 }
 
+func shouldDiscoverIngress(product string) bool {
+	product = strings.ToLower(strings.TrimSpace(product))
+	return product == "" || product == "grafana"
+}
+
+func shouldDiscoverGrafanaCredential(product string) bool {
+	product = strings.ToLower(strings.TrimSpace(product))
+	return product == "" || product == "grafana"
+}
+
 func limitCandidates(candidates []core.EndpointCandidate, limit int) []core.EndpointCandidate {
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].Score == candidates[j].Score {
@@ -1327,12 +1494,15 @@ func limitCandidates(candidates []core.EndpointCandidate, limit int) []core.Endp
 
 func classifyService(item corev1.Service, productFilter string) (string, float64) {
 	haystack := strings.ToLower(item.Name + " " + joinMap(item.Labels) + " " + joinMap(item.Annotations))
-	products := []string{"prometheus", "loki", "homer", "mysql", "postgres"}
+	products := []string{"prometheus", "loki", "grafana", "homer", "mysql", "postgres"}
 	for _, product := range products {
 		if productFilter != "" && product != productFilter {
 			continue
 		}
 		if product == "loki" && strings.Contains(haystack, "promtail") {
+			continue
+		}
+		if product == "grafana" && !isGrafanaEndpointHaystack(haystack) {
 			continue
 		}
 		if strings.Contains(haystack, product) {
@@ -1344,6 +1514,90 @@ func classifyService(item corev1.Service, productFilter string) (string, float64
 		}
 	}
 	return "", 0
+}
+
+func classifyIngress(item networkingv1.Ingress, productFilter string) (string, float64) {
+	haystack := strings.ToLower(item.Name + " " + joinMap(item.Labels) + " " + joinMap(item.Annotations) + " " + strings.Join(ingressHosts(item), " ") + " " + strings.Join(ingressBackendServices(item), " "))
+	if productFilter != "" && productFilter != "grafana" {
+		return "", 0
+	}
+	if !isGrafanaEndpointHaystack(haystack) {
+		return "", 0
+	}
+	score := 0.9
+	if strings.Contains(strings.ToLower(item.Name), "grafana") {
+		score = 0.96
+	}
+	for _, host := range ingressHosts(item) {
+		host = strings.ToLower(host)
+		if !strings.Contains(host, ".internal") && strings.Contains(host, "grafana") {
+			score = 0.99
+		}
+	}
+	return "grafana", score
+}
+
+func isGrafanaEndpointHaystack(haystack string) bool {
+	haystack = strings.ToLower(haystack)
+	if !strings.Contains(haystack, "grafana") {
+		return false
+	}
+	for _, excluded := range []string{"grafana-tempo", "tempo-gateway", "tempo-distributor", "tempo-ingester", "tempo-querier", "tempo-compactor", "tempo-memcached"} {
+		if strings.Contains(haystack, excluded) {
+			return false
+		}
+	}
+	return true
+}
+
+func ingressHosts(item networkingv1.Ingress) []string {
+	var hosts []string
+	for _, rule := range item.Spec.Rules {
+		if strings.TrimSpace(rule.Host) != "" {
+			hosts = append(hosts, strings.TrimSpace(rule.Host))
+		}
+	}
+	return uniqueNonEmptyStrings(hosts)
+}
+
+func ingressBackendServices(item networkingv1.Ingress) []string {
+	var services []string
+	for _, rule := range item.Spec.Rules {
+		if rule.HTTP == nil {
+			continue
+		}
+		for _, path := range rule.HTTP.Paths {
+			if path.Backend.Service != nil && strings.TrimSpace(path.Backend.Service.Name) != "" {
+				services = append(services, strings.TrimSpace(path.Backend.Service.Name))
+			}
+		}
+	}
+	if item.Spec.DefaultBackend != nil && item.Spec.DefaultBackend.Service != nil && strings.TrimSpace(item.Spec.DefaultBackend.Service.Name) != "" {
+		services = append(services, strings.TrimSpace(item.Spec.DefaultBackend.Service.Name))
+	}
+	return uniqueNonEmptyStrings(services)
+}
+
+func ingressScheme(item networkingv1.Ingress, host string) string {
+	host = strings.ToLower(strings.TrimSpace(host))
+	for _, tls := range item.Spec.TLS {
+		if len(tls.Hosts) == 0 && strings.TrimSpace(tls.SecretName) != "" {
+			return "https"
+		}
+		for _, tlsHost := range tls.Hosts {
+			if strings.EqualFold(strings.TrimSpace(tlsHost), host) {
+				return "https"
+			}
+		}
+	}
+	annotations := joinMap(item.Annotations)
+	if strings.Contains(strings.ToLower(annotations), "ssl-redirect:true") || strings.Contains(strings.ToLower(annotations), "force-ssl-redirect:true") {
+		return "https"
+	}
+	if host != "" && !strings.HasSuffix(host, ".internal") {
+		return "https"
+	}
+	return "http"
 }
 
 func serviceURLs(item corev1.Service, product string) []string {
@@ -1844,6 +2098,20 @@ func uniqueStrings(values []string) []string {
 			continue
 		}
 		if _, err := url.Parse(value); err != nil {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func uniqueNonEmptyStrings(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
 			continue
 		}
 		seen[value] = true

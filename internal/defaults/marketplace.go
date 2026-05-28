@@ -52,6 +52,13 @@ const MarketplaceJSON = `{
       "metadata": {"kind": "builtin"}
     },
     {
+      "name": "grafana",
+      "description": "Grafana datasource catalog and proxy operations for Loki, Prometheus, Alertmanager, and Tempo.",
+      "binary": "dex-plugin-grafana",
+      "go_install": "github.com/fluxplane/fluxplane-dex/plugins/grafana/cmd/dex-plugin-grafana@latest",
+      "local_path": "plugins/grafana"
+    },
+    {
       "name": "prometheus",
       "description": "Prometheus health checks, PromQL queries, labels, targets, and alerts for configured or discovered endpoints.",
       "binary": "dex-plugin-prometheus",

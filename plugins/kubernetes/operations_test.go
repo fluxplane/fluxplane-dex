@@ -10,6 +10,7 @@ import (
 	"github.com/fluxplane/fluxplane-dex/protocol"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -31,6 +32,61 @@ func TestEndpointDiscoverFindsPrometheusService(t *testing.T) {
 	candidate := out.Candidates[0]
 	if candidate.Product != "prometheus" || candidate.URL != "http://kube-prometheus-stack-prometheus.monitoring.svc:9090" || candidate.Source != "kubernetes" {
 		t.Fatalf("candidate = %#v", candidate)
+	}
+}
+
+func TestEndpointDiscoverFindsGrafanaIngressWithCredentialRef(t *testing.T) {
+	plugin := NewPluginWithService(Service{
+		Services: func(_ context.Context, _ EndpointDiscoverInput) ([]corev1.Service, error) {
+			return []corev1.Service{{
+				ObjectMeta: metav1.ObjectMeta{Name: "grafana-tempo-gateway", Namespace: "monitoring"},
+				Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Ports: []corev1.ServicePort{{Name: "http", Port: 80}}},
+			}}, nil
+		},
+		Ingresses: func(_ context.Context, _ EndpointDiscoverInput) ([]networkingv1.Ingress, error) {
+			return []networkingv1.Ingress{{
+				ObjectMeta: metav1.ObjectMeta{Name: "grafana", Namespace: "monitoring"},
+				Spec: networkingv1.IngressSpec{
+					TLS: []networkingv1.IngressTLS{{Hosts: []string{"grafana.infra.example.com"}, SecretName: "grafana-tls"}},
+					Rules: []networkingv1.IngressRule{{
+						Host: "grafana.infra.example.com",
+						IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{Paths: []networkingv1.HTTPIngressPath{{
+							Path:    "/grafana",
+							Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{Name: "grafana"}},
+						}}}},
+					}},
+				},
+			}, {
+				ObjectMeta: metav1.ObjectMeta{Name: "grafana-tempo-gateway", Namespace: "monitoring"},
+				Spec: networkingv1.IngressSpec{Rules: []networkingv1.IngressRule{{
+					Host: "tempo.example.com",
+					IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{Paths: []networkingv1.HTTPIngressPath{{
+						Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{Name: "grafana-tempo-gateway"}},
+					}}}},
+				}}},
+			}}, nil
+		},
+		Secrets: func(_ context.Context, _ EndpointDiscoverInput) ([]corev1.Secret, error) {
+			return []corev1.Secret{{
+				ObjectMeta: metav1.ObjectMeta{Name: "grafana-admin-creds", Namespace: "monitoring"},
+				Data:       map[string][]byte{"adminuser": []byte("admin"), "adminpassword": []byte("secret")},
+			}}, nil
+		},
+	})
+
+	out := plugintest.RunOK[EndpointDiscoverResult](t, plugin, OperationEndpointDiscover, map[string]any{"product": "grafana", "context": "infra-eks"})
+	if len(out.Candidates) != 1 {
+		t.Fatalf("candidates = %#v", out.Candidates)
+	}
+	candidate := out.Candidates[0]
+	if candidate.Product != "grafana" || candidate.URL != "https://grafana.infra.example.com/grafana" || candidate.Source != "kubernetes_ingress" {
+		t.Fatalf("candidate = %#v", candidate)
+	}
+	if candidate.Labels["path"] != "/grafana" {
+		t.Fatalf("labels = %#v", candidate.Labels)
+	}
+	if candidate.CredentialRef != "kubernetes://monitoring/secrets/grafana-admin-creds?context=infra-eks" {
+		t.Fatalf("credential_ref = %q", candidate.CredentialRef)
 	}
 }
 

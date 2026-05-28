@@ -43,7 +43,7 @@ func websearchManifest() core.PluginManifest {
 func websearchManifestSpec() pluginbinding.ManifestSpec {
 	return pluginbinding.ManifestSpec{
 		Name:        websearchPluginName,
-		Version:     "0.3.1",
+		Version:     "0.4.0",
 		Description: "Generic web search aggregator over provider plugins.",
 		Aliases:     []string{"web", "websearch"},
 		Operations: []core.OperationSpec{

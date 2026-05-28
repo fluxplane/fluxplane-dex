@@ -259,6 +259,11 @@ func TestServiceSendSearchAndThreadUseLiveClient(t *testing.T) {
 		t.Fatalf("send result = %#v calls=%d", send, factory.clients["bot_token"].sendCalls)
 	}
 
+	reply := plugintest.RunOK[MessageSendResult](t, plugin, OperationMessageSend, map[string]any{"channel": "C1", "text": "reply", "thread_ts": "1710000000.123456", "reply_broadcast": true})
+	if !reply.OK || reply.ThreadTS != "1710000000.123456" || factory.clients["bot_token"].lastSend.ThreadTS != "1710000000.123456" || !factory.clients["bot_token"].lastSend.ReplyBroadcast {
+		t.Fatalf("reply result = %#v request=%#v", reply, factory.clients["bot_token"].lastSend)
+	}
+
 	search := plugintest.RunOK[SearchResult](t, plugin, OperationSearch, map[string]any{"query": "hello", "limit": 5})
 	if search.Count != 1 || len(search.Messages) != 1 || search.Messages[0].Channel != "C1" || factory.clients["user_token"].searchCalls != 1 {
 		t.Fatalf("search result = %#v calls=%d", search, factory.clients["user_token"].searchCalls)
@@ -514,6 +519,7 @@ type fakeClient struct {
 	uploadCalls         int
 	searchCalls         int
 	threadCalls         int
+	lastSend            MessageSendRequest
 	lastUpload          FileUploadRequest
 	uploadResult        FileUploadResult
 }
@@ -539,8 +545,9 @@ func (c *fakeClient) ListChannelMembers(_ context.Context, _ string, limit int) 
 	return c.channelMembers, c.channelMembersErr
 }
 
-func (c *fakeClient) SendMessage(_ context.Context, _, _ string) (string, error) {
+func (c *fakeClient) SendMessage(_ context.Context, request MessageSendRequest) (string, error) {
 	c.sendCalls++
+	c.lastSend = request
 	return c.sendTS, c.sendErr
 }
 
@@ -571,7 +578,7 @@ func (c *fakeClient) SearchMessages(_ context.Context, _ string, _ int) ([]Searc
 	return c.searchMessages, c.searchTotal, c.searchErr
 }
 
-func (c *fakeClient) GetThread(_ context.Context, _, _ string, _ int) ([]ThreadMessage, error) {
+func (c *fakeClient) GetThread(_ context.Context, _, _ string, _, _ int) ([]ThreadMessage, error) {
 	c.threadCalls++
 	return c.thread, c.threadErr
 }

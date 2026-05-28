@@ -10,7 +10,7 @@
     },
     {
       "name": "slack",
-      "description": "Slack token info, messaging, search, thread, channel member, and reverse lookup operations.",
+      "description": "Slack token info, messaging, file upload, search, thread, channel member, and reverse lookup operations.",
       "binary": "dex-plugin-slack",
       "go_install": "github.com/fluxplane/fluxplane-dex/plugins/slack/cmd/dex-plugin-slack@latest",
       "local_path": "plugins/slack"

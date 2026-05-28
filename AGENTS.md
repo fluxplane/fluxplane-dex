@@ -5,6 +5,22 @@
 - Before any requested commit, show or summarize the staged changes so the user can confirm the commit boundary.
 - Do not keep compatibility wrappers, bridges, adapters, deprecated paths, or old APIs only for backwards compatibility. This is a green-field project with no external users; prefer removing the old path and updating call sites directly.
 
+## Local Install Process
+
+Use this workflow when testing unreleased local dex or plugin code from the repo:
+
+1. Install the current dex CLI from local source:
+   - `task install`
+2. Install a plugin from local source with the global development override:
+   - `dex plugin install <name> --dev-plugin <name>=./plugins/<name>`
+   - Example: `dex plugin install slack --dev-plugin slack=./plugins/slack`
+3. Do not use `--local`; `dex plugin install` does not have that flag.
+4. The `--dev-plugin` value must be exactly `NAME=PATH`, not just a path.
+5. Verify the installed local plugin:
+   - `dex plugin list -o json`
+   - `dex op show <plugin>.<operation> -o json`
+   - `dex <plugin> <operation path> -h`
+
 ## Release Process
 
 When the user asks for a release, do all of this as one release task:

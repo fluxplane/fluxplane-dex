@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -132,18 +134,22 @@ func TestVisionAnalyzeSendsResponsesRequestAndParsesText(t *testing.T) {
 	}
 }
 
-func TestVisionAnalyzeAcceptsBase64ImageData(t *testing.T) {
+func TestVisionAnalyzeAcceptsFilePath(t *testing.T) {
 	doer := newRoutedDoer(t, map[string]string{
 		"POST /responses": `{"output_text":"A diagram."}`,
 	})
 	plugin := newTestPlugin(doer, "test-key")
+	path := filepath.Join(t.TempDir(), "chart.png")
+	if err := os.WriteFile(path, []byte("png bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	_ = plugintest.RunOK[vision.AnalyzeOutput](t, plugin, OperationVisionAnalyze, vision.AnalyzeInput{
-		Images: []vision.ImageInput{{Data: "AAAA", MediaType: "image/png"}},
+		Images: []vision.ImageInput{{FilePath: path}},
 	})
 	content := doer.lastBody()["input"].([]any)[0].(map[string]any)["content"].([]any)
 	image := content[1].(map[string]any)
-	if image["image_url"] != "data:image/png;base64,AAAA" {
+	if image["image_url"] != "data:image/png;base64,cG5nIGJ5dGVz" {
 		t.Fatalf("image content = %#v", image)
 	}
 }

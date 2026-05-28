@@ -5,21 +5,27 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	slackapi "github.com/slack-go/slack"
 )
 
+const defaultThreadImageMaxBytes = 10 * 1024 * 1024
+
 type Client interface {
 	AuthTest(context.Context) (AuthInfo, error)
 	ListUsers(context.Context) ([]User, error)
 	ListChannels(context.Context) ([]Channel, error)
 	ListChannelMembers(context.Context, string, int) ([]User, error)
-	SendMessage(context.Context, string, string) (string, error)
+	SendMessage(context.Context, MessageSendRequest) (string, error)
 	UploadFile(context.Context, FileUploadRequest) (FileUploadResult, error)
 	SearchMessages(context.Context, string, int) ([]SearchMessage, int, error)
-	GetThread(context.Context, string, string, int) ([]ThreadMessage, error)
+	GetThread(context.Context, string, string, int, int) ([]ThreadMessage, error)
 }
 
 type ClientFactory func(pluginbinding.SecretMaterial) (Client, error)
@@ -29,11 +35,12 @@ func NewLiveClient(material pluginbinding.SecretMaterial) (Client, error) {
 	if token == "" {
 		return nil, fmt.Errorf("%s is empty", material.Purpose)
 	}
-	return liveClient{client: slackapi.New(token), purpose: material.Purpose}, nil
+	return liveClient{client: slackapi.New(token), token: token, purpose: material.Purpose}, nil
 }
 
 type liveClient struct {
 	client  *slackapi.Client
+	token   string
 	purpose string
 }
 
@@ -115,8 +122,15 @@ func (c liveClient) ListChannelMembers(ctx context.Context, channel string, limi
 	return out, nil
 }
 
-func (c liveClient) SendMessage(ctx context.Context, channel, text string) (string, error) {
-	_, ts, err := c.client.PostMessageContext(ctx, channel, slackapi.MsgOptionText(text, false))
+func (c liveClient) SendMessage(ctx context.Context, request MessageSendRequest) (string, error) {
+	options := []slackapi.MsgOption{slackapi.MsgOptionText(request.Text, false)}
+	if request.ThreadTS != "" {
+		options = append(options, slackapi.MsgOptionTS(request.ThreadTS))
+	}
+	if request.ReplyBroadcast {
+		options = append(options, slackapi.MsgOptionBroadcast())
+	}
+	_, ts, err := c.client.PostMessageContext(ctx, request.Channel, options...)
 	return ts, err
 }
 
@@ -174,9 +188,12 @@ func (c liveClient) SearchMessages(ctx context.Context, query string, limit int)
 	return out, messages.Total, nil
 }
 
-func (c liveClient) GetThread(ctx context.Context, channel, ts string, limit int) ([]ThreadMessage, error) {
+func (c liveClient) GetThread(ctx context.Context, channel, ts string, limit, maxBytes int) ([]ThreadMessage, error) {
 	if limit <= 0 {
 		limit = 100
+	}
+	if maxBytes <= 0 {
+		maxBytes = defaultThreadImageMaxBytes
 	}
 	replies, _, _, err := c.client.GetConversationRepliesContext(ctx, &slackapi.GetConversationRepliesParameters{
 		ChannelID: channel,
@@ -189,13 +206,111 @@ func (c liveClient) GetThread(ctx context.Context, channel, ts string, limit int
 	}
 	out := make([]ThreadMessage, 0, len(replies))
 	for _, reply := range replies {
+		files, err := c.threadMessageFiles(ctx, reply, maxBytes)
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, ThreadMessage{
-			TS:   reply.Timestamp,
-			User: reply.User,
-			Text: strings.TrimSpace(reply.Text),
+			TS:    reply.Timestamp,
+			User:  reply.User,
+			Text:  strings.TrimSpace(reply.Text),
+			Files: files,
 		})
 	}
 	return limitThreadMessages(out, limit), nil
+}
+
+func (c liveClient) downloadFileToTemp(ctx context.Context, file slackapi.File, url string, maxBytes int) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("download Slack file: %s", resp.Status)
+	}
+	temp, err := os.CreateTemp("", "dex-slack-image-*"+imageExtension(file))
+	if err != nil {
+		return "", err
+	}
+	path := temp.Name()
+	n, copyErr := io.Copy(temp, io.LimitReader(resp.Body, int64(maxBytes)+1))
+	closeErr := temp.Close()
+	if copyErr != nil {
+		_ = os.Remove(path)
+		return "", copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(path)
+		return "", closeErr
+	}
+	if n > int64(maxBytes) {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("downloaded Slack image exceeds max_bytes %d", maxBytes)
+	}
+	return path, nil
+}
+
+func (c liveClient) threadMessageFiles(ctx context.Context, message slackapi.Message, maxBytes int) ([]SlackFile, error) {
+	files := make([]SlackFile, 0, len(message.Files))
+	for _, file := range message.Files {
+		out := SlackFile{
+			FileID:    file.ID,
+			Name:      file.Name,
+			Title:     firstNonEmpty(file.Title, file.Name),
+			Mimetype:  file.Mimetype,
+			Filetype:  file.Filetype,
+			Permalink: file.Permalink,
+			Width:     file.OriginalW,
+			Height:    file.OriginalH,
+			Size:      file.Size,
+		}
+		if isSlackImageFile(file) {
+			url := firstNonEmpty(file.URLPrivateDownload, file.URLPrivate)
+			if url != "" {
+				path, err := c.downloadFileToTemp(ctx, file, url, maxBytes)
+				if err != nil {
+					return nil, err
+				}
+				out.FilePath = path
+			}
+		}
+		files = append(files, out)
+	}
+	return files, nil
+}
+
+func isSlackImageFile(file slackapi.File) bool {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(file.Mimetype)), "image/") {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(file.Filetype)) {
+	case "jpg", "jpeg", "png", "gif", "webp":
+		return true
+	default:
+		return false
+	}
+}
+
+func imageExtension(file slackapi.File) string {
+	if ext := filepath.Ext(strings.TrimSpace(file.Name)); ext != "" {
+		return ext
+	}
+	switch strings.ToLower(strings.TrimSpace(file.Mimetype)) {
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	default:
+		return ".jpg"
+	}
 }
 
 func userFromAPI(user slackapi.User) User {

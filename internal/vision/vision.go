@@ -1,6 +1,12 @@
 package vision
 
 import (
+	"encoding/base64"
+	"fmt"
+	"mime"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/fluxplane/fluxplane-dex/core"
@@ -26,7 +32,7 @@ type AnalyzeInput struct {
 
 type ImageInput struct {
 	URL       string `json:"url,omitempty" jsonschema:"description=Fully qualified image URL or data URL."`
-	Data      string `json:"data,omitempty" jsonschema:"description=Base64 image data. May be raw base64 or a data URL."`
+	FilePath  string `json:"file_path,omitempty" jsonschema:"description=Local image file path readable by the provider plugin."`
 	MediaType string `json:"media_type,omitempty" jsonschema:"description=Media type for raw base64 data, for example image/jpeg.,enum=image/jpeg,enum=image/png,enum=image/webp,enum=image/gif"`
 	Detail    string `json:"detail,omitempty" jsonschema:"description=Optional provider detail hint.,enum=auto,enum=low,enum=high"`
 }
@@ -200,25 +206,63 @@ func ValidateImages(images []ImageInput) error {
 		return pluginbinding.Fail("bad_input", "at least one image is required")
 	}
 	for i, image := range images {
-		if strings.TrimSpace(image.URL) == "" && strings.TrimSpace(image.Data) == "" {
-			return pluginbinding.Errorf("bad_input", "image %d requires url or data", i)
+		if strings.TrimSpace(image.URL) == "" && strings.TrimSpace(image.FilePath) == "" {
+			return pluginbinding.Errorf("bad_input", "image %d requires url or file_path", i)
 		}
 	}
 	return nil
 }
 
-func DataURL(image ImageInput) string {
-	if data := strings.TrimSpace(image.Data); data != "" {
-		if strings.HasPrefix(data, "data:") {
-			return data
+func DataURL(image ImageInput) (string, error) {
+	if path := strings.TrimSpace(image.FilePath); path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read image file %q: %w", path, err)
 		}
 		mediaType := strings.TrimSpace(image.MediaType)
 		if mediaType == "" {
-			mediaType = "image/jpeg"
+			mediaType = mediaTypeByExtension(path)
 		}
-		return "data:" + mediaType + ";base64," + data
+		if mediaType == "" {
+			mediaType = detectMediaType(data)
+		}
+		return "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(data), nil
 	}
-	return strings.TrimSpace(image.URL)
+	return strings.TrimSpace(image.URL), nil
+}
+
+func NormalizeMediaType(mediaType, path string) string {
+	if mediaType = strings.TrimSpace(mediaType); mediaType != "" {
+		return mediaType
+	}
+	if detected := mediaTypeByExtension(path); detected != "" {
+		return detected
+	}
+	return "image/jpeg"
+}
+
+func mediaTypeByExtension(path string) string {
+	if ext := strings.TrimSpace(filepath.Ext(path)); ext != "" {
+		if detected := mime.TypeByExtension(ext); strings.HasPrefix(detected, "image/") {
+			return detected
+		}
+	}
+	return ""
+}
+
+func detectMediaType(data []byte) string {
+	if len(data) == 0 {
+		return "image/jpeg"
+	}
+	limit := len(data)
+	if limit > 512 {
+		limit = 512
+	}
+	detected := http.DetectContentType(data[:limit])
+	if strings.HasPrefix(detected, "image/") {
+		return detected
+	}
+	return "image/jpeg"
 }
 
 func firstNonEmpty(values ...string) string {

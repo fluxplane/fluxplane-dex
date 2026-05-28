@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-28
+
+### Added
+- Added the builtin `vision` aggregator with provider discovery, provider
+  listing, fanout image analysis, and context support.
+- Added OpenAI vision analysis as a vision provider using the Responses API.
+- Added Slack file/image upload with bot-token auth, local file paths,
+  base64 inline content, thread uploads, initial comments, and alt text.
+- Added Slack thread replies through `slack.message.send` using `thread_ts`
+  and optional reply broadcast.
+- Added Slack thread image metadata and bounded temporary image downloads for
+  thread reads.
+
+### Changed
+- OpenAI vision inputs now support local image file paths that are converted to
+  data URLs with detected media types.
+- Updated marketplace metadata for the new builtin vision provider and the
+  expanded OpenAI and Slack plugin capabilities.
+
+### Fixed
+- Added an Alertmanager-specific Grafana datasource health fallback using the
+  proxied `/api/v2/status` endpoint so Grafana plugin-health errors do not hide
+  usable Alertmanager datasources.
+- Slack file upload is explicitly bot-token-only instead of falling through the
+  read-token preference chain.
+
+### Documentation
+- Documented the local dex/plugin install workflow in `AGENTS.md`, including
+  the required `--dev-plugin NAME=PATH` syntax.
+
 ## [0.4.0] - 2026-05-28
 
 ### Added

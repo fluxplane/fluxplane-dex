@@ -81,9 +81,14 @@ func (s Service) VisionAnalyze(ctx pluginbinding.Context, input vision.AnalyzeIn
 		"model": modelOrDefault(input.Model, defaultVisionModel),
 		"input": []map[string]any{{
 			"role":    "user",
-			"content": openAIVisionContent(input),
+			"content": nil,
 		}},
 	}
+	content, err := openAIVisionContent(input)
+	if err != nil {
+		return vision.AnalyzeOutput{}, pluginbinding.Errorf("bad_input", "%s", err)
+	}
+	body["input"].([]map[string]any)[0]["content"] = content
 	if input.MaxTokens > 0 {
 		body["max_output_tokens"] = input.MaxTokens
 	}
@@ -132,22 +137,26 @@ func (s Service) authedClient(ctx pluginbinding.Context) (Client, error) {
 	return client, nil
 }
 
-func openAIVisionContent(input vision.AnalyzeInput) []map[string]any {
+func openAIVisionContent(input vision.AnalyzeInput) ([]map[string]any, error) {
 	content := []map[string]any{{
 		"type": "input_text",
 		"text": vision.NormalizePrompt(input.Prompt),
 	}}
 	for _, image := range input.Images {
+		imageURL, err := vision.DataURL(image)
+		if err != nil {
+			return nil, err
+		}
 		item := map[string]any{
 			"type":      "input_image",
-			"image_url": vision.DataURL(image),
+			"image_url": imageURL,
 		}
 		if detail := strings.TrimSpace(image.Detail); detail != "" {
 			item["detail"] = detail
 		}
 		content = append(content, item)
 	}
-	return content
+	return content, nil
 }
 
 func responseOutputText(out responsesOutput) string {

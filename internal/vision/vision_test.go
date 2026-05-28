@@ -1,6 +1,8 @@
 package vision
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/fluxplane/fluxplane-dex/core"
@@ -65,11 +67,17 @@ func TestProviderDiscoveryFromManifestAndSelection(t *testing.T) {
 }
 
 func TestDataURL(t *testing.T) {
-	if got := DataURL(ImageInput{Data: "AAAA", MediaType: "image/png"}); got != "data:image/png;base64,AAAA" {
-		t.Fatalf("data url = %q", got)
-	}
-	if got := DataURL(ImageInput{URL: "https://example.com/a.webp"}); got != "https://example.com/a.webp" {
+	got, err := DataURL(ImageInput{URL: "https://example.com/a.webp"})
+	if err != nil || got != "https://example.com/a.webp" {
 		t.Fatalf("url = %q", got)
+	}
+	path := filepath.Join(t.TempDir(), "image.png")
+	if err := os.WriteFile(path, []byte("png bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err = DataURL(ImageInput{FilePath: path})
+	if err != nil || got != "data:image/png;base64,cG5nIGJ5dGVz" {
+		t.Fatalf("file data url = %q err=%v", got, err)
 	}
 }
 

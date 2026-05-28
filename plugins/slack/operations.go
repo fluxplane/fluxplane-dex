@@ -43,8 +43,10 @@ type TokenInfoResult struct {
 }
 
 type MessageSendInput struct {
-	Channel string `json:"channel,omitempty" jsonschema:"required,description=Slack channel ID or name"`
-	Text    string `json:"text,omitempty" jsonschema:"required,description=Message text"`
+	Channel        string `json:"channel,omitempty" jsonschema:"required,description=Slack channel ID or name"`
+	Text           string `json:"text,omitempty" jsonschema:"required,description=Message text"`
+	ThreadTS       string `json:"thread_ts,omitempty" jsonschema:"description=Parent Slack message timestamp for replying in a thread."`
+	ReplyBroadcast bool   `json:"reply_broadcast,omitempty" jsonschema:"description=Also broadcast the thread reply into the channel."`
 }
 
 type FileUploadInput struct {
@@ -58,9 +60,17 @@ type FileUploadInput struct {
 }
 
 type MessageSendResult struct {
-	Channel string `json:"channel,omitempty"`
-	TS      string `json:"ts,omitempty"`
-	OK      bool   `json:"ok"`
+	Channel  string `json:"channel,omitempty"`
+	TS       string `json:"ts,omitempty"`
+	ThreadTS string `json:"thread_ts,omitempty"`
+	OK       bool   `json:"ok"`
+}
+
+type MessageSendRequest struct {
+	Channel        string
+	Text           string
+	ThreadTS       string
+	ReplyBroadcast bool
 }
 
 type FileUploadRequest struct {
@@ -109,9 +119,10 @@ type SearchMessage struct {
 }
 
 type ThreadInput struct {
-	Channel string `json:"channel,omitempty" jsonschema:"required,description=Slack channel ID"`
-	TS      string `json:"ts,omitempty" jsonschema:"required,description=Slack message timestamp"`
-	Limit   int    `json:"limit,omitempty" jsonschema:"description=Maximum thread messages to return"`
+	Channel  string `json:"channel,omitempty" jsonschema:"required,description=Slack channel ID"`
+	TS       string `json:"ts,omitempty" jsonschema:"required,description=Slack message timestamp"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"description=Maximum thread messages to return"`
+	MaxBytes int    `json:"max_bytes,omitempty" jsonschema:"description=Maximum bytes to download per image. Defaults to 10485760."`
 }
 
 type ThreadMessagesInput struct {
@@ -130,9 +141,23 @@ type ThreadResult struct {
 }
 
 type ThreadMessage struct {
-	TS   string `json:"ts,omitempty"`
-	User string `json:"user,omitempty"`
-	Text string `json:"text,omitempty"`
+	TS    string      `json:"ts,omitempty"`
+	User  string      `json:"user,omitempty"`
+	Text  string      `json:"text,omitempty"`
+	Files []SlackFile `json:"files,omitempty"`
+}
+
+type SlackFile struct {
+	FileID    string `json:"file_id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Title     string `json:"title,omitempty"`
+	Mimetype  string `json:"mimetype,omitempty"`
+	Filetype  string `json:"filetype,omitempty"`
+	Permalink string `json:"permalink,omitempty"`
+	FilePath  string `json:"file_path,omitempty"`
+	Width     int    `json:"width,omitempty"`
+	Height    int    `json:"height,omitempty"`
+	Size      int    `json:"size,omitempty"`
 }
 
 type ChannelMembersInput struct {
@@ -239,11 +264,17 @@ func (s Service) SendMessage(ctx pluginbinding.Context, input MessageSendInput) 
 	if err != nil {
 		return MessageSendResult{}, pluginbinding.Errorf("slack", "%s", err)
 	}
-	ts, err := client.SendMessage(context.Background(), channel, text)
+	request := MessageSendRequest{
+		Channel:        channel,
+		Text:           text,
+		ThreadTS:       strings.TrimSpace(input.ThreadTS),
+		ReplyBroadcast: input.ReplyBroadcast,
+	}
+	ts, err := client.SendMessage(context.Background(), request)
 	if err != nil {
 		return MessageSendResult{}, pluginbinding.Errorf("slack", "%s", err)
 	}
-	return MessageSendResult{Channel: channel, TS: ts, OK: true}, nil
+	return MessageSendResult{Channel: channel, TS: ts, ThreadTS: request.ThreadTS, OK: true}, nil
 }
 
 func (s Service) UploadFile(ctx pluginbinding.Context, input FileUploadInput) (FileUploadResult, error) {
@@ -313,7 +344,7 @@ func (s Service) Thread(ctx pluginbinding.Context, input ThreadInput) (ThreadRes
 		return ThreadResult{}, pluginbinding.Fail("bad_input", "ts is required")
 	}
 	messages, _, err := pluginbinding.ReadWithPreferredSecrets[Client, []ThreadMessage](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) ([]ThreadMessage, error) {
-		return client.GetThread(context.Background(), channel, ts, input.Limit)
+		return client.GetThread(context.Background(), channel, ts, input.Limit, input.MaxBytes)
 	}, fallbackableSlackError)
 	if err != nil {
 		return ThreadResult{}, pluginbinding.Errorf("slack", "%s", err)
@@ -332,7 +363,7 @@ func (s Service) ThreadMessagesDatasource(ctx pluginbinding.Context, input Threa
 		return ThreadMessagesDatasourceResult{}, pluginbinding.Fail("bad_input", "ts is required")
 	}
 	messages, _, err := pluginbinding.ReadWithPreferredSecrets[Client, []ThreadMessage](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) ([]ThreadMessage, error) {
-		return client.GetThread(context.Background(), channel, ts, input.Limit)
+		return client.GetThread(context.Background(), channel, ts, input.Limit, 0)
 	}, fallbackableSlackError)
 	if err != nil {
 		return ThreadMessagesDatasourceResult{}, pluginbinding.Errorf("slack", "%s", err)

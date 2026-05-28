@@ -16,6 +16,7 @@ func NewPluginWithService(service Service) *pluginbinding.Plugin {
 		pluginbinding.WithIndexBuildOperation(OperationIndexBuild),
 		pluginbinding.WithHostOwnedIndexStatus("Slack"),
 		pluginbinding.RegisterOperation(indexBuildSpec(), service.IndexBuild),
+		pluginbinding.RegisterOperation(fileUploadSpec(), service.UploadFile),
 		pluginbinding.RegisterOperation(infoSpec(), service.Info),
 		pluginbinding.RegisterOperation(messageSendSpec(), service.SendMessage),
 		pluginbinding.RegisterOperation(searchSpec(), service.Search),

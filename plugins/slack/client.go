@@ -1,6 +1,7 @@
 package slack
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ type Client interface {
 	ListChannels(context.Context) ([]Channel, error)
 	ListChannelMembers(context.Context, string, int) ([]User, error)
 	SendMessage(context.Context, string, string) (string, error)
+	UploadFile(context.Context, FileUploadRequest) (FileUploadResult, error)
 	SearchMessages(context.Context, string, int) ([]SearchMessage, int, error)
 	GetThread(context.Context, string, string, int) ([]ThreadMessage, error)
 }
@@ -116,6 +118,38 @@ func (c liveClient) ListChannelMembers(ctx context.Context, channel string, limi
 func (c liveClient) SendMessage(ctx context.Context, channel, text string) (string, error) {
 	_, ts, err := c.client.PostMessageContext(ctx, channel, slackapi.MsgOptionText(text, false))
 	return ts, err
+}
+
+func (c liveClient) UploadFile(ctx context.Context, request FileUploadRequest) (FileUploadResult, error) {
+	summary, err := c.client.UploadFileContext(ctx, slackapi.UploadFileParameters{
+		FileSize:        len(request.Content),
+		Reader:          bytes.NewReader(request.Content),
+		Filename:        request.Filename,
+		Title:           request.Filename,
+		InitialComment:  request.InitialComment,
+		Channel:         request.Channel,
+		ThreadTimestamp: request.ThreadTS,
+		AltTxt:          request.AltText,
+	})
+	if err != nil {
+		return FileUploadResult{}, err
+	}
+	result := FileUploadResult{
+		OK:       true,
+		Channel:  request.Channel,
+		ThreadTS: request.ThreadTS,
+		FileID:   summary.ID,
+		Title:    firstNonEmpty(summary.Title, request.Filename),
+		Filename: request.Filename,
+		Size:     len(request.Content),
+	}
+	file, _, _, err := c.client.GetFileInfoContext(ctx, summary.ID, 0, 0)
+	if err != nil {
+		result.Warning = "uploaded file, but could not fetch permalink: " + err.Error()
+		return result, nil
+	}
+	result.Permalink = strings.TrimSpace(file.Permalink)
+	return result, nil
 }
 
 func (c liveClient) SearchMessages(ctx context.Context, query string, limit int) ([]SearchMessage, int, error) {

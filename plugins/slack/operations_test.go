@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
@@ -268,6 +270,62 @@ func TestServiceSendSearchAndThreadUseLiveClient(t *testing.T) {
 	}
 }
 
+func TestServiceUploadFileUsesBotTokenAndFilePath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "chart.png")
+	if err := os.WriteFile(path, []byte("png bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	factory := &capturingFactory{
+		clients: map[string]*fakeClient{
+			"bot_token": {
+				uploadResult: FileUploadResult{OK: true, FileID: "F1", Permalink: "https://example.slack.com/files/F1"},
+			},
+		},
+	}
+	plugin := testPlugin(factory, nil)
+
+	out := plugintest.RunOK[FileUploadResult](t, plugin, OperationFileUpload, map[string]any{"channel": "C1", "thread_ts": "1710000000.123456", "file_path": path, "initial_comment": "graph", "alt_text": "Latency chart"})
+	if !out.OK || out.FileID != "F1" || factory.clients["bot_token"].uploadCalls != 1 {
+		t.Fatalf("upload result = %#v calls=%d", out, factory.clients["bot_token"].uploadCalls)
+	}
+	request := factory.clients["bot_token"].lastUpload
+	if request.Channel != "C1" || request.ThreadTS != "1710000000.123456" || request.Filename != "chart.png" || string(request.Content) != "png bytes" || request.InitialComment != "graph" || request.AltText != "Latency chart" {
+		t.Fatalf("upload request = %#v", request)
+	}
+	if factory.created["user_token"] != 0 {
+		t.Fatalf("file upload should only use bot token: %#v", factory.created)
+	}
+}
+
+func TestServiceUploadFileAcceptsBase64ContentBytes(t *testing.T) {
+	factory := &capturingFactory{
+		clients: map[string]*fakeClient{
+			"bot_token": {uploadResult: FileUploadResult{OK: true, FileID: "F2"}},
+		},
+	}
+	plugin := testPlugin(factory, nil)
+
+	out := plugintest.RunOK[FileUploadResult](t, plugin, OperationFileUpload, map[string]any{"channel": "C1", "filename": "chart.png", "content_bytes": "cG5nIGJ5dGVz"})
+	if !out.OK || out.FileID != "F2" {
+		t.Fatalf("upload result = %#v", out)
+	}
+	if string(factory.clients["bot_token"].lastUpload.Content) != "png bytes" || factory.clients["bot_token"].lastUpload.Filename != "chart.png" {
+		t.Fatalf("upload request = %#v", factory.clients["bot_token"].lastUpload)
+	}
+}
+
+func TestServiceUploadFileRequiresExactlyOneContentSource(t *testing.T) {
+	plugin := testPlugin(&capturingFactory{clients: map[string]*fakeClient{"bot_token": {}}}, nil)
+
+	if err := plugintest.RunError(t, plugin, OperationFileUpload, map[string]any{"channel": "C1", "filename": "chart.png"}); err == nil || err.Code != "bad_input" {
+		t.Fatalf("missing content err = %#v", err)
+	}
+	if err := plugintest.RunError(t, plugin, OperationFileUpload, map[string]any{"channel": "C1", "file_path": "chart.png", "filename": "chart.png", "content_bytes": "cG5n"}); err == nil || err.Code != "bad_input" {
+		t.Fatalf("ambiguous content err = %#v", err)
+	}
+}
+
 func TestServiceThreadLimitsTotalMessages(t *testing.T) {
 	factory := &capturingFactory{
 		clients: map[string]*fakeClient{
@@ -444,6 +502,7 @@ type fakeClient struct {
 	channelsErr         error
 	channelMembersErr   error
 	sendErr             error
+	uploadErr           error
 	searchErr           error
 	threadErr           error
 	authCalls           int
@@ -452,8 +511,11 @@ type fakeClient struct {
 	channelMembersCalls int
 	lastMembersLimit    int
 	sendCalls           int
+	uploadCalls         int
 	searchCalls         int
 	threadCalls         int
+	lastUpload          FileUploadRequest
+	uploadResult        FileUploadResult
 }
 
 func (c *fakeClient) AuthTest(_ context.Context) (AuthInfo, error) {
@@ -480,6 +542,28 @@ func (c *fakeClient) ListChannelMembers(_ context.Context, _ string, limit int) 
 func (c *fakeClient) SendMessage(_ context.Context, _, _ string) (string, error) {
 	c.sendCalls++
 	return c.sendTS, c.sendErr
+}
+
+func (c *fakeClient) UploadFile(_ context.Context, request FileUploadRequest) (FileUploadResult, error) {
+	c.uploadCalls++
+	c.lastUpload = request
+	result := c.uploadResult
+	if result.FileID == "" {
+		result.FileID = "F1"
+	}
+	if result.Channel == "" {
+		result.Channel = request.Channel
+	}
+	if result.ThreadTS == "" {
+		result.ThreadTS = request.ThreadTS
+	}
+	if result.Filename == "" {
+		result.Filename = request.Filename
+	}
+	if result.Size == 0 {
+		result.Size = len(request.Content)
+	}
+	return result, c.uploadErr
 }
 
 func (c *fakeClient) SearchMessages(_ context.Context, _ string, _ int) ([]SearchMessage, int, error) {

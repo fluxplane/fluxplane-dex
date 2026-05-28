@@ -2,6 +2,8 @@ package slack
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
@@ -45,10 +47,41 @@ type MessageSendInput struct {
 	Text    string `json:"text,omitempty" jsonschema:"required,description=Message text"`
 }
 
+type FileUploadInput struct {
+	Channel        string `json:"channel,omitempty" jsonschema:"required,description=Slack channel ID or DM ID"`
+	ThreadTS       string `json:"thread_ts,omitempty" jsonschema:"description=Slack thread timestamp to upload into"`
+	FilePath       string `json:"file_path,omitempty" jsonschema:"description=Local file path to upload. Mutually exclusive with content_bytes."`
+	ContentBytes   []byte `json:"content_bytes,omitempty" jsonschema:"description=Base64-encoded inline file bytes. Mutually exclusive with file_path."`
+	Filename       string `json:"filename,omitempty" jsonschema:"description=Filename shown in Slack. Defaults to the file_path basename."`
+	InitialComment string `json:"initial_comment,omitempty" jsonschema:"description=Optional message text posted with the file."`
+	AltText        string `json:"alt_text,omitempty" jsonschema:"description=Alt text for image uploads."`
+}
+
 type MessageSendResult struct {
 	Channel string `json:"channel,omitempty"`
 	TS      string `json:"ts,omitempty"`
 	OK      bool   `json:"ok"`
+}
+
+type FileUploadRequest struct {
+	Channel        string
+	ThreadTS       string
+	Content        []byte
+	Filename       string
+	InitialComment string
+	AltText        string
+}
+
+type FileUploadResult struct {
+	OK        bool   `json:"ok"`
+	Channel   string `json:"channel,omitempty"`
+	ThreadTS  string `json:"thread_ts,omitempty"`
+	FileID    string `json:"file_id,omitempty"`
+	Filename  string `json:"filename,omitempty"`
+	Title     string `json:"title,omitempty"`
+	Permalink string `json:"permalink,omitempty"`
+	Size      int    `json:"size,omitempty"`
+	Warning   string `json:"warning,omitempty"`
 }
 
 type SearchInput struct {
@@ -211,6 +244,26 @@ func (s Service) SendMessage(ctx pluginbinding.Context, input MessageSendInput) 
 		return MessageSendResult{}, pluginbinding.Errorf("slack", "%s", err)
 	}
 	return MessageSendResult{Channel: channel, TS: ts, OK: true}, nil
+}
+
+func (s Service) UploadFile(ctx pluginbinding.Context, input FileUploadInput) (FileUploadResult, error) {
+	request, err := fileUploadRequest(input)
+	if err != nil {
+		return FileUploadResult{}, pluginbinding.Errorf("bad_input", "%s", err)
+	}
+	material, err := ctx.Secret(AuthPurposeBot)
+	if err != nil {
+		return FileUploadResult{}, pluginbinding.Errorf("slack", "%s", err)
+	}
+	client, err := s.client(material)
+	if err != nil {
+		return FileUploadResult{}, pluginbinding.Errorf("slack", "%s", err)
+	}
+	result, err := client.UploadFile(context.Background(), request)
+	if err != nil {
+		return FileUploadResult{}, pluginbinding.Errorf("slack", "%s", err)
+	}
+	return result, nil
 }
 
 func (s Service) Search(ctx pluginbinding.Context, input SearchInput) (SearchResult, error) {
@@ -452,4 +505,43 @@ func limitThreadMessages(messages []ThreadMessage, limit int) []ThreadMessage {
 		return messages
 	}
 	return messages[:limit]
+}
+
+func fileUploadRequest(input FileUploadInput) (FileUploadRequest, error) {
+	channel := strings.TrimSpace(input.Channel)
+	if channel == "" {
+		return FileUploadRequest{}, pluginbinding.Fail("bad_input", "channel is required")
+	}
+	filePath := strings.TrimSpace(input.FilePath)
+	hasFilePath := filePath != ""
+	hasContent := len(input.ContentBytes) > 0
+	if hasFilePath == hasContent {
+		return FileUploadRequest{}, pluginbinding.Fail("bad_input", "provide exactly one of file_path or content_bytes")
+	}
+	filename := strings.TrimSpace(input.Filename)
+	content := append([]byte(nil), input.ContentBytes...)
+	if hasFilePath {
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return FileUploadRequest{}, err
+		}
+		content = data
+		if filename == "" {
+			filename = filepath.Base(filePath)
+		}
+	}
+	if len(content) == 0 {
+		return FileUploadRequest{}, pluginbinding.Fail("bad_input", "file content is empty")
+	}
+	if filename == "" {
+		return FileUploadRequest{}, pluginbinding.Fail("bad_input", "filename is required when using content_bytes")
+	}
+	return FileUploadRequest{
+		Channel:        channel,
+		ThreadTS:       strings.TrimSpace(input.ThreadTS),
+		Content:        content,
+		Filename:       filename,
+		InitialComment: strings.TrimSpace(input.InitialComment),
+		AltText:        strings.TrimSpace(input.AltText),
+	}, nil
 }

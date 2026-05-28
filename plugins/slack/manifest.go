@@ -8,7 +8,7 @@ import (
 const (
 	PluginName        = "slack"
 	PluginVersion     = "0.4.0"
-	PluginDescription = "Slack token info, messaging, search, thread, channel member, and reverse lookup operations."
+	PluginDescription = "Slack token info, messaging, file upload, search, thread, channel member, and reverse lookup operations."
 
 	AuthMethodTokenSet = "token_set"
 	AuthPurposeBot     = "bot_token"
@@ -20,6 +20,7 @@ const (
 	EnvSlackAppToken  = "SLACK_APP_TOKEN"
 
 	OperationIndexBuild  = "slack.index.build"
+	OperationFileUpload  = "slack.file.upload"
 	OperationInfo        = "slack.info"
 	OperationMessageSend = "slack.message.send"
 	OperationSearch      = "slack.search"
@@ -82,6 +83,7 @@ func manifestSpec() pluginbinding.ManifestSpec {
 func operationSpecs() []core.OperationSpec {
 	return []core.OperationSpec{
 		indexBuildSpec(),
+		fileUploadSpec(),
 		infoSpec(),
 		messageSendSpec(),
 		searchSpec(),
@@ -94,6 +96,18 @@ func indexBuildSpec() core.OperationSpec {
 		OperationIndexBuild,
 		"Build Slack channel and user indexes.",
 		slackReadOptions(core.OperationConditional)...,
+	)
+}
+
+func fileUploadSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[FileUploadInput, FileUploadResult](
+		OperationFileUpload,
+		"Upload a file or image to a Slack channel, DM, or thread.",
+		pluginbinding.SecretPurposes(AuthPurposeBot),
+		pluginbinding.Effects(core.OperationEffectWrite, core.OperationEffectNetwork, core.OperationEffectFilesystem),
+		pluginbinding.Access(core.OperationAccessAuth, core.OperationAccessSecret, core.OperationAccessNetwork, core.OperationAccessFilesystem),
+		pluginbinding.Risk(core.OperationRiskMedium),
+		pluginbinding.Idempotency(core.OperationNonIdempotent),
 	)
 }
 

@@ -22,6 +22,7 @@ import (
 type Service struct {
 	Contexts func() (ClusterListResult, error)
 	Services func(context.Context, EndpointDiscoverInput) ([]corev1.Service, error)
+	Secrets  func(context.Context, EndpointDiscoverInput) ([]corev1.Secret, error)
 }
 
 func NewService() Service {
@@ -65,7 +66,15 @@ func (s Service) EndpointDiscover(ctx pluginbinding.Context, input EndpointDisco
 	if err != nil {
 		return EndpointDiscoverResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
-	return EndpointDiscoverResult{Candidates: serviceCandidates(services, input)}, nil
+	candidates := serviceCandidates(services, input)
+	if shouldDiscoverMySQL(input.Product) {
+		secrets, err := s.secrets()(context.Background(), input)
+		if err != nil {
+			return EndpointDiscoverResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
+		}
+		candidates = append(candidates, secretCandidates(secrets, input)...)
+	}
+	return EndpointDiscoverResult{Candidates: limitCandidates(candidates, input.Limit)}, nil
 }
 
 func (s Service) DiscoverEndpointsCommand(ctx pluginbinding.Context) protocol.Response {
@@ -98,6 +107,13 @@ func (s Service) services() func(context.Context, EndpointDiscoverInput) ([]core
 	return listKubernetesServices
 }
 
+func (s Service) secrets() func(context.Context, EndpointDiscoverInput) ([]corev1.Secret, error) {
+	if s.Secrets != nil {
+		return s.Secrets
+	}
+	return listKubernetesSecrets
+}
+
 func loadKubeconfigContexts() (ClusterListResult, error) {
 	config, err := clientcmd.NewDefaultClientConfigLoadingRules().Load()
 	if err != nil {
@@ -113,6 +129,30 @@ func loadKubeconfigContexts() (ClusterListResult, error) {
 }
 
 func listKubernetesServices(ctx context.Context, input EndpointDiscoverInput) ([]corev1.Service, error) {
+	clientset, namespace, err := kubernetesClient(input)
+	if err != nil {
+		return nil, err
+	}
+	list, err := clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
+func listKubernetesSecrets(ctx context.Context, input EndpointDiscoverInput) ([]corev1.Secret, error) {
+	clientset, namespace, err := kubernetesClient(input)
+	if err != nil {
+		return nil, err
+	}
+	list, err := clientset.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
+func kubernetesClient(input EndpointDiscoverInput) (*kubernetes.Clientset, string, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	overrides := &clientcmd.ConfigOverrides{}
 	if strings.TrimSpace(input.Context) != "" {
@@ -120,21 +160,17 @@ func listKubernetesServices(ctx context.Context, input EndpointDiscoverInput) ([
 	}
 	restConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	namespace := strings.TrimSpace(input.Namespace)
 	if namespace == "" {
 		namespace = metav1.NamespaceAll
 	}
-	list, err := clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
-	return list.Items, nil
+	return clientset, namespace, nil
 }
 
 func serviceCandidates(services []corev1.Service, input EndpointDiscoverInput) []core.EndpointCandidate {
@@ -154,7 +190,7 @@ func serviceCandidates(services []corev1.Service, input EndpointDiscoverInput) [
 				ID:       endpointCandidateID(product, endpoint, item.Namespace, item.Name),
 				URL:      endpoint,
 				Product:  product,
-				Protocol: "http",
+				Protocol: endpointProtocol(endpoint),
 				Source:   "kubernetes",
 				Score:    score,
 				Labels: map[string]string{
@@ -180,6 +216,90 @@ func serviceCandidates(services []corev1.Service, input EndpointDiscoverInput) [
 		return candidates[i].Score > candidates[j].Score
 	})
 	return candidates
+}
+
+func secretCandidates(secrets []corev1.Secret, input EndpointDiscoverInput) []core.EndpointCandidate {
+	var candidates []core.EndpointCandidate
+	for _, secret := range secrets {
+		endpoint, database, ok := mysqlEndpointFromSecret(secret)
+		if !ok {
+			continue
+		}
+		candidate := core.EndpointCandidate{
+			ID:            endpointCandidateID("mysql", endpoint, secret.Namespace, secret.Name),
+			URL:           endpoint,
+			Product:       "mysql",
+			Protocol:      "mysql",
+			Source:        "kubernetes_secret",
+			Score:         0.9,
+			CredentialRef: kubernetesCredentialRef(input.Context, secret.Namespace, secret.Name),
+			Labels: map[string]string{
+				"namespace": secret.Namespace,
+				"secret":    secret.Name,
+			},
+			Annotations: map[string]string{"database": database},
+		}
+		if strings.TrimSpace(input.Context) != "" {
+			candidate.Labels["context"] = strings.TrimSpace(input.Context)
+		}
+		candidates = append(candidates, candidate)
+	}
+	return candidates
+}
+
+func mysqlEndpointFromSecret(secret corev1.Secret) (string, string, bool) {
+	host := secretValue(secret, "host", "hostname", "endpoint", "address")
+	port := firstNonEmpty(secretValue(secret, "port"), "3306")
+	database := secretValue(secret, "database", "dbname", "db")
+	username := secretValue(secret, "username", "user")
+	password := secretValue(secret, "password", "pass")
+	if host == "" || username == "" || password == "" {
+		return "", "", false
+	}
+	haystack := strings.ToLower(secret.Name + " " + joinMap(secret.Labels) + " " + joinMap(secret.Annotations) + " " + host + " " + port)
+	if !strings.Contains(haystack, "mysql") && port != "3306" {
+		return "", "", false
+	}
+	endpoint := "mysql://" + host + ":" + port
+	if database != "" {
+		endpoint += "/" + database
+	}
+	return endpoint, database, true
+}
+
+func secretValue(secret corev1.Secret, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(string(secret.Data[key])); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func kubernetesCredentialRef(contextName, namespace, secretName string) string {
+	values := url.Values{}
+	if strings.TrimSpace(contextName) != "" {
+		values.Set("context", strings.TrimSpace(contextName))
+	}
+	return "kubernetes://" + namespace + "/secrets/" + secretName + "?" + values.Encode()
+}
+
+func shouldDiscoverMySQL(product string) bool {
+	product = strings.ToLower(strings.TrimSpace(product))
+	return product == "" || product == "mysql" || product == "database" || product == "sql"
+}
+
+func limitCandidates(candidates []core.EndpointCandidate, limit int) []core.EndpointCandidate {
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Score == candidates[j].Score {
+			return candidates[i].ID < candidates[j].ID
+		}
+		return candidates[i].Score > candidates[j].Score
+	})
+	if limit <= 0 || len(candidates) <= limit {
+		return candidates
+	}
+	return candidates[:limit]
 }
 
 func classifyService(item corev1.Service, productFilter string) (string, float64) {
@@ -267,6 +387,13 @@ func uniqueStrings(values []string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func endpointProtocol(value string) string {
+	if parsed, err := url.Parse(value); err == nil {
+		return parsed.Scheme
+	}
+	return ""
 }
 
 func firstNonEmpty(values ...string) string {

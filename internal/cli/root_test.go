@@ -105,6 +105,49 @@ func TestPluginStatusActivateDeactivate(t *testing.T) {
 	}
 }
 
+func TestEndpointAddListShow(t *testing.T) {
+	home := t.TempDir()
+	add := NewRootCommand()
+	var addOut bytes.Buffer
+	add.SetOut(&addOut)
+	add.SetErr(&addOut)
+	add.SetArgs([]string{
+		"--dex-home", home,
+		"endpoint", "add", "mysql://127.0.0.1:3306/dev",
+		"--id", "local-mysql",
+		"--product", "mysql",
+		"--protocol", "mysql",
+		"--label", "env=dev",
+		"-o", "json",
+	})
+	if err := add.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var added runtime.EndpointRecord
+	if err := json.Unmarshal(addOut.Bytes(), &added); err != nil {
+		t.Fatal(err)
+	}
+	if added.ID != "local-mysql" || added.URL != "mysql://127.0.0.1:3306/dev" || added.Labels["env"] != "dev" {
+		t.Fatalf("added = %#v", added)
+	}
+
+	show := NewRootCommand()
+	var showOut bytes.Buffer
+	show.SetOut(&showOut)
+	show.SetErr(&showOut)
+	show.SetArgs([]string{"--dex-home", home, "endpoint", "show", "local-mysql", "-o", "json"})
+	if err := show.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var shown runtime.EndpointRecord
+	if err := json.Unmarshal(showOut.Bytes(), &shown); err != nil {
+		t.Fatal(err)
+	}
+	if shown.ID != "local-mysql" {
+		t.Fatalf("shown = %#v", shown)
+	}
+}
+
 func TestOperationShowIncludesMetadata(t *testing.T) {
 	cmd := NewRootCommand()
 	var out bytes.Buffer

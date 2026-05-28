@@ -19,7 +19,7 @@ func NewState(home string) (State, error) {
 		home = filepath.Join(userHome, ".dex")
 	}
 	home = expandHome(home)
-	for _, dir := range []string{home, filepath.Join(home, "auth"), filepath.Join(home, "plugins"), filepath.Join(home, "grants"), filepath.Join(home, "indexes")} {
+	for _, dir := range []string{home, filepath.Join(home, "auth"), filepath.Join(home, "plugins"), filepath.Join(home, "grants"), filepath.Join(home, "indexes"), filepath.Join(home, "endpoints")} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return State{}, err
 		}

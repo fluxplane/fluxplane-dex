@@ -46,6 +46,11 @@ func (r Runner) InvokeInstance(ctx context.Context, pluginName, instance, comman
 		return protocol.Response{}, err
 	}
 	req.Instance = NormalizeInstance(instance)
+	if command == protocol.CommandOperationsCall || command == protocol.CommandOperationsBatch {
+		if err := r.resolveEndpointRefs(&req); err != nil {
+			return protocol.Response{}, err
+		}
+	}
 	if isDatasourceCommand(command) {
 		resp, ok, err := (hostIndexDatasource{state: r.State, plugin: entry.Name, instance: req.Instance}).Response(command, payload)
 		if err != nil {
@@ -77,6 +82,89 @@ func (r Runner) InvokeInstance(ctx context.Context, pluginName, instance, comman
 		}
 	}
 	return r.invokeRequest(ctx, entry, req)
+}
+
+func (r Runner) resolveEndpointRefs(req *protocol.Request) error {
+	if req == nil || len(req.Payload) == 0 {
+		return nil
+	}
+	switch req.Command {
+	case protocol.CommandOperationsCall:
+		var call protocol.OperationCall
+		if err := json.Unmarshal(req.Payload, &call); err != nil {
+			return nil
+		}
+		changed, err := r.resolveOperationEndpointRef(&call)
+		if err != nil {
+			return err
+		}
+		if changed {
+			raw, err := json.Marshal(call)
+			if err != nil {
+				return err
+			}
+			req.Payload = raw
+		}
+	case protocol.CommandOperationsBatch:
+		var batch protocol.OperationBatch
+		if err := json.Unmarshal(req.Payload, &batch); err != nil {
+			return nil
+		}
+		changed := false
+		for i := range batch.Calls {
+			callChanged, err := r.resolveOperationEndpointRef(&batch.Calls[i])
+			if err != nil {
+				return err
+			}
+			changed = changed || callChanged
+		}
+		if changed {
+			raw, err := json.Marshal(batch)
+			if err != nil {
+				return err
+			}
+			req.Payload = raw
+		}
+	}
+	return nil
+}
+
+func (r Runner) resolveOperationEndpointRef(call *protocol.OperationCall) (bool, error) {
+	if call == nil || len(call.Input) == 0 {
+		return false, nil
+	}
+	var input map[string]any
+	if err := json.Unmarshal(call.Input, &input); err != nil {
+		return false, nil
+	}
+	ref, _ := input["endpoint_ref"].(string)
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return false, nil
+	}
+	if value, _ := input["url"].(string); strings.TrimSpace(value) != "" {
+		return false, nil
+	}
+	endpoint, ok, err := r.State.GetEndpoint(ref)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, fmt.Errorf("unknown endpoint_ref %q", ref)
+	}
+	input["url"] = endpoint.URL
+	if endpoint.CredentialRef != "" {
+		input["credential_ref"] = endpoint.CredentialRef
+	}
+	if _, ok := input["endpoint_product"]; !ok && endpoint.Product != "" {
+		input["endpoint_product"] = endpoint.Product
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return false, err
+	}
+	call.Input = raw
+	return true, nil
 }
 
 type IndexBuildResult struct {

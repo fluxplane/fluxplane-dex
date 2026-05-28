@@ -609,6 +609,111 @@ func newContextCommand(opts *options) *cobra.Command {
 func newEndpointCommand(opts *options) *cobra.Command {
 	cmd := &cobra.Command{Use: "endpoint", Short: "Discover and inspect endpoints"}
 	cmd.AddCommand(&cobra.Command{
+		Use:   "ls [PRODUCT]",
+		Short: "List registered endpoints",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			product := ""
+			if len(args) == 1 {
+				product = args[0]
+			}
+			endpoints, err := runner.State.ListEndpoints(product)
+			if err != nil {
+				return err
+			}
+			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"product": product, "endpoints": endpoints})
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "show ID",
+		Short: "Show a registered endpoint",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			endpoint, ok, err := runner.State.GetEndpoint(args[0])
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("unknown endpoint %q", args[0])
+			}
+			return renderValue(cmd.OutOrStdout(), opts.output, endpoint)
+		},
+	})
+	addOpts := struct {
+		id          string
+		product     string
+		protocol    string
+		source      string
+		credential  string
+		labels      []string
+		annotations []string
+	}{}
+	add := &cobra.Command{
+		Use:   "add URL",
+		Short: "Register an endpoint",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			labels, err := parseStringMapFlags(addOpts.labels)
+			if err != nil {
+				return err
+			}
+			annotations, err := parseStringMapFlags(addOpts.annotations)
+			if err != nil {
+				return err
+			}
+			record, err := runner.State.SaveEndpoint(core.EndpointRef{
+				ID:            addOpts.id,
+				URL:           args[0],
+				Product:       addOpts.product,
+				Protocol:      addOpts.protocol,
+				Source:        addOpts.source,
+				CredentialRef: addOpts.credential,
+				Labels:        labels,
+				Annotations:   annotations,
+			})
+			if err != nil {
+				return err
+			}
+			return renderValue(cmd.OutOrStdout(), opts.output, record)
+		},
+	}
+	add.Flags().StringVar(&addOpts.id, "id", "", "Endpoint ID")
+	add.Flags().StringVar(&addOpts.product, "product", "", "Product name")
+	add.Flags().StringVar(&addOpts.protocol, "protocol", "", "Endpoint protocol")
+	add.Flags().StringVar(&addOpts.source, "source", "manual", "Endpoint source")
+	add.Flags().StringVar(&addOpts.credential, "credential-ref", "", "Credential reference")
+	add.Flags().StringArrayVar(&addOpts.labels, "label", nil, "Endpoint label key=value")
+	add.Flags().StringArrayVar(&addOpts.annotations, "annotation", nil, "Endpoint annotation key=value")
+	cmd.AddCommand(add)
+	cmd.AddCommand(&cobra.Command{
+		Use:   "remove ID",
+		Short: "Remove a registered endpoint",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			removed, err := runner.State.RemoveEndpoint(args[0])
+			if err != nil {
+				return err
+			}
+			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"id": args[0], "removed": removed})
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
 		Use:   "discover [PRODUCT]",
 		Short: "Discover endpoint candidates",
 		Args:  cobra.MaximumNArgs(1),
@@ -628,6 +733,22 @@ func newEndpointCommand(opts *options) *cobra.Command {
 		},
 	})
 	return cmd
+}
+
+func parseStringMapFlags(values []string) (map[string]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	out := map[string]string{}
+	for _, value := range values {
+		key, val, ok := strings.Cut(value, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			return nil, fmt.Errorf("expected key=value, got %q", value)
+		}
+		out[key] = strings.TrimSpace(val)
+	}
+	return out, nil
 }
 
 func newIndexCommand(opts *options) *cobra.Command {

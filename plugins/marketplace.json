@@ -121,7 +121,20 @@
         {"use": "k8s clusters", "target": "operation", "operation": "kubernetes.cluster.list"},
         {"use": "k8s discover <product>", "target": "operation", "operation": "kubernetes.endpoint.discover"},
         {"use": "endpoint discover prometheus", "target": "endpoint", "capability": "discover", "entity": "prometheus"},
-        {"use": "endpoint discover loki", "target": "endpoint", "capability": "discover", "entity": "loki"}
+        {"use": "endpoint discover loki", "target": "endpoint", "capability": "discover", "entity": "loki"},
+        {"use": "endpoint discover mysql", "target": "endpoint", "capability": "discover", "entity": "mysql"}
+      ]
+    },
+    {
+      "name": "sql",
+      "description": "Read-only SQL query operations for MySQL, PostgreSQL, SQLite, and compatible endpoints.",
+      "aliases": ["mysql", "sql"],
+      "binary": "dex-plugin-sql",
+      "go_install": "github.com/fluxplane/fluxplane-dex/plugins/sql/cmd/dex-plugin-sql@latest",
+      "local_path": "plugins/sql",
+      "commands": [
+        {"use": "sql query <query>", "target": "operation", "operation": "sql.query"},
+        {"use": "mysql query <query>", "target": "operation", "operation": "sql.query"}
       ]
     }
   ]

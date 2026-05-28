@@ -8,6 +8,7 @@ use (
 	./plugins/loki
 	./plugins/prometheus
 	./plugins/slack
+	./plugins/sql
 	./plugins/system
 	./plugins/tavily
 )

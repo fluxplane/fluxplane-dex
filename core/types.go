@@ -68,10 +68,13 @@ type AuthField struct {
 }
 
 type DatasourceSpec struct {
-	Name         string   `json:"name"`
-	Entity       string   `json:"entity"`
-	Description  string   `json:"description,omitempty"`
-	Capabilities []string `json:"capabilities,omitempty"`
+	Name           string          `json:"name"`
+	Entity         string          `json:"entity"`
+	Description    string          `json:"description,omitempty"`
+	Capabilities   []string        `json:"capabilities,omitempty"`
+	SecretPurposes []string        `json:"secret_purposes,omitempty"`
+	Input          json.RawMessage `json:"input_schema,omitempty"`
+	Output         json.RawMessage `json:"output_schema,omitempty"`
 }
 
 type ContextSpec struct {

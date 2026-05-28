@@ -139,6 +139,76 @@ func TestIndexStoreLookupTermsAndTextURLs(t *testing.T) {
 	}
 }
 
+func TestIndexLookupResolverMatrix(t *testing.T) {
+	state, err := NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveIndexRecords("gitlab", "default", "gitlab.projects", []json.RawMessage{
+		json.RawMessage(`{"entity":"gitlab.project","id":"sbf/services","name":"services","path_with_namespace":"sbf/services","web_url":"https://gitlab.example.com/sbf/services"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveIndexRecords("gitlab", "default", "gitlab.users", []json.RawMessage{
+		json.RawMessage(`{"entity":"gitlab.user","id":"timo","username":"timo","name":"Timo Friedl","web_url":"https://gitlab.example.com/timo","user_id":1234}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveIndexRecords("gitlab", "default", "gitlab.issues", []json.RawMessage{
+		json.RawMessage(`{"entity":"gitlab.issue","id":"sbf/services#34","title":"Bug","reference":"sbf/services#34","author_username":"timo","web_url":"https://gitlab.example.com/sbf/services/-/issues/34"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveIndexRecords("gitlab", "default", "gitlab.merge_requests", []json.RawMessage{
+		json.RawMessage(`{"entity":"gitlab.merge_request","id":"sbf/services!12","title":"Ship","reference":"sbf/services!12","author_username":"timo","web_url":"https://gitlab.example.com/sbf/services/-/merge_requests/12"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveIndexRecords("slack", "default", "slack.users", []json.RawMessage{
+		json.RawMessage(`{"entity":"slack.user","id":"U1234","user_id":"U1234","name":"timo","display_name":"Timo Friedl","web_url":"slack://user/U1234"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveIndexRecords("slack", "default", "slack.channels", []json.RawMessage{
+		json.RawMessage(`{"entity":"slack.channel","id":"C1234","channel_id":"C1234","name":"engineering","user":"U1234","web_url":"slack://channel/C1234"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	assertLookupMatch(t, state, "gitlab", LookupOptions{Text: "open https://gitlab.example.com/sbf/services", Limit: 10}, "gitlab.project", "sbf/services")
+	assertLookupMatch(t, state, "gitlab", LookupOptions{Text: "open https://gitlab.example.com/timo", Limit: 10}, "gitlab.user", "timo")
+	issue := assertLookupMatch(t, state, "gitlab", LookupOptions{Text: "open https://gitlab.example.com/sbf/services/-/issues/34", Limit: 10}, "gitlab.issue", "sbf/services#34")
+	if issue.Record.Links["project_entity"] != "gitlab.project:sbf/services" || issue.Record.Links["namespace_entity"] != "gitlab.group:sbf" || issue.Record.Links["author_entity"] != "gitlab.user:timo" {
+		t.Fatalf("issue links = %#v", issue.Record.Links)
+	}
+	mr := assertLookupMatch(t, state, "gitlab", LookupOptions{Text: "open https://gitlab.example.com/sbf/services/-/merge_requests/12", Limit: 10}, "gitlab.merge_request", "sbf/services!12")
+	if mr.Record.Links["project_entity"] != "gitlab.project:sbf/services" || mr.Record.Links["project"] != "https://gitlab.example.com/sbf/services" {
+		t.Fatalf("merge request links = %#v", mr.Record.Links)
+	}
+	assertLookupMatch(t, state, "slack", LookupOptions{Text: "ping slack://user/U1234", Limit: 10}, "slack.user", "U1234")
+	channel := assertLookupMatch(t, state, "slack", LookupOptions{Text: "join slack://channel/C1234", Limit: 10}, "slack.channel", "C1234")
+	if channel.Record.Links["self"] != "slack://channel/C1234" || channel.Record.Links["user_entity"] != "slack.user:U1234" {
+		t.Fatalf("channel links = %#v", channel.Record.Links)
+	}
+	assertLookupMatch(t, state, "slack", LookupOptions{Text: "#engineering", Limit: 10}, "slack.channel", "C1234")
+	assertLookupMatch(t, state, "slack", LookupOptions{Terms: []string{"timo"}, Limit: 10}, "slack.user", "U1234")
+}
+
+func assertLookupMatch(t *testing.T, state State, plugin string, options LookupOptions, entity, id string) LookupMatch {
+	t.Helper()
+	matches, err := state.LookupIndexWithOptions(plugin, "default", options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, match := range matches {
+		if match.Entity == entity && match.ID == id {
+			return match
+		}
+	}
+	t.Fatalf("lookup %q %q did not include %s %s: %#v", options.Text, options.Terms, entity, id, matches)
+	return LookupMatch{}
+}
+
 func TestIndexSearchScoresAndFiltersEntities(t *testing.T) {
 	state, err := NewState(t.TempDir())
 	if err != nil {

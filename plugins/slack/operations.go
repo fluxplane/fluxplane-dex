@@ -2,246 +2,197 @@ package slack
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"strings"
 
-	"github.com/fluxplane/fluxplane-dex/plugins/internal/pluginutil"
-	"github.com/fluxplane/fluxplane-dex/protocol"
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 )
 
-type OperationRunner struct {
-	SecretGetter  SecretGetter
+type Service struct {
+	SecretGetter  pluginbinding.SecretGetter
 	ClientFactory ClientFactory
 }
 
-func NewOperationRunner() OperationRunner {
-	return OperationRunner{SecretGetter: defaultSecretGetter, ClientFactory: NewLiveClient}
+func NewService() Service {
+	return Service{ClientFactory: NewLiveClient}
 }
 
-func (r OperationRunner) Run(req protocol.Request, call protocol.OperationCall, cache map[string]pluginutil.SecretMaterial) protocol.OperationResult {
-	if call.ID == "" {
-		call.ID = call.Name
-	}
-	input, err := operationInput(call)
-	if err != nil {
-		return opError(call, "bad_input", err.Error())
-	}
-	switch call.Name {
-	case "slack.index.build":
-		return r.indexBuild(req, call, cache, input)
-	case "slack.message.send", "slack.search", "slack.thread":
-		return opError(call, "not_implemented", call.Name+" requires live Slack client migration")
-	default:
-		return opError(call, "unknown_operation", "unknown Slack operation "+call.Name)
-	}
+type IndexBuildInput = pluginbinding.IndexBuildInput
+
+type LookupInput = pluginbinding.DatasourceLookupInput
+type LookupResult = pluginbinding.DatasourceLookupResult[pluginbinding.LookupMatch[any]]
+
+type MessageSendInput struct {
+	Channel string `json:"channel,omitempty" jsonschema:"required,description=Slack channel ID or name"`
+	Text    string `json:"text,omitempty" jsonschema:"required,description=Message text"`
 }
 
-func (r OperationRunner) indexBuild(req protocol.Request, call protocol.OperationCall, cache map[string]pluginutil.SecretMaterial, input map[string]any) protocol.OperationResult {
+type MessageSendResult struct {
+	Channel string `json:"channel,omitempty"`
+	TS      string `json:"ts,omitempty"`
+	OK      bool   `json:"ok"`
+}
+
+type SearchInput struct {
+	Query string `json:"query,omitempty" jsonschema:"required,description=Slack search query"`
+}
+
+type SearchResult struct {
+	Count    int             `json:"count"`
+	Messages []SearchMessage `json:"messages,omitempty"`
+}
+
+type SearchMessage struct {
+	Channel string `json:"channel,omitempty"`
+	TS      string `json:"ts,omitempty"`
+	User    string `json:"user,omitempty"`
+	Text    string `json:"text,omitempty"`
+}
+
+type ThreadInput struct {
+	Channel string `json:"channel,omitempty" jsonschema:"required,description=Slack channel ID"`
+	TS      string `json:"ts,omitempty" jsonschema:"required,description=Slack message timestamp"`
+}
+
+type ThreadResult struct {
+	Channel  string          `json:"channel,omitempty"`
+	TS       string          `json:"ts,omitempty"`
+	Count    int             `json:"count"`
+	Messages []ThreadMessage `json:"messages,omitempty"`
+}
+
+type ThreadMessage struct {
+	TS   string `json:"ts,omitempty"`
+	User string `json:"user,omitempty"`
+	Text string `json:"text,omitempty"`
+}
+
+func (s Service) IndexBuild(ctx pluginbinding.Context, input IndexBuildInput) (pluginbinding.IndexBuildResult, error) {
+	return s.indexBuild(ctx, pluginbinding.InputMap(input))
+}
+
+func (s Service) Lookup(ctx pluginbinding.Context, input LookupInput) (LookupResult, error) {
+	entity := strings.TrimSpace(input.Entity)
+	var candidates []pluginbinding.LookupCandidate
+	if entity == "" || entity == EntityUser {
+		users, _, err := s.listUsers(ctx)
+		if err != nil {
+			return LookupResult{}, pluginbinding.Errorf("slack", "%s", err)
+		}
+		for _, user := range users {
+			record, ok := normalizeUserRecord(ctx.DatasourceSource(), user)
+			if !ok {
+				continue
+			}
+			candidates = append(candidates, pluginbinding.NewLookupCandidate(ctx.LookupSource(PluginName, DatasourceUsers), record.Entity, record.ID, record, userLookupValues(record)))
+		}
+	}
+	if entity == "" || entity == EntityChannel {
+		channels, _, err := s.listChannels(ctx)
+		if err != nil {
+			return LookupResult{}, pluginbinding.Errorf("slack", "%s", err)
+		}
+		for _, channel := range channels {
+			record, ok := normalizeChannelRecord(ctx.DatasourceSource(), channel)
+			if !ok {
+				continue
+			}
+			candidates = append(candidates, pluginbinding.NewLookupCandidate(ctx.LookupSource(PluginName, DatasourceChannels), record.Entity, record.ID, record, channelLookupValues(record)))
+		}
+	}
+	return pluginbinding.NewDatasourceLookupResultFromCandidates(PluginName, input, candidates), nil
+}
+
+func (s Service) indexBuild(ctx pluginbinding.Context, input map[string]any) (pluginbinding.IndexBuildResult, error) {
 	selector, err := indexBuildSelector(input)
 	if err != nil {
-		return opError(call, "bad_input", err.Error())
+		return pluginbinding.IndexBuildResult{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
-	var indexes []map[string]any
-	if selector.includesIndex("slack.users") {
-		users, source, err := r.listUsers(req, cache)
-		if err != nil {
-			return opError(call, "slack", err.Error())
-		}
-		records := make([]UserRecord, 0, len(users))
-		for _, user := range users {
-			if record, ok := normalizeUserRecord(user); ok {
-				records = append(records, record)
-			}
-		}
-		indexes = append(indexes, map[string]any{"index": "slack.users", "records": records, "count": len(records), "metadata": indexBuildMetadata("slack.user", source, map[string]any{"include_deleted": false, "include_bots": true, "include_app_users": true})})
-	}
-	if selector.includesIndex("slack.channels") {
-		channels, source, err := r.listChannels(req, cache)
-		if err != nil {
-			return opError(call, "slack", err.Error())
-		}
-		records := make([]ChannelRecord, 0, len(channels))
-		for _, channel := range channels {
-			if record, ok := normalizeChannelRecord(channel); ok {
-				records = append(records, record)
-			}
-		}
-		indexes = append(indexes, map[string]any{"index": "slack.channels", "records": records, "count": len(records), "metadata": indexBuildMetadata("slack.channel", source, map[string]any{"types": []string{"public_channel", "private_channel", "mpim", "im"}, "exclude_archived": false})})
-	}
-	firstIndex := ""
-	if len(indexes) > 0 {
-		firstIndex, _ = indexes[0]["index"].(string)
-	}
-	return opOK(call, map[string]any{"index": firstIndex, "indexes": indexes})
+	var userSource string
+	var channelSource string
+	return pluginbinding.RunIndexJobs(ctx, selector, "slack",
+		pluginbinding.NewDynamicIndexJob(DatasourceUsers, EntityUser, OperationIndexBuild, func() ([]User, error) {
+			users, source, err := s.listUsers(ctx)
+			userSource = source
+			return users, err
+		}, normalizeUserRecord, func() map[string]any {
+			return indexBuildMetadata(userSource, map[string]any{"include_deleted": false, "include_bots": true, "include_app_users": true})
+		}),
+		pluginbinding.NewDynamicIndexJob(DatasourceChannels, EntityChannel, OperationIndexBuild, func() ([]Channel, error) {
+			channels, source, err := s.listChannels(ctx)
+			channelSource = source
+			return channels, err
+		}, normalizeChannelRecord, func() map[string]any {
+			return indexBuildMetadata(channelSource, map[string]any{"types": []string{"public_channel", "private_channel", "mpim", "im"}, "exclude_archived": false})
+		}),
+	)
 }
 
-func (r OperationRunner) listUsers(req protocol.Request, cache map[string]pluginutil.SecretMaterial) ([]User, string, error) {
-	client, source, err := r.readClient(req, cache, "user_token")
-	if err == nil {
-		users, listErr := client.ListUsers(context.Background())
-		if listErr == nil {
-			return users, source, nil
-		}
-		if !fallbackableSlackError(listErr) {
-			return nil, source, listErr
-		}
-		err = listErr
-	}
-	return r.listUsersWithBot(req, cache, err)
+func (s Service) listUsers(ctx pluginbinding.Context) ([]User, string, error) {
+	return pluginbinding.ReadWithPreferredSecrets[Client, []User](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) ([]User, error) {
+		return client.ListUsers(context.Background())
+	}, fallbackableSlackError)
 }
 
-func (r OperationRunner) listUsersWithBot(req protocol.Request, cache map[string]pluginutil.SecretMaterial, userErr error) ([]User, string, error) {
-	client, source, err := r.readClient(req, cache, "bot_token")
-	if err != nil {
-		return nil, "", combineReadErrors("users", userErr, err)
-	}
-	users, err := client.ListUsers(context.Background())
-	if err != nil {
-		return nil, source, combineReadErrors("users", userErr, err)
-	}
-	return users, source, nil
+func (s Service) listChannels(ctx pluginbinding.Context) ([]Channel, string, error) {
+	return pluginbinding.ReadWithPreferredSecrets[Client, []Channel](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) ([]Channel, error) {
+		return client.ListChannels(context.Background())
+	}, fallbackableSlackError)
 }
 
-func (r OperationRunner) listChannels(req protocol.Request, cache map[string]pluginutil.SecretMaterial) ([]Channel, string, error) {
-	client, source, err := r.readClient(req, cache, "user_token")
-	if err == nil {
-		channels, listErr := client.ListChannels(context.Background())
-		if listErr == nil {
-			return channels, source, nil
-		}
-		if !fallbackableSlackError(listErr) {
-			return nil, source, listErr
-		}
-		err = listErr
-	}
-	return r.listChannelsWithBot(req, cache, err)
-}
-
-func (r OperationRunner) listChannelsWithBot(req protocol.Request, cache map[string]pluginutil.SecretMaterial, userErr error) ([]Channel, string, error) {
-	client, source, err := r.readClient(req, cache, "bot_token")
-	if err != nil {
-		return nil, "", combineReadErrors("channels", userErr, err)
-	}
-	channels, err := client.ListChannels(context.Background())
-	if err != nil {
-		return nil, source, combineReadErrors("channels", userErr, err)
-	}
-	return channels, source, nil
-}
-
-func (r OperationRunner) readClient(req protocol.Request, cache map[string]pluginutil.SecretMaterial, purpose string) (Client, string, error) {
-	material, ok := optionalSecret(req, purpose, cache, r.SecretGetter)
-	if !ok {
-		return nil, "", fmt.Errorf("%s not available", purpose)
-	}
-	material.Purpose = purpose
-	factory := r.ClientFactory
+func (s Service) client(material pluginbinding.SecretMaterial) (Client, error) {
+	factory := s.ClientFactory
 	if factory == nil {
 		factory = NewLiveClient
 	}
-	client, err := factory(material)
-	if err != nil {
-		return nil, "", err
-	}
-	return client, purpose, nil
+	return factory(material)
 }
 
-func combineReadErrors(kind string, userErr, botErr error) error {
-	if userErr == nil {
-		return fmt.Errorf("read Slack %s with bot_token: %w", kind, botErr)
-	}
-	return fmt.Errorf("read Slack %s failed with user_token (%v) and bot_token (%v)", kind, userErr, botErr)
-}
-
-type indexSelector struct {
-	indexes map[string]bool
-}
-
-func (s indexSelector) includesIndex(index string) bool {
-	if len(s.indexes) == 0 {
-		return true
-	}
-	return s.indexes[index]
-}
-
-func indexBuildSelector(input map[string]any) (indexSelector, error) {
-	values := splitSelectorValues(firstString(input, "index", "indexes"), firstString(input, "entity", "entities"))
-	if len(values) == 0 {
-		return indexSelector{}, nil
-	}
+func indexBuildSelector(input map[string]any) (pluginbinding.IndexSelector, error) {
 	known := map[string]string{
-		"slack.users":    "slack.users",
-		"slack.user":     "slack.users",
-		"user":           "slack.users",
-		"users":          "slack.users",
-		"slack.channels": "slack.channels",
-		"slack.channel":  "slack.channels",
-		"channel":        "slack.channels",
-		"channels":       "slack.channels",
+		DatasourceUsers:    DatasourceUsers,
+		EntityUser:         DatasourceUsers,
+		"user":             DatasourceUsers,
+		"users":            DatasourceUsers,
+		DatasourceChannels: DatasourceChannels,
+		EntityChannel:      DatasourceChannels,
+		"channel":          DatasourceChannels,
+		"channels":         DatasourceChannels,
 	}
-	selector := indexSelector{indexes: map[string]bool{}}
-	for _, value := range values {
-		index, ok := known[value]
-		if !ok {
-			return indexSelector{}, fmt.Errorf("unknown Slack index/entity selector %q", value)
-		}
-		selector.indexes[index] = true
-	}
-	return selector, nil
+	return pluginbinding.NewIndexSelector(input, known, "Slack")
 }
 
-func splitSelectorValues(values ...string) []string {
-	var out []string
-	for _, value := range values {
-		for _, part := range strings.Split(value, ",") {
-			part = strings.ToLower(strings.TrimSpace(part))
-			if part != "" {
-				out = append(out, part)
-			}
-		}
-	}
-	return out
-}
-
-func indexBuildMetadata(entity, source string, extra map[string]any) map[string]any {
-	metadata := map[string]any{
-		"entity":       entity,
-		"source":       "slack.index.build",
-		"fetch_mode":   "all_pages",
-		"token_source": source,
-	}
+func indexBuildMetadata(source string, extra map[string]any) map[string]any {
+	metadata := map[string]any{}
+	metadata["token_source"] = source
 	for key, value := range extra {
 		metadata[key] = value
 	}
 	return metadata
 }
 
-func operationInput(call protocol.OperationCall) (map[string]any, error) {
-	input := map[string]any{}
-	if len(call.Input) == 0 {
-		return input, nil
+func userLookupValues(record UserRecord) map[string]string {
+	return map[string]string{
+		"id":                  record.ID,
+		"title":               record.Title,
+		"links.self":          record.Links["self"],
+		"record.user_id":      record.UserID,
+		"record.name":         record.Name,
+		"record.real_name":    record.RealName,
+		"record.display_name": record.DisplayName,
+		"record.email":        record.Email,
+		"record.web_url":      record.WebURL,
 	}
-	if err := json.Unmarshal(call.Input, &input); err != nil {
-		return nil, fmt.Errorf("decode operation input: %w", err)
-	}
-	return input, nil
 }
 
-func firstString(input map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if value, ok := input[key].(string); ok && strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
+func channelLookupValues(record ChannelRecord) map[string]string {
+	return map[string]string{
+		"id":                record.ID,
+		"title":             record.Title,
+		"links.self":        record.Links["self"],
+		"record.channel_id": record.ChannelID,
+		"record.name":       record.Name,
+		"record.topic":      record.Topic,
+		"record.purpose":    record.Purpose,
+		"record.web_url":    record.WebURL,
 	}
-	return ""
-}
-
-func opOK(call protocol.OperationCall, value any) protocol.OperationResult {
-	raw, _ := json.Marshal(value)
-	return protocol.OperationResult{ID: call.ID, Name: call.Name, OK: true, Result: raw}
-}
-
-func opError(call protocol.OperationCall, code, message string) protocol.OperationResult {
-	return protocol.OperationResult{ID: call.ID, Name: call.Name, OK: false, Error: &protocol.Error{Code: code, Message: message}}
 }

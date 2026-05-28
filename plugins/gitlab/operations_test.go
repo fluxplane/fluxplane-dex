@@ -5,103 +5,84 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/fluxplane/fluxplane-dex/plugins/internal/pluginutil"
-	"github.com/fluxplane/fluxplane-dex/protocol"
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding/plugintest"
 )
 
-func TestOperationRunnerProjectListUsesClient(t *testing.T) {
+func TestServiceProjectListUsesClient(t *testing.T) {
 	client := &fakeClient{
 		projects: []Project{{ID: 1, Name: "dex", PathWithNamespace: "group/dex"}},
 	}
-	runner := testRunner(client, nil)
+	plugin := testPlugin(client, nil)
 
-	result := runner.Run(protocol.Request{Instance: "work"}, callWithInput("gitlab.project.list", map[string]any{
+	out := plugintest.RunOK[pluginbinding.ListResult[Project]](t, plugin, OperationProjectList, map[string]any{
 		"limit":  5,
 		"search": "dex",
-	}), nil)
-	if !result.OK {
-		t.Fatalf("operation failed: %#v", result.Error)
-	}
+	}, plugintest.WithInstance("work"))
 	if client.listOptions.Limit != 5 || client.listOptions.Search != "dex" {
 		t.Fatalf("list options = %#v", client.listOptions)
 	}
-	var out struct {
-		Count    int       `json:"count"`
-		Projects []Project `json:"projects"`
-	}
-	decodeResult(t, result, &out)
-	if out.Count != 1 || out.Projects[0].PathWithNamespace != "group/dex" {
+	if out.Count != 1 || out.Items[0].PathWithNamespace != "group/dex" {
 		t.Fatalf("unexpected output: %#v", out)
 	}
 }
 
-func TestOperationRunnerProjectShowParsesNumericID(t *testing.T) {
+func TestServiceProjectShowParsesNumericID(t *testing.T) {
 	client := &fakeClient{project: Project{ID: 42, Name: "dex"}}
-	runner := testRunner(client, nil)
+	plugin := testPlugin(client, nil)
 
-	result := runner.Run(protocol.Request{Instance: "default"}, callWithInput("gitlab.project.show", map[string]any{"id": "42"}), nil)
-	if !result.OK {
-		t.Fatalf("operation failed: %#v", result.Error)
-	}
+	out := plugintest.RunOK[pluginbinding.ShowResult[Project]](t, plugin, OperationProjectShow, map[string]any{"id": "42"})
 	if client.projectID != int64(42) {
 		t.Fatalf("project id = %#v", client.projectID)
 	}
+	if out.Record.ID != 42 {
+		t.Fatalf("project output = %#v", out)
+	}
 }
 
-func TestOperationRunnerMRShowParsesReference(t *testing.T) {
+func TestServiceMRShowParsesReference(t *testing.T) {
 	client := &fakeClient{mergeRequest: MergeRequest{IID: 7, ProjectID: 42, Title: "Update"}}
-	runner := testRunner(client, nil)
+	plugin := testPlugin(client, nil)
 
-	result := runner.Run(protocol.Request{Instance: "default"}, callWithInput("gitlab.mr.show", map[string]any{"ref": "group/dex!7"}), nil)
-	if !result.OK {
-		t.Fatalf("operation failed: %#v", result.Error)
-	}
+	out := plugintest.RunOK[pluginbinding.ShowResult[MergeRequest]](t, plugin, OperationMRShow, map[string]any{"ref": "group/dex!7"})
 	if client.mrProject != "group/dex" || client.mrIID != 7 {
 		t.Fatalf("mr lookup = %#v ! %d", client.mrProject, client.mrIID)
 	}
+	if out.Record.IID != 7 || out.Metadata["ref"] != "group/dex!7" {
+		t.Fatalf("mr output = %#v", out)
+	}
 }
 
-func TestOperationRunnerMRListUsesProjectPathAndOptions(t *testing.T) {
+func TestServiceMRListUsesProjectPathAndOptions(t *testing.T) {
 	client := &fakeClient{
 		mergeRequests: []MergeRequest{{IID: 11, ProjectID: 42, Title: "Ship"}},
 	}
-	runner := testRunner(client, nil)
+	plugin := testPlugin(client, nil)
 
-	result := runner.Run(protocol.Request{Instance: "default"}, callWithInput("gitlab.mr.list", map[string]any{
+	out := plugintest.RunOK[pluginbinding.ListResult[MergeRequest]](t, plugin, OperationMRList, map[string]any{
 		"project":  "group/dex",
 		"state":    "merged",
 		"search":   "ship",
 		"limit":    7,
 		"order_by": "created_at",
 		"sort":     "asc",
-	}), nil)
-	if !result.OK {
-		t.Fatalf("operation failed: %#v", result.Error)
-	}
+	})
 	if client.mrListOptions.Project != "group/dex" || client.mrListOptions.State != "merged" || client.mrListOptions.Search != "ship" {
 		t.Fatalf("mr list options = %#v", client.mrListOptions)
 	}
 	if client.mrListOptions.Limit != 7 || client.mrListOptions.OrderBy != "created_at" || client.mrListOptions.Sort != "asc" {
 		t.Fatalf("mr list options = %#v", client.mrListOptions)
 	}
-	var out struct {
-		Count         int            `json:"count"`
-		MergeRequests []MergeRequest `json:"merge_requests"`
-	}
-	decodeResult(t, result, &out)
-	if out.Count != 1 || out.MergeRequests[0].IID != 11 {
+	if out.Count != 1 || out.Items[0].IID != 11 {
 		t.Fatalf("unexpected output: %#v", out)
 	}
 }
 
-func TestOperationRunnerMRListDefaultsAndNumericProject(t *testing.T) {
+func TestServiceMRListDefaultsAndNumericProject(t *testing.T) {
 	client := &fakeClient{}
-	runner := testRunner(client, nil)
+	plugin := testPlugin(client, nil)
 
-	result := runner.Run(protocol.Request{Instance: "default"}, callWithInput("gitlab.mr.list", map[string]any{"project": "42"}), nil)
-	if !result.OK {
-		t.Fatalf("operation failed: %#v", result.Error)
-	}
+	plugintest.RunOK[pluginbinding.ListResult[MergeRequest]](t, plugin, OperationMRList, map[string]any{"project": "42"})
 	if client.mrListOptions.Project != "42" || client.mrListOptions.State != "opened" || client.mrListOptions.Limit != 20 {
 		t.Fatalf("mr list defaults = %#v", client.mrListOptions)
 	}
@@ -110,7 +91,7 @@ func TestOperationRunnerMRListDefaultsAndNumericProject(t *testing.T) {
 	}
 }
 
-func TestOperationRunnerIndexBuildReturnsNormalizedRecords(t *testing.T) {
+func TestServiceIndexBuildReturnsNormalizedRecords(t *testing.T) {
 	client := &fakeClient{
 		projects: []Project{{ID: 1, Name: "dex", PathWithNamespace: "group/dex", WebURL: "https://gitlab.example.com/group/dex"}},
 		users:    []User{{ID: 9, Username: "timo", Name: "Timo", WebURL: "https://gitlab.example.com/timo", State: "active"}},
@@ -120,23 +101,21 @@ func TestOperationRunnerIndexBuildReturnsNormalizedRecords(t *testing.T) {
 			ID: 5, IID: 6, ProjectID: 1, Title: "Ship", WebURL: "https://gitlab.example.com/group/dex/-/merge_requests/6", Reference: "group/dex!6",
 		}},
 	}
-	runner := testRunner(client, nil)
+	plugin := testPlugin(client, nil)
 
-	result := runner.Run(protocol.Request{Instance: "default"}, callWithInput("gitlab.index.build", map[string]any{}), nil)
-	if !result.OK {
-		t.Fatalf("operation failed: %#v", result.Error)
-	}
-	var out struct {
+	out := plugintest.RunOK[struct {
 		Index   string          `json:"index"`
 		Records []ProjectRecord `json:"records"`
 		Indexes []struct {
 			Index   string            `json:"index"`
 			Records []json.RawMessage `json:"records"`
 		} `json:"indexes"`
-	}
-	decodeResult(t, result, &out)
+	}](t, plugin, OperationIndexBuild, map[string]any{})
 	if out.Index != "gitlab.projects" || len(out.Records) != 1 || out.Records[0].Entity != "gitlab.project" {
 		t.Fatalf("unexpected index output: %#v", out)
+	}
+	if out.Records[0].Source.Plugin != PluginName || out.Records[0].Source.Instance != "default" || out.Records[0].Links["self"] != "https://gitlab.example.com/group/dex" {
+		t.Fatalf("unexpected record source/links: %#v", out.Records[0])
 	}
 	if len(out.Indexes) != 5 || out.Indexes[0].Index != "gitlab.projects" || out.Indexes[1].Index != "gitlab.users" || out.Indexes[2].Index != "gitlab.groups" || out.Indexes[3].Index != "gitlab.issues" || out.Indexes[4].Index != "gitlab.merge_requests" {
 		t.Fatalf("unexpected multi-index output: %#v", out.Indexes)
@@ -161,23 +140,18 @@ func TestOperationRunnerIndexBuildReturnsNormalizedRecords(t *testing.T) {
 	}
 }
 
-func TestOperationRunnerIndexBuildCanTargetOneIndex(t *testing.T) {
+func TestServiceIndexBuildCanTargetOneIndex(t *testing.T) {
 	client := &fakeClient{
 		groups: []Group{{ID: 2, Name: "group", FullPath: "group", WebURL: "https://gitlab.example.com/group"}},
 	}
-	runner := testRunner(client, nil)
+	plugin := testPlugin(client, nil)
 
-	result := runner.Run(protocol.Request{Instance: "default"}, callWithInput("gitlab.index.build", map[string]any{"entity": "gitlab.group"}), nil)
-	if !result.OK {
-		t.Fatalf("operation failed: %#v", result.Error)
-	}
-	var out struct {
+	out := plugintest.RunOK[struct {
 		Indexes []struct {
 			Index   string            `json:"index"`
 			Records []json.RawMessage `json:"records"`
 		} `json:"indexes"`
-	}
-	decodeResult(t, result, &out)
+	}](t, plugin, OperationIndexBuild, map[string]any{"entity": "gitlab.group"})
 	if len(out.Indexes) != 1 || out.Indexes[0].Index != "gitlab.groups" || len(out.Indexes[0].Records) != 1 {
 		t.Fatalf("unexpected targeted index output: %#v", out.Indexes)
 	}
@@ -186,54 +160,79 @@ func TestOperationRunnerIndexBuildCanTargetOneIndex(t *testing.T) {
 	}
 }
 
-func TestOperationRunnerBuildsClientFromResolvedSecrets(t *testing.T) {
+func TestServiceLookupUsesSharedDatasourceShape(t *testing.T) {
+	client := &fakeClient{
+		project:       Project{ID: 1, Name: "dex", NameWithNamespace: "group / dex", PathWithNamespace: "group/dex", WebURL: "https://gitlab.example.com/group/dex"},
+		users:         []User{{ID: 9, Username: "timo", Name: "Timo Friedl", WebURL: "https://gitlab.example.com/timo"}},
+		mergeRequest:  MergeRequest{ID: 5, IID: 6, ProjectID: 1, Title: "Ship", WebURL: "https://gitlab.example.com/group/dex/-/merge_requests/6", Reference: "group/dex!6"},
+		mergeRequests: []MergeRequest{{ID: 7, IID: 8, ProjectID: 1, Title: "Timo change", WebURL: "https://gitlab.example.com/group/dex/-/merge_requests/8", Reference: "group/dex!8"}},
+	}
+	plugin := testPlugin(client, nil)
+
+	out := plugintest.DatasourceLookupOK[LookupResult](t, plugin, map[string]any{"text": "look at https://gitlab.example.com/group/dex/-/merge_requests/6 with timo", "limit": 10}, plugintest.WithInstance("work"))
+	if out.Source != PluginName || out.Count < 3 {
+		t.Fatalf("lookup output = %#v", out)
+	}
+	if out.Matches[0].Entity != EntityMergeRequest || out.Matches[0].ID != "group/dex!6" {
+		t.Fatalf("first match = %#v", out.Matches[0])
+	}
+	if out.Matches[0].Source.Plugin != PluginName || out.Matches[0].Source.Instance != "work" || out.Matches[0].Source.Index != DatasourceMergeRequests {
+		t.Fatalf("lookup source = %#v", out.Matches[0].Source)
+	}
+	if client.mrProject != "group/dex" || client.mrIID != 6 {
+		t.Fatalf("mr lookup = %#v ! %d", client.mrProject, client.mrIID)
+	}
+}
+
+func TestServiceLookupCanFilterEntity(t *testing.T) {
+	client := &fakeClient{
+		projects: []Project{{ID: 1, Name: "timo", PathWithNamespace: "group/timo", WebURL: "https://gitlab.example.com/group/timo"}},
+		users:    []User{{ID: 9, Username: "timo", Name: "Timo Friedl", WebURL: "https://gitlab.example.com/timo"}},
+	}
+	plugin := testPlugin(client, nil)
+
+	out := plugintest.DatasourceLookupOK[LookupResult](t, plugin, map[string]any{"text": "timo", "entity": EntityUser})
+	if out.Count != 1 || out.Matches[0].Entity != EntityUser || out.Matches[0].ID != "timo" {
+		t.Fatalf("lookup output = %#v", out)
+	}
+	if client.listOptions.Search != "" {
+		t.Fatalf("entity-filtered lookup should not fetch projects: %#v", client.listOptions)
+	}
+}
+
+func TestServiceBuildsClientFromResolvedSecrets(t *testing.T) {
 	client := &fakeClient{user: User{ID: 9, Username: "timo"}}
 	var captured SecretSet
-	runner := OperationRunner{
-		SecretGetter: func(_ protocol.Request, purpose string, _ map[string]pluginutil.SecretMaterial) (pluginutil.SecretMaterial, error) {
+	plugin := NewPluginWithService(Service{
+		SecretGetter: func(_ pluginbinding.Context, purpose string) (pluginbinding.SecretMaterial, error) {
 			switch purpose {
 			case "access_token":
-				return pluginutil.SecretMaterial{Value: "token", Source: "store"}, nil
+				return pluginbinding.SecretMaterial{Value: "token", Source: "store"}, nil
 			case "gitlab_url":
-				return pluginutil.SecretMaterial{Kind: "config", Value: "https://gitlab.example.com", Source: "store"}, nil
+				return pluginbinding.SecretMaterial{Kind: "config", Value: "https://gitlab.example.com", Source: "store"}, nil
 			default:
-				return pluginutil.SecretMaterial{}, errors.New("unexpected purpose")
+				return pluginbinding.SecretMaterial{}, errors.New("unexpected purpose")
 			}
 		},
 		ClientFactory: func(secrets SecretSet) (Client, error) {
 			captured = secrets
 			return client, nil
 		},
-	}
+	})
 
-	result := runner.Run(protocol.Request{Instance: "work"}, protocol.OperationCall{Name: "gitlab.auth.test"}, nil)
-	if !result.OK {
-		t.Fatalf("operation failed: %#v", result.Error)
-	}
+	plugintest.RunOK[AuthTestResult](t, plugin, OperationAuthTest, map[string]any{}, plugintest.WithInstance("work"))
 	if captured.AccessToken.Value != "token" || captured.GitLabURL.Value != "https://gitlab.example.com" {
 		t.Fatalf("captured secrets = %#v", captured)
 	}
 }
 
-func testRunner(client Client, get SecretGetter) OperationRunner {
+func testPlugin(client Client, get pluginbinding.SecretGetter) *pluginbinding.Plugin {
 	if get == nil {
-		get = func(_ protocol.Request, purpose string, _ map[string]pluginutil.SecretMaterial) (pluginutil.SecretMaterial, error) {
-			return pluginutil.SecretMaterial{Value: purpose}, nil
+		get = func(_ pluginbinding.Context, purpose string) (pluginbinding.SecretMaterial, error) {
+			return pluginbinding.SecretMaterial{Value: purpose}, nil
 		}
 	}
-	return OperationRunner{SecretGetter: get, ClientFactory: func(SecretSet) (Client, error) { return client, nil }}
-}
-
-func callWithInput(name string, input map[string]any) protocol.OperationCall {
-	raw, _ := json.Marshal(input)
-	return protocol.OperationCall{Name: name, Input: raw}
-}
-
-func decodeResult(t *testing.T, result protocol.OperationResult, target any) {
-	t.Helper()
-	if err := json.Unmarshal(result.Result, target); err != nil {
-		t.Fatal(err)
-	}
+	return NewPluginWithService(Service{SecretGetter: get, ClientFactory: func(SecretSet) (Client, error) { return client, nil }})
 }
 
 type fakeClient struct {

@@ -6,12 +6,12 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/fluxplane/fluxplane-dex/plugins/internal/pluginutil"
-	"github.com/fluxplane/fluxplane-dex/protocol"
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding/plugintest"
 	slackapi "github.com/slack-go/slack"
 )
 
-func TestOperationRunnerIndexBuildUsesUserTokenFirst(t *testing.T) {
+func TestServiceIndexBuildUsesUserTokenFirst(t *testing.T) {
 	factory := &capturingFactory{
 		clients: map[string]*fakeClient{
 			"user_token": {
@@ -20,31 +20,33 @@ func TestOperationRunnerIndexBuildUsesUserTokenFirst(t *testing.T) {
 			},
 		},
 	}
-	runner := testRunner(factory, nil)
+	plugin := testPlugin(factory, nil)
 
-	result := runner.Run(protocol.Request{Instance: "default"}, callWithInput("slack.index.build", map[string]any{}), nil)
-	if !result.OK {
-		t.Fatalf("operation failed: %#v", result.Error)
-	}
-	var out struct {
+	out := plugintest.RunOK[struct {
 		Indexes []struct {
 			Index   string            `json:"index"`
 			Records []json.RawMessage `json:"records"`
 		} `json:"indexes"`
-	}
-	decodeResult(t, result, &out)
+	}](t, plugin, OperationIndexBuild, map[string]any{})
 	if len(out.Indexes) != 2 || out.Indexes[0].Index != "slack.users" || out.Indexes[1].Index != "slack.channels" {
 		t.Fatalf("indexes = %#v", out.Indexes)
 	}
 	if len(out.Indexes[0].Records) != 1 || len(out.Indexes[1].Records) != 1 {
 		t.Fatalf("records = %#v", out.Indexes)
 	}
+	var userRecord UserRecord
+	if err := json.Unmarshal(out.Indexes[0].Records[0], &userRecord); err != nil {
+		t.Fatal(err)
+	}
+	if userRecord.Source.Plugin != PluginName || userRecord.Source.Instance != "default" || userRecord.Links["self"] != "slack://user/U1" {
+		t.Fatalf("unexpected user record source/links: %#v", userRecord)
+	}
 	if factory.created["bot_token"] != 0 {
 		t.Fatalf("bot token should not be used: %#v", factory.created)
 	}
 }
 
-func TestOperationRunnerIndexBuildFallsBackToBotToken(t *testing.T) {
+func TestServiceIndexBuildFallsBackToBotToken(t *testing.T) {
 	factory := &capturingFactory{
 		clients: map[string]*fakeClient{
 			"user_token": {usersErr: slackapi.SlackErrorResponse{Err: "missing_scope"}, channelsErr: slackapi.SlackErrorResponse{Err: "missing_scope"}},
@@ -54,19 +56,14 @@ func TestOperationRunnerIndexBuildFallsBackToBotToken(t *testing.T) {
 			},
 		},
 	}
-	runner := testRunner(factory, nil)
+	plugin := testPlugin(factory, nil)
 
-	result := runner.Run(protocol.Request{Instance: "default"}, callWithInput("slack.index.build", map[string]any{}), nil)
-	if !result.OK {
-		t.Fatalf("operation failed: %#v", result.Error)
-	}
-	var out struct {
+	out := plugintest.RunOK[struct {
 		Indexes []struct {
 			Index   string            `json:"index"`
 			Records []json.RawMessage `json:"records"`
 		} `json:"indexes"`
-	}
-	decodeResult(t, result, &out)
+	}](t, plugin, OperationIndexBuild, map[string]any{})
 	if factory.created["user_token"] == 0 || factory.created["bot_token"] == 0 {
 		t.Fatalf("expected user then bot token: %#v", factory.created)
 	}
@@ -75,66 +72,55 @@ func TestOperationRunnerIndexBuildFallsBackToBotToken(t *testing.T) {
 	}
 }
 
-func TestOperationRunnerIndexBuildFallsBackWhenUserTokenMissing(t *testing.T) {
+func TestServiceIndexBuildFallsBackWhenUserTokenMissing(t *testing.T) {
 	factory := &capturingFactory{
 		clients: map[string]*fakeClient{
 			"bot_token": {users: []User{{ID: "U1", Name: "timo"}}},
 		},
 	}
-	get := func(_ protocol.Request, purpose string, _ map[string]pluginutil.SecretMaterial) (pluginutil.SecretMaterial, error) {
+	get := func(_ pluginbinding.Context, purpose string) (pluginbinding.SecretMaterial, error) {
 		if purpose == "user_token" {
-			return pluginutil.SecretMaterial{}, errors.New("missing user token")
+			return pluginbinding.SecretMaterial{}, errors.New("missing user token")
 		}
-		return pluginutil.SecretMaterial{Purpose: purpose, Value: purpose}, nil
+		return pluginbinding.SecretMaterial{Purpose: purpose, Value: purpose}, nil
 	}
-	runner := testRunner(factory, get)
+	plugin := testPlugin(factory, get)
 
-	result := runner.Run(protocol.Request{Instance: "default"}, callWithInput("slack.index.build", map[string]any{"entity": "slack.user"}), nil)
-	if !result.OK {
-		t.Fatalf("operation failed: %#v", result.Error)
-	}
+	plugintest.RunOK[map[string]any](t, plugin, OperationIndexBuild, map[string]any{"entity": "slack.user"})
 	if factory.created["bot_token"] != 1 {
 		t.Fatalf("expected bot token fallback: %#v", factory.created)
 	}
 }
 
-func TestOperationRunnerIndexBuildDoesNotFallbackOnNetworkError(t *testing.T) {
+func TestServiceIndexBuildDoesNotFallbackOnNetworkError(t *testing.T) {
 	factory := &capturingFactory{
 		clients: map[string]*fakeClient{
 			"user_token": {usersErr: errors.New("network down")},
 			"bot_token":  {users: []User{{ID: "U1"}}},
 		},
 	}
-	runner := testRunner(factory, nil)
+	plugin := testPlugin(factory, nil)
 
-	result := runner.Run(protocol.Request{Instance: "default"}, callWithInput("slack.index.build", map[string]any{"entity": "slack.user"}), nil)
-	if result.OK {
-		t.Fatalf("expected failure")
-	}
+	plugintest.RunError(t, plugin, OperationIndexBuild, map[string]any{"entity": "slack.user"})
 	if factory.created["bot_token"] != 0 {
 		t.Fatalf("bot token should not be used for non-auth error: %#v", factory.created)
 	}
 }
 
-func TestOperationRunnerIndexBuildCanTargetOneIndex(t *testing.T) {
+func TestServiceIndexBuildCanTargetOneIndex(t *testing.T) {
 	factory := &capturingFactory{
 		clients: map[string]*fakeClient{
 			"user_token": {channels: []Channel{{ID: "C1", Name: "general", IsChannel: true}}},
 		},
 	}
-	runner := testRunner(factory, nil)
+	plugin := testPlugin(factory, nil)
 
-	result := runner.Run(protocol.Request{Instance: "default"}, callWithInput("slack.index.build", map[string]any{"index": "slack.channels"}), nil)
-	if !result.OK {
-		t.Fatalf("operation failed: %#v", result.Error)
-	}
-	var out struct {
+	out := plugintest.RunOK[struct {
 		Indexes []struct {
 			Index   string            `json:"index"`
 			Records []json.RawMessage `json:"records"`
 		} `json:"indexes"`
-	}
-	decodeResult(t, result, &out)
+	}](t, plugin, OperationIndexBuild, map[string]any{"index": "slack.channels"})
 	if len(out.Indexes) != 1 || out.Indexes[0].Index != "slack.channels" || len(out.Indexes[0].Records) != 1 {
 		t.Fatalf("targeted output = %#v", out.Indexes)
 	}
@@ -143,25 +129,59 @@ func TestOperationRunnerIndexBuildCanTargetOneIndex(t *testing.T) {
 	}
 }
 
-func testRunner(factory *capturingFactory, get SecretGetter) OperationRunner {
+func TestServiceLookupUsersAndChannels(t *testing.T) {
+	factory := &capturingFactory{
+		clients: map[string]*fakeClient{
+			"user_token": {
+				users:    []User{{ID: "U1", Name: "timo", RealName: "Timo Friedl", DisplayName: "Timo"}},
+				channels: []Channel{{ID: "C1", Name: "engineering", IsChannel: true}},
+			},
+		},
+	}
+	plugin := testPlugin(factory, nil)
+
+	out := plugintest.DatasourceLookupOK[LookupResult](t, plugin, map[string]any{"text": "ask #engineering and timo", "limit": 10}, plugintest.WithInstance("work"))
+	if out.Source != PluginName || out.Count != 2 {
+		t.Fatalf("lookup output = %#v", out)
+	}
+	if out.Matches[0].Source.Plugin != PluginName || out.Matches[0].Source.Instance != "work" {
+		t.Fatalf("lookup source = %#v", out.Matches[0].Source)
+	}
+	if out.Matches[0].Entity != EntityChannel || out.Matches[0].ID != "C1" {
+		t.Fatalf("first match = %#v", out.Matches[0])
+	}
+	if out.Matches[1].Entity != EntityUser || out.Matches[1].ID != "U1" {
+		t.Fatalf("second match = %#v", out.Matches[1])
+	}
+}
+
+func TestServiceLookupCanFilterEntity(t *testing.T) {
+	factory := &capturingFactory{
+		clients: map[string]*fakeClient{
+			"user_token": {
+				users:    []User{{ID: "U1", Name: "timo"}},
+				channels: []Channel{{ID: "C1", Name: "timo"}},
+			},
+		},
+	}
+	plugin := testPlugin(factory, nil)
+
+	out := plugintest.DatasourceLookupOK[LookupResult](t, plugin, map[string]any{"text": "timo", "entity": EntityUser})
+	if out.Count != 1 || out.Matches[0].Entity != EntityUser || out.Matches[0].ID != "U1" {
+		t.Fatalf("lookup output = %#v", out)
+	}
+	if factory.clients["user_token"].channelsCalls != 0 {
+		t.Fatalf("entity-filtered lookup should not fetch channels")
+	}
+}
+
+func testPlugin(factory *capturingFactory, get pluginbinding.SecretGetter) *pluginbinding.Plugin {
 	if get == nil {
-		get = func(_ protocol.Request, purpose string, _ map[string]pluginutil.SecretMaterial) (pluginutil.SecretMaterial, error) {
-			return pluginutil.SecretMaterial{Purpose: purpose, Value: purpose}, nil
+		get = func(_ pluginbinding.Context, purpose string) (pluginbinding.SecretMaterial, error) {
+			return pluginbinding.SecretMaterial{Purpose: purpose, Value: purpose}, nil
 		}
 	}
-	return OperationRunner{SecretGetter: get, ClientFactory: factory.newClient}
-}
-
-func callWithInput(name string, input map[string]any) protocol.OperationCall {
-	raw, _ := json.Marshal(input)
-	return protocol.OperationCall{Name: name, Input: raw}
-}
-
-func decodeResult(t *testing.T, result protocol.OperationResult, target any) {
-	t.Helper()
-	if err := json.Unmarshal(result.Result, target); err != nil {
-		t.Fatal(err)
-	}
+	return NewPluginWithService(Service{SecretGetter: get, ClientFactory: factory.newClient})
 }
 
 type capturingFactory struct {
@@ -169,7 +189,7 @@ type capturingFactory struct {
 	created map[string]int
 }
 
-func (f *capturingFactory) newClient(material pluginutil.SecretMaterial) (Client, error) {
+func (f *capturingFactory) newClient(material pluginbinding.SecretMaterial) (Client, error) {
 	if f.created == nil {
 		f.created = map[string]int{}
 	}

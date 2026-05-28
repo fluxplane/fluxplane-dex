@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/fluxplane/fluxplane-dex/plugins/internal/pluginutil"
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	slackapi "github.com/slack-go/slack"
 )
 
@@ -15,9 +15,9 @@ type Client interface {
 	ListChannels(context.Context) ([]Channel, error)
 }
 
-type ClientFactory func(pluginutil.SecretMaterial) (Client, error)
+type ClientFactory func(pluginbinding.SecretMaterial) (Client, error)
 
-func NewLiveClient(material pluginutil.SecretMaterial) (Client, error) {
+func NewLiveClient(material pluginbinding.SecretMaterial) (Client, error) {
 	token := strings.TrimSpace(material.Value)
 	if token == "" {
 		return nil, fmt.Errorf("%s is empty", material.Purpose)

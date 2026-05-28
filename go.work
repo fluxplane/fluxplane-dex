@@ -1,0 +1,12 @@
+go 1.26
+
+use (
+	.
+	./plugins/duckduckgo
+	./plugins/gitlab
+	./plugins/slack
+	./plugins/system
+	./plugins/tavily
+)
+
+replace github.com/fluxplane/fluxplane-dex v0.1.0 => .

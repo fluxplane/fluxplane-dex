@@ -1,6 +1,10 @@
 package slack
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
+)
 
 type User struct {
 	ID          string `json:"id"`
@@ -16,8 +20,7 @@ type User struct {
 }
 
 type UserRecord struct {
-	Entity      string `json:"entity"`
-	ID          string `json:"id"`
+	pluginbinding.DatasourceRecord
 	Title       string `json:"title,omitempty"`
 	UserID      string `json:"user_id"`
 	Name        string `json:"name,omitempty"`
@@ -49,8 +52,7 @@ type Channel struct {
 }
 
 type ChannelRecord struct {
-	Entity      string `json:"entity"`
-	ID          string `json:"id"`
+	pluginbinding.DatasourceRecord
 	Title       string `json:"title,omitempty"`
 	ChannelID   string `json:"channel_id"`
 	Name        string `json:"name,omitempty"`
@@ -74,50 +76,56 @@ type IndexOptions struct {
 	Entity string `json:"entity,omitempty"`
 }
 
-func normalizeUserRecord(user User) (UserRecord, bool) {
+const (
+	slackUserURLPrefix    = "slack://user/"
+	slackChannelURLPrefix = "slack://channel/"
+)
+
+func normalizeUserRecord(source pluginbinding.DatasourceSource, user User) (UserRecord, bool) {
 	if strings.TrimSpace(user.ID) == "" || user.Deleted {
 		return UserRecord{}, false
 	}
+	webURL := slackUserURLPrefix + user.ID
+	title := userTitle(user)
 	return UserRecord{
-		Entity:      "slack.user",
-		ID:          user.ID,
-		Title:       userTitle(user),
-		UserID:      user.ID,
-		Name:        user.Name,
-		RealName:    user.RealName,
-		DisplayName: user.DisplayName,
-		Email:       user.Email,
-		TeamID:      user.TeamID,
-		TZ:          user.TZ,
-		IsBot:       user.IsBot,
-		IsAppUser:   user.IsAppUser,
-		WebURL:      "slack://user/" + user.ID,
+		DatasourceRecord: pluginbinding.NewDatasourceRecord(source, EntityUser, user.ID, pluginbinding.RecordTitle(title), pluginbinding.RecordLink("self", webURL)),
+		Title:            title,
+		UserID:           user.ID,
+		Name:             user.Name,
+		RealName:         user.RealName,
+		DisplayName:      user.DisplayName,
+		Email:            user.Email,
+		TeamID:           user.TeamID,
+		TZ:               user.TZ,
+		IsBot:            user.IsBot,
+		IsAppUser:        user.IsAppUser,
+		WebURL:           webURL,
 	}, true
 }
 
-func normalizeChannelRecord(channel Channel) (ChannelRecord, bool) {
+func normalizeChannelRecord(source pluginbinding.DatasourceSource, channel Channel) (ChannelRecord, bool) {
 	if strings.TrimSpace(channel.ID) == "" {
 		return ChannelRecord{}, false
 	}
+	webURL := slackChannelURLPrefix + channel.ID
 	return ChannelRecord{
-		Entity:      "slack.channel",
-		ID:          channel.ID,
-		Title:       channel.Name,
-		ChannelID:   channel.ID,
-		Name:        channel.Name,
-		IsChannel:   channel.IsChannel,
-		IsGroup:     channel.IsGroup,
-		IsPrivate:   channel.IsPrivate,
-		IsArchived:  channel.IsArchived,
-		IsIM:        channel.IsIM,
-		IsMPIM:      channel.IsMPIM,
-		IsMember:    channel.IsMember,
-		NumMembers:  channel.NumMembers,
-		User:        channel.User,
-		Topic:       channel.Topic,
-		Purpose:     channel.Purpose,
-		ContextTeam: channel.ContextTeam,
-		WebURL:      "slack://channel/" + channel.ID,
+		DatasourceRecord: pluginbinding.NewDatasourceRecord(source, EntityChannel, channel.ID, pluginbinding.RecordTitle(channel.Name), pluginbinding.RecordLink("self", webURL)),
+		Title:            channel.Name,
+		ChannelID:        channel.ID,
+		Name:             channel.Name,
+		IsChannel:        channel.IsChannel,
+		IsGroup:          channel.IsGroup,
+		IsPrivate:        channel.IsPrivate,
+		IsArchived:       channel.IsArchived,
+		IsIM:             channel.IsIM,
+		IsMPIM:           channel.IsMPIM,
+		IsMember:         channel.IsMember,
+		NumMembers:       channel.NumMembers,
+		User:             channel.User,
+		Topic:            channel.Topic,
+		Purpose:          channel.Purpose,
+		ContextTeam:      channel.ContextTeam,
+		WebURL:           webURL,
 	}, true
 }
 

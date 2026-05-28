@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 )
 
 type IndexSnapshot struct {
@@ -33,12 +35,7 @@ type IndexRecord struct {
 	Record        json.RawMessage   `json:"record"`
 }
 
-type IndexOrigin struct {
-	Source   string `json:"source,omitempty"`
-	Plugin   string `json:"plugin,omitempty"`
-	Instance string `json:"instance,omitempty"`
-	Index    string `json:"index,omitempty"`
-}
+type IndexOrigin = pluginbinding.LookupSource
 
 type IndexStatus struct {
 	Plugin    string             `json:"plugin"`
@@ -69,14 +66,7 @@ type LookupOptions struct {
 	Entity string
 }
 
-type LookupMatch struct {
-	Source        IndexOrigin `json:"source"`
-	Entity        string      `json:"entity,omitempty"`
-	ID            string      `json:"id"`
-	Score         int         `json:"score,omitempty"`
-	MatchedFields []string    `json:"matched_fields,omitempty"`
-	Record        IndexRecord `json:"record"`
-}
+type LookupMatch = pluginbinding.LookupMatch[IndexRecord]
 
 func (s State) IndexDir() string {
 	return filepath.Join(s.Home, "indexes")
@@ -450,6 +440,10 @@ func relationshipLinks(record IndexRecord, object map[string]any) map[string]str
 		if author := firstRecordString(object, "author_username"); author != "" {
 			links["author_entity"] = entityRef("gitlab.user", author)
 		}
+	case "slack.channel":
+		if user := firstRecordString(object, "user"); user != "" {
+			links["user_entity"] = entityRef("slack.user", user)
+		}
 	}
 	return links
 }
@@ -570,7 +564,7 @@ func lookupTerms(options LookupOptions) []string {
 		add(text)
 		hasURL := strings.Contains(text, "://")
 		for _, token := range strings.Fields(text) {
-			token = strings.Trim(token, " \t\n\r\"'()[]{}<>.,;:")
+			token = strings.Trim(token, " \t\n\r\"'()[]{}<>.,;:#!")
 			if hasURL && !strings.Contains(token, "://") {
 				continue
 			}
@@ -584,7 +578,7 @@ func lookupTerms(options LookupOptions) []string {
 
 func lookupStopword(token string) bool {
 	switch token {
-	case "look", "lookup", "find", "open", "see", "the", "for", "from", "this", "that", "please":
+	case "look", "lookup", "find", "open", "see", "the", "for", "from", "this", "that", "please", "at", "in", "to", "and", "with":
 		return true
 	default:
 		return false
@@ -633,7 +627,7 @@ func lookupRecordScore(record IndexRecord, text string, terms []string) (int, []
 	}
 	var object map[string]any
 	_ = json.Unmarshal(record.Record, &object)
-	for _, key := range []string{"username", "name", "display_name", "name_with_namespace", "path_with_namespace", "full_name", "full_path", "reference", "author_username", "web_url", "email", "state"} {
+	for _, key := range []string{"username", "name", "display_name", "name_with_namespace", "path_with_namespace", "full_name", "full_path", "reference", "author_username", "web_url", "email", "state", "user_id", "channel_id"} {
 		add("record."+key, firstRecordString(object, key), 950)
 	}
 	return score, fields

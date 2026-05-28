@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fluxplane/fluxplane-dex/core"
@@ -36,6 +37,51 @@ func TestPluginMarketplaceJSON(t *testing.T) {
 	}
 	if !bytes.Contains(out.Bytes(), []byte(`"name": "gitlab"`)) {
 		t.Fatalf("marketplace output missing gitlab:\n%s", out.String())
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"name": "system"`)) {
+		t.Fatalf("marketplace output missing system:\n%s", out.String())
+	}
+}
+
+func TestSystemInfoCommandFiltersCategories(t *testing.T) {
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "--dev-plugin", "system=../../plugins/system", "sys", "info", "--category", "os", "--category", "time", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Categories []string       `json:"categories"`
+		System     map[string]any `json:"system"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Categories) != 2 || result.Categories[0] != "os" || result.Categories[1] != "time" {
+		t.Fatalf("categories = %#v", result.Categories)
+	}
+	if _, ok := result.System["cpu"]; ok {
+		t.Fatalf("unexpected cpu category in %#v", result.System)
+	}
+}
+
+func TestWebsearchCommandSurfacesOperationFailure(t *testing.T) {
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "websearch", "search", "fluxplane dex", "--provider", "missing-provider", "-o", "json"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected websearch command to fail, output:\n%s", out.String())
+	}
+	if !strings.Contains(err.Error(), `web search provider "missing-provider" is not available`) {
+		t.Fatalf("error = %q", err.Error())
+	}
+	if strings.TrimSpace(out.String()) == "{}" {
+		t.Fatalf("failure rendered empty object")
 	}
 }
 
@@ -455,6 +501,16 @@ func main() {
 					Plugin string `json:"plugin"`
 					Index  string `json:"index"`
 				} `json:"source"`
+				Record struct {
+					Entity string            `json:"entity"`
+					ID     string            `json:"id"`
+					URL    string            `json:"url"`
+					Links  map[string]string `json:"links"`
+					Origin struct {
+						Plugin string `json:"plugin"`
+						Index  string `json:"index"`
+					} `json:"origin"`
+				} `json:"record"`
 			} `json:"matches"`
 		} `json:"results"`
 	}
@@ -467,6 +523,12 @@ func main() {
 	}
 	if lookupGitLab.Matches[0].Source.Plugin != "gitlab" || lookupGitLab.Matches[0].Source.Index != "gitlab.projects" {
 		t.Fatalf("lookup source = %#v", lookupGitLab.Matches[0].Source)
+	}
+	if lookupGitLab.Matches[0].Record.Entity != "gitlab.project" || lookupGitLab.Matches[0].Record.ID != "sbf/manager-v2" || lookupGitLab.Matches[0].Record.URL == "" || lookupGitLab.Matches[0].Record.Links["self"] == "" {
+		t.Fatalf("lookup standardized record = %#v", lookupGitLab.Matches[0].Record)
+	}
+	if lookupGitLab.Matches[0].Record.Origin.Plugin != "gitlab" || lookupGitLab.Matches[0].Record.Origin.Index != "gitlab.projects" {
+		t.Fatalf("lookup record origin = %#v", lookupGitLab.Matches[0].Record.Origin)
 	}
 }
 
@@ -655,6 +717,14 @@ func main() {
 				Source struct {
 					Index string `json:"index"`
 				} `json:"source"`
+				Record struct {
+					Entity string            `json:"entity"`
+					ID     string            `json:"id"`
+					Links  map[string]string `json:"links"`
+					Origin struct {
+						Plugin string `json:"plugin"`
+					} `json:"origin"`
+				} `json:"record"`
 			} `json:"matches"`
 		} `json:"results"`
 	}
@@ -664,6 +734,9 @@ func main() {
 	slack := lookupResult.Results["slack"]
 	if slack.Count != 1 || slack.Matches[0].ID != "U123" || slack.Matches[0].Source.Index != "slack.users" {
 		t.Fatalf("lookup result = %#v", slack)
+	}
+	if slack.Matches[0].Record.Entity != "slack.user" || slack.Matches[0].Record.ID != "U123" || slack.Matches[0].Record.Links["self"] != "slack://user/U123" || slack.Matches[0].Record.Origin.Plugin != "slack" {
+		t.Fatalf("lookup standardized record = %#v", slack.Matches[0].Record)
 	}
 }
 

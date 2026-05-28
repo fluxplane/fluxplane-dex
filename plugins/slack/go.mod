@@ -3,10 +3,15 @@ module github.com/fluxplane/fluxplane-dex/plugins/slack
 go 1.26
 
 require (
-	github.com/fluxplane/fluxplane-dex v0.0.0
+	github.com/fluxplane/fluxplane-dex v0.1.0
 	github.com/slack-go/slack v0.24.0
 )
 
-require github.com/gorilla/websocket v1.5.3 // indirect
-
-replace github.com/fluxplane/fluxplane-dex => ../..
+require (
+	github.com/bahlo/generic-list-go v0.2.0 // indirect
+	github.com/buger/jsonparser v1.1.2 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/invopop/jsonschema v0.14.0 // indirect
+	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
+	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
+)

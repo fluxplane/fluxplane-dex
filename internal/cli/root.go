@@ -76,6 +76,8 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newIndexCommand(opts))
 	root.AddCommand(newGitLabCommand(opts))
 	root.AddCommand(newSlackCommand(opts))
+	root.AddCommand(newSystemCommand(opts))
+	root.AddCommand(newWebsearchCommand(opts))
 	root.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
@@ -719,6 +721,82 @@ func newSlackCommand(opts *options) *cobra.Command {
 	return cmd
 }
 
+func newSystemCommand(opts *options) *cobra.Command {
+	cmd := &cobra.Command{Use: "sys", Aliases: []string{"system"}, Short: "Local system information"}
+	infoOpts := struct {
+		categories []string
+		include    []string
+		exclude    []string
+	}{}
+	info := &cobra.Command{
+		Use:   "info",
+		Short: "Show local system information",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			input := map[string]any{}
+			if len(infoOpts.categories) > 0 {
+				input["categories"] = infoOpts.categories
+			}
+			if len(infoOpts.include) > 0 {
+				input["include"] = infoOpts.include
+			}
+			if len(infoOpts.exclude) > 0 {
+				input["exclude"] = infoOpts.exclude
+			}
+			return callOperation(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), "system.info", input)
+		},
+	}
+	info.Flags().StringArrayVar(&infoOpts.categories, "category", nil, "Category to include")
+	info.Flags().StringArrayVar(&infoOpts.include, "include", nil, "Category to include")
+	info.Flags().StringArrayVar(&infoOpts.exclude, "exclude", nil, "Category to exclude")
+	cmd.AddCommand(info)
+	return cmd
+}
+
+func newWebsearchCommand(opts *options) *cobra.Command {
+	cmd := &cobra.Command{Use: "websearch", Aliases: []string{"web"}, Short: "Search the web through provider plugins"}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "providers",
+		Short: "List web search providers",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			return callOperation(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), "websearch.provider.list", map[string]any{})
+		},
+	})
+	searchOpts := struct {
+		providers []string
+		max       int
+	}{max: 10}
+	search := &cobra.Command{
+		Use:   "search QUERY",
+		Short: "Search the web",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			input := map[string]any{"query": strings.Join(args, " "), "max": searchOpts.max}
+			if len(searchOpts.providers) > 0 {
+				input["providers"] = searchOpts.providers
+			}
+			return callOperation(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), "websearch.search", input)
+		},
+	}
+	search.Flags().StringArrayVar(&searchOpts.providers, "provider", nil, "Provider to use")
+	search.Flags().IntVar(&searchOpts.max, "max", 10, "Maximum results per provider")
+	cmd.AddCommand(search)
+	return cmd
+}
+
 func (o *options) runner() (runtime.Runner, error) {
 	var marketplace runtime.Marketplace
 	var err error
@@ -855,6 +933,9 @@ func datasourceCapableAvailablePlugins(ctx context.Context, runner runtime.Runne
 }
 
 func pluginAvailable(runner runtime.Runner, plugin, instance string) (bool, error) {
+	if entry, ok := runner.Marketplace.Resolve(plugin); ok && (entry.Metadata["kind"] == "builtin" || entry.Metadata["builtin"] == "true") {
+		return true, nil
+	}
 	installed, err := runner.State.IsPluginInstalled(plugin)
 	if err != nil {
 		return false, err
@@ -919,6 +1000,12 @@ func callOperation(ctx context.Context, out io.Writer, output string, runner run
 	resp, err := runner.InvokeInstance(ctx, plugin, instance, protocol.CommandOperationsCall, protocol.OperationCall{Name: name, Input: inputRaw})
 	if err != nil {
 		return err
+	}
+	if !resp.OK {
+		if resp.Error != nil {
+			return fmt.Errorf("%s", resp.Error.Message)
+		}
+		return fmt.Errorf("operation %s failed", name)
 	}
 	return render(out, output, resp.Result)
 }

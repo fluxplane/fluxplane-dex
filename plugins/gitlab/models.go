@@ -1,5 +1,7 @@
 package gitlab
 
+import "github.com/fluxplane/fluxplane-dex/core/pluginbinding"
+
 type User struct {
 	ID       int64  `json:"id"`
 	Username string `json:"username,omitempty"`
@@ -10,8 +12,7 @@ type User struct {
 }
 
 type UserRecord struct {
-	Entity   string `json:"entity"`
-	ID       string `json:"id"`
+	pluginbinding.DatasourceRecord
 	UserID   int64  `json:"user_id"`
 	Username string `json:"username,omitempty"`
 	Name     string `json:"name,omitempty"`
@@ -34,8 +35,7 @@ type Group struct {
 }
 
 type GroupRecord struct {
-	Entity      string `json:"entity"`
-	ID          string `json:"id"`
+	pluginbinding.DatasourceRecord
 	GroupID     int64  `json:"group_id"`
 	Name        string `json:"name,omitempty"`
 	FullName    string `json:"full_name,omitempty"`
@@ -66,8 +66,7 @@ type Project struct {
 }
 
 type ProjectRecord struct {
-	Entity            string   `json:"entity"`
-	ID                string   `json:"id"`
+	pluginbinding.DatasourceRecord
 	ProjectID         int64    `json:"project_id"`
 	Name              string   `json:"name,omitempty"`
 	NameWithNamespace string   `json:"name_with_namespace,omitempty"`
@@ -96,8 +95,7 @@ type Issue struct {
 }
 
 type IssueRecord struct {
-	Entity         string   `json:"entity"`
-	ID             string   `json:"id"`
+	pluginbinding.DatasourceRecord
 	IssueID        int64    `json:"issue_id"`
 	IID            int64    `json:"iid"`
 	ProjectID      int64    `json:"project_id"`
@@ -129,8 +127,7 @@ type MergeRequest struct {
 }
 
 type MergeRequestRecord struct {
-	Entity         string   `json:"entity"`
-	ID             string   `json:"id"`
+	pluginbinding.DatasourceRecord
 	MergeRequestID int64    `json:"merge_request_id"`
 	IID            int64    `json:"iid"`
 	ProjectID      int64    `json:"project_id"`
@@ -193,14 +190,13 @@ type IssueListOptions struct {
 	Sort    string `json:"sort,omitempty"`
 }
 
-func normalizeProjectRecord(project Project) ProjectRecord {
+func normalizeProjectRecord(source pluginbinding.DatasourceSource, project Project) ProjectRecord {
 	id := project.PathWithNamespace
 	if id == "" {
 		id = project.WebURL
 	}
 	return ProjectRecord{
-		Entity:            "gitlab.project",
-		ID:                id,
+		DatasourceRecord:  pluginbinding.NewDatasourceRecord(source, EntityProject, id, pluginbinding.RecordTitle(project.NameWithNamespace), pluginbinding.RecordLink("self", project.WebURL)),
 		ProjectID:         project.ID,
 		Name:              project.Name,
 		NameWithNamespace: project.NameWithNamespace,
@@ -214,86 +210,82 @@ func normalizeProjectRecord(project Project) ProjectRecord {
 	}
 }
 
-func normalizeGroupRecord(group Group) GroupRecord {
+func normalizeGroupRecord(source pluginbinding.DatasourceSource, group Group) GroupRecord {
 	id := group.FullPath
 	if id == "" {
 		id = group.WebURL
 	}
 	return GroupRecord{
-		Entity:      "gitlab.group",
-		ID:          id,
-		GroupID:     group.ID,
-		Name:        group.Name,
-		FullName:    group.FullName,
-		FullPath:    group.FullPath,
-		Description: group.Description,
-		Visibility:  group.Visibility,
-		WebURL:      group.WebURL,
-		ParentID:    group.ParentID,
-		CreatedAt:   group.CreatedAt,
+		DatasourceRecord: pluginbinding.NewDatasourceRecord(source, EntityGroup, id, pluginbinding.RecordTitle(group.FullName), pluginbinding.RecordLink("self", group.WebURL)),
+		GroupID:          group.ID,
+		Name:             group.Name,
+		FullName:         group.FullName,
+		FullPath:         group.FullPath,
+		Description:      group.Description,
+		Visibility:       group.Visibility,
+		WebURL:           group.WebURL,
+		ParentID:         group.ParentID,
+		CreatedAt:        group.CreatedAt,
 	}
 }
 
-func normalizeUserRecord(user User) UserRecord {
+func normalizeUserRecord(source pluginbinding.DatasourceSource, user User) UserRecord {
 	id := user.Username
 	if id == "" {
 		id = user.WebURL
 	}
 	return UserRecord{
-		Entity:   "gitlab.user",
-		ID:       id,
-		UserID:   user.ID,
-		Username: user.Username,
-		Name:     user.Name,
-		Email:    user.Email,
-		State:    user.State,
-		WebURL:   user.WebURL,
+		DatasourceRecord: pluginbinding.NewDatasourceRecord(source, EntityUser, id, pluginbinding.RecordTitle(user.Name), pluginbinding.RecordLink("self", user.WebURL)),
+		UserID:           user.ID,
+		Username:         user.Username,
+		Name:             user.Name,
+		Email:            user.Email,
+		State:            user.State,
+		WebURL:           user.WebURL,
 	}
 }
 
-func normalizeIssueRecord(issue Issue) IssueRecord {
+func normalizeIssueRecord(source pluginbinding.DatasourceSource, issue Issue) IssueRecord {
 	id := issue.Reference
 	if id == "" {
 		id = issue.WebURL
 	}
 	return IssueRecord{
-		Entity:         "gitlab.issue",
-		ID:             id,
-		IssueID:        issue.ID,
-		IID:            issue.IID,
-		ProjectID:      issue.ProjectID,
-		Title:          issue.Title,
-		State:          issue.State,
-		WebURL:         issue.WebURL,
-		AuthorUsername: issue.AuthorUsername,
-		Labels:         issue.Labels,
-		Reference:      issue.Reference,
-		CreatedAt:      issue.CreatedAt,
-		UpdatedAt:      issue.UpdatedAt,
+		DatasourceRecord: pluginbinding.NewDatasourceRecord(source, EntityIssue, id, pluginbinding.RecordTitle(issue.Title), pluginbinding.RecordLink("self", issue.WebURL)),
+		IssueID:          issue.ID,
+		IID:              issue.IID,
+		ProjectID:        issue.ProjectID,
+		Title:            issue.Title,
+		State:            issue.State,
+		WebURL:           issue.WebURL,
+		AuthorUsername:   issue.AuthorUsername,
+		Labels:           issue.Labels,
+		Reference:        issue.Reference,
+		CreatedAt:        issue.CreatedAt,
+		UpdatedAt:        issue.UpdatedAt,
 	}
 }
 
-func normalizeMergeRequestRecord(mr MergeRequest) MergeRequestRecord {
+func normalizeMergeRequestRecord(source pluginbinding.DatasourceSource, mr MergeRequest) MergeRequestRecord {
 	id := mr.Reference
 	if id == "" {
 		id = mr.WebURL
 	}
 	return MergeRequestRecord{
-		Entity:         "gitlab.merge_request",
-		ID:             id,
-		MergeRequestID: mr.ID,
-		IID:            mr.IID,
-		ProjectID:      mr.ProjectID,
-		Title:          mr.Title,
-		State:          mr.State,
-		SourceBranch:   mr.SourceBranch,
-		TargetBranch:   mr.TargetBranch,
-		WebURL:         mr.WebURL,
-		AuthorUsername: mr.AuthorUsername,
-		Labels:         mr.Labels,
-		Reference:      mr.Reference,
-		Draft:          mr.Draft,
-		CreatedAt:      mr.CreatedAt,
-		UpdatedAt:      mr.UpdatedAt,
+		DatasourceRecord: pluginbinding.NewDatasourceRecord(source, EntityMergeRequest, id, pluginbinding.RecordTitle(mr.Title), pluginbinding.RecordLink("self", mr.WebURL)),
+		MergeRequestID:   mr.ID,
+		IID:              mr.IID,
+		ProjectID:        mr.ProjectID,
+		Title:            mr.Title,
+		State:            mr.State,
+		SourceBranch:     mr.SourceBranch,
+		TargetBranch:     mr.TargetBranch,
+		WebURL:           mr.WebURL,
+		AuthorUsername:   mr.AuthorUsername,
+		Labels:           mr.Labels,
+		Reference:        mr.Reference,
+		Draft:            mr.Draft,
+		CreatedAt:        mr.CreatedAt,
+		UpdatedAt:        mr.UpdatedAt,
 	}
 }

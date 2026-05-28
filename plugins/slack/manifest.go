@@ -1,40 +1,95 @@
 package slack
 
-import "github.com/fluxplane/fluxplane-dex/core"
+import (
+	"github.com/fluxplane/fluxplane-dex/core"
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
+)
 
-const PluginName = "slack"
+const (
+	PluginName        = "slack"
+	PluginVersion     = "0.1.0"
+	PluginDescription = "Slack messaging, search, thread, unread, and reverse lookup operations."
+
+	AuthMethodTokenSet = "token_set"
+	AuthPurposeBot     = "bot_token"
+	AuthPurposeUser    = "user_token"
+	AuthPurposeApp     = "app_token"
+
+	EnvSlackBotToken  = "SLACK_BOT_TOKEN"
+	EnvSlackUserToken = "SLACK_USER_TOKEN"
+	EnvSlackAppToken  = "SLACK_APP_TOKEN"
+
+	OperationIndexBuild  = "slack.index.build"
+	OperationMessageSend = "slack.message.send"
+	OperationSearch      = "slack.search"
+	OperationThread      = "slack.thread"
+
+	DatasourceChannels = "slack.channels"
+	DatasourceUsers    = "slack.users"
+
+	EntityChannel = "slack.channel"
+	EntityUser    = "slack.user"
+
+	ContextName = "slack.context"
+)
 
 func Manifest() core.PluginManifest {
-	return core.PluginManifest{
+	return pluginbinding.Manifest(manifestSpec())
+}
+
+func manifestSpec() pluginbinding.ManifestSpec {
+	return pluginbinding.ManifestSpec{
 		Name:        PluginName,
-		Version:     "0.1.0",
-		Description: "Slack messaging, search, thread, unread, and reverse lookup operations.",
-		Aliases:     []string{"slack"},
-		Auth: []core.AuthMethod{{
-			Name:        "bot_token",
-			Kind:        "bearer_token",
-			Description: "Slack tokens resolved by dex secret broker.",
-			Env:         []string{"SLACK_BOT_TOKEN", "SLACK_USER_TOKEN", "SLACK_APP_TOKEN"},
-			Fields: []core.AuthField{
-				{Name: "bot_token", Required: true, Sensitive: true, Secret: true, Description: "Slack bot token", Env: []string{"SLACK_BOT_TOKEN"}},
-				{Name: "user_token", Required: true, Sensitive: true, Secret: true, Description: "Slack user token", Env: []string{"SLACK_USER_TOKEN"}},
-				{Name: "app_token", Required: false, Sensitive: true, Secret: true, Description: "Slack app token", Env: []string{"SLACK_APP_TOKEN"}},
-			},
-		}},
-		Operations: []core.OperationSpec{
-			{Name: "slack.index.build", Description: "Build Slack channel and user indexes.", ReadOnly: true, SecretPurposes: []string{"user_token", "bot_token"}},
-			{Name: "slack.message.send", Description: "Send a Slack message.", SecretPurposes: []string{"bot_token"}},
-			{Name: "slack.search", Description: "Search Slack.", ReadOnly: true, SecretPurposes: []string{"user_token", "bot_token"}},
-			{Name: "slack.thread", Description: "View a Slack thread.", ReadOnly: true, SecretPurposes: []string{"user_token", "bot_token"}},
+		Version:     PluginVersion,
+		Description: PluginDescription,
+		Aliases:     []string{PluginName},
+		Auth: []core.AuthMethod{pluginbinding.BearerAuth(
+			AuthMethodTokenSet,
+			"Slack tokens resolved by dex secret broker.",
+			pluginbinding.AuthField(AuthPurposeBot, "Slack bot token", true, true, EnvSlackBotToken),
+			pluginbinding.AuthField(AuthPurposeUser, "Slack user token", true, true, EnvSlackUserToken),
+			pluginbinding.AuthField(AuthPurposeApp, "Slack app token", false, true, EnvSlackAppToken),
+		)},
+		Operations: operationSpecs(),
+		IndexedDatasources: []pluginbinding.IndexedDatasourceSpec{
+			pluginbinding.IndexedDatasource(DatasourceChannels, EntityChannel, "Slack channels.", "Slack channel reverse lookup index.", pluginbinding.SearchableIndexCapabilities()...),
+			pluginbinding.IndexedDatasource(DatasourceUsers, EntityUser, "Slack users.", "Slack user reverse lookup index.", pluginbinding.SearchableIndexCapabilities()...),
 		},
-		Datasources: []core.DatasourceSpec{
-			{Name: "slack.channels", Entity: "slack.channel", Description: "Slack channels.", Capabilities: []string{"search", "lookup", "get", "index"}},
-			{Name: "slack.users", Entity: "slack.user", Description: "Slack users.", Capabilities: []string{"search", "lookup", "get", "index"}},
-		},
-		Context: []core.ContextSpec{{Name: "slack.context", Description: "Slack context blocks.", Kinds: []string{"text", "reference"}}},
-		Indexes: []core.IndexSpec{
-			{Name: "slack.users", Description: "Slack user reverse lookup index.", Entities: []string{"slack.user"}},
-			{Name: "slack.channels", Description: "Slack channel reverse lookup index.", Entities: []string{"slack.channel"}},
+		Context: []core.ContextSpec{
+			pluginbinding.ContextSpec(ContextName, "Slack context blocks.", pluginbinding.ContextKindText, pluginbinding.ContextKindReference),
 		},
 	}
+}
+
+func operationSpecs() []core.OperationSpec {
+	return []core.OperationSpec{
+		indexBuildSpec(),
+		messageSendSpec(),
+		searchSpec(),
+		threadSpec(),
+	}
+}
+
+func indexBuildSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[IndexBuildInput, pluginbinding.IndexBuildResult](OperationIndexBuild, "Build Slack channel and user indexes.", pluginbinding.ReadOnly(), pluginbinding.SecretPurposes(AuthPurposeUser, AuthPurposeBot))
+}
+
+func messageSendSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[MessageSendInput, MessageSendResult](OperationMessageSend, "Send a Slack message.", pluginbinding.SecretPurposes(AuthPurposeBot))
+}
+
+func searchSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[SearchInput, SearchResult](OperationSearch, "Search Slack.", pluginbinding.ReadOnly(), pluginbinding.SecretPurposes(AuthPurposeUser, AuthPurposeBot))
+}
+
+func threadSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[ThreadInput, ThreadResult](OperationThread, "View a Slack thread.", pluginbinding.ReadOnly(), pluginbinding.SecretPurposes(AuthPurposeUser, AuthPurposeBot))
+}
+
+func slackUsersLookupSpec() core.DatasourceSpec {
+	return pluginbinding.TypedDatasourceSpec[LookupInput, LookupResult](DatasourceUsers, EntityUser, "Lookup Slack users.", []string{pluginbinding.CapabilityLookup}, pluginbinding.DatasourceSecretPurposes(AuthPurposeUser, AuthPurposeBot))
+}
+
+func slackChannelsLookupSpec() core.DatasourceSpec {
+	return pluginbinding.TypedDatasourceSpec[LookupInput, LookupResult](DatasourceChannels, EntityChannel, "Lookup Slack channels.", []string{pluginbinding.CapabilityLookup}, pluginbinding.DatasourceSecretPurposes(AuthPurposeUser, AuthPurposeBot))
 }

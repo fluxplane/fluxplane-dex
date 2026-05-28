@@ -94,6 +94,13 @@ func TestPluginManifestIncludesGeneratedInputSchema(t *testing.T) {
 	if err := json.Unmarshal(manifest.Operations[0].Input, &schema); err != nil {
 		t.Fatal(err)
 	}
+	var raw map[string]any
+	if err := json.Unmarshal(manifest.Operations[0].Input, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["$schema"]; ok {
+		t.Fatalf("schema should be normalized without draft marker: %#v", raw)
+	}
 	if schema.Type != "object" || len(schema.Required) != 1 || schema.Required[0] != "name" {
 		t.Fatalf("schema required = %#v", schema)
 	}

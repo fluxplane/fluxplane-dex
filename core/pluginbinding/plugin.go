@@ -4,24 +4,27 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/protocol"
+	"github.com/invopop/jsonschema"
 )
 
 type Plugin struct {
 	manifest        core.PluginManifest
 	operations      map[string]operation
+	datasources     map[string][]datasourceHandler
 	commandHandlers map[string]CommandHandler
+	secretGetter    SecretGetter
 }
 
 type Context struct {
 	Request protocol.Request
 	Call    protocol.OperationCall
 	Cache   *Cache
+	plugin  *Plugin
 }
 
 type Cache struct {
@@ -31,6 +34,7 @@ type Cache struct {
 type CommandHandler func(Context) protocol.Response
 
 type OperationHandler[I any, O any] func(Context, I) (O, error)
+type DatasourceHandler[I any, O any] func(Context, I) (O, error)
 
 type TextResult struct {
 	Text    string `json:"text,omitempty"`
@@ -48,16 +52,28 @@ type operation interface {
 	Run(Context) protocol.OperationResult
 }
 
+type datasourceHandler interface {
+	Spec() core.DatasourceSpec
+	Run(Context) protocol.Response
+}
+
 type typedOperation[I any, O any] struct {
 	spec    core.OperationSpec
 	handler OperationHandler[I, O]
+}
+
+type typedDatasource[I any, O any] struct {
+	spec    core.DatasourceSpec
+	handler DatasourceHandler[I, O]
 }
 
 func New(manifest core.PluginManifest) *Plugin {
 	return &Plugin{
 		manifest:        manifest,
 		operations:      map[string]operation{},
+		datasources:     map[string][]datasourceHandler{},
 		commandHandlers: map[string]CommandHandler{},
+		secretGetter:    DefaultSecretGetter,
 	}
 }
 
@@ -82,11 +98,44 @@ func Operation[I any, O any](plugin *Plugin, spec core.OperationSpec, handler Op
 	plugin.upsertOperation(spec)
 }
 
+func DatasourceHandlerFor[I any, O any](plugin *Plugin, spec core.DatasourceSpec, capability string, handler DatasourceHandler[I, O]) {
+	if plugin == nil {
+		return
+	}
+	if strings.TrimSpace(spec.Name) == "" {
+		panic("pluginbinding: datasource name is required")
+	}
+	if strings.TrimSpace(capability) == "" {
+		panic("pluginbinding: datasource capability is required")
+	}
+	if len(spec.Input) == 0 {
+		spec.Input = MustSchemaFor[I]()
+	}
+	if len(spec.Output) == 0 {
+		spec.Output = MustSchemaFor[O]()
+	}
+	spec.Capabilities = ensureString(spec.Capabilities, capability)
+	plugin.datasources[capability] = append(plugin.datasources[capability], typedDatasource[I, O]{spec: spec, handler: handler})
+	plugin.upsertDatasource(spec)
+}
+
 func (p *Plugin) Command(command string, handler CommandHandler) {
 	if p == nil || strings.TrimSpace(command) == "" || handler == nil {
 		return
 	}
 	p.commandHandlers[command] = handler
+}
+
+func (p *Plugin) WithSecretGetter(getter SecretGetter) *Plugin {
+	if p == nil {
+		return p
+	}
+	if getter == nil {
+		p.secretGetter = DefaultSecretGetter
+	} else {
+		p.secretGetter = getter
+	}
+	return p
 }
 
 func (p *Plugin) AuthConnectText(text string) {
@@ -124,7 +173,7 @@ func (p *Plugin) Handle(req protocol.Request) protocol.Response {
 		return protocol.Fail("plugin_error", "plugin is nil")
 	}
 	cache := NewCache()
-	ctx := Context{Request: req, Cache: cache}
+	ctx := Context{Request: req, Cache: cache, plugin: p}
 	if handler := p.commandHandlers[req.Command]; handler != nil {
 		return handler(ctx)
 	}
@@ -146,11 +195,11 @@ func (p *Plugin) Handle(req protocol.Request) protocol.Response {
 	case protocol.CommandDatasourcesList:
 		return protocol.OK(p.Manifest().Datasources)
 	case protocol.CommandDatasourcesSearch:
-		return protocol.Fail("not_implemented", p.manifest.Name+" datasource live search requires host index integration")
+		return p.runDatasource(ctx, CapabilitySearch)
 	case protocol.CommandDatasourcesGet:
-		return protocol.Fail("not_implemented", p.manifest.Name+" datasource get requires host index integration")
+		return p.runDatasource(ctx, CapabilityGet)
 	case protocol.CommandDatasourcesLookup:
-		return protocol.Fail("not_implemented", p.manifest.Name+" datasource lookup requires host index integration")
+		return p.runDatasource(ctx, CapabilityLookup)
 	case protocol.CommandContextBuild:
 		return OKData(map[string]any{"blocks": []core.ContextBlock{}})
 	case protocol.CommandEndpointsDiscover:
@@ -163,6 +212,7 @@ func (p *Plugin) Handle(req protocol.Request) protocol.Response {
 func (p *Plugin) Manifest() core.PluginManifest {
 	manifest := p.manifest
 	manifest.Operations = append([]core.OperationSpec(nil), manifest.Operations...)
+	manifest.Datasources = append([]core.DatasourceSpec(nil), manifest.Datasources...)
 	return manifest
 }
 
@@ -203,7 +253,7 @@ func (p *Plugin) runOperation(req protocol.Request, call protocol.OperationCall,
 	if op == nil {
 		return OperationError(call, "unknown_operation", "unknown operation "+call.Name)
 	}
-	return op.Run(Context{Request: req, Call: call, Cache: cache})
+	return op.Run(Context{Request: req, Call: call, Cache: cache, plugin: p})
 }
 
 func (p *Plugin) RunOperation(req protocol.Request, call protocol.OperationCall, cache *Cache) protocol.OperationResult {
@@ -221,6 +271,28 @@ func (p *Plugin) upsertOperation(spec core.OperationSpec) {
 		}
 	}
 	p.manifest.Operations = append(p.manifest.Operations, spec)
+}
+
+func (p *Plugin) upsertDatasource(spec core.DatasourceSpec) {
+	for i := range p.manifest.Datasources {
+		if p.manifest.Datasources[i].Name == spec.Name {
+			p.manifest.Datasources[i] = mergeDatasourceSpec(p.manifest.Datasources[i], spec)
+			return
+		}
+	}
+	p.manifest.Datasources = append(p.manifest.Datasources, spec)
+}
+
+func (p *Plugin) runDatasource(ctx Context, capability string) protocol.Response {
+	handlers := p.datasources[capability]
+	if len(handlers) == 0 {
+		return protocol.Fail("not_implemented", p.manifest.Name+" datasource "+capability+" requires host index integration")
+	}
+	handler, err := selectDatasourceHandler(ctx.Request.Payload, handlers)
+	if err != nil {
+		return protocol.Fail("bad_payload", err.Error())
+	}
+	return handler.Run(ctx)
 }
 
 func (op typedOperation[I, O]) Spec() core.OperationSpec {
@@ -247,6 +319,26 @@ func (op typedOperation[I, O]) Run(ctx Context) protocol.OperationResult {
 	return protocol.OperationResult{ID: ctx.Call.ID, Name: ctx.Call.Name, OK: true, Result: raw}
 }
 
+func (ds typedDatasource[I, O]) Spec() core.DatasourceSpec {
+	return ds.spec
+}
+
+func (ds typedDatasource[I, O]) Run(ctx Context) protocol.Response {
+	input, err := DecodePayload[I](ctx.Request.Payload)
+	if err != nil {
+		return protocol.Fail("bad_payload", err.Error())
+	}
+	out, err := ds.handler(ctx, input)
+	if err != nil {
+		var pluginErr Error
+		if errors.As(err, &pluginErr) {
+			return protocol.Fail(pluginErr.Code, pluginErr.Message)
+		}
+		return protocol.Fail("plugin_error", err.Error())
+	}
+	return protocol.OK(out)
+}
+
 func DecodeCallInput[T any](call protocol.OperationCall) (T, error) {
 	var input T
 	if len(call.Input) == 0 {
@@ -254,6 +346,17 @@ func DecodeCallInput[T any](call protocol.OperationCall) (T, error) {
 	}
 	if err := json.Unmarshal(call.Input, &input); err != nil {
 		return input, fmt.Errorf("decode operation input: %w", err)
+	}
+	return input, nil
+}
+
+func DecodePayload[T any](raw json.RawMessage) (T, error) {
+	var input T
+	if len(raw) == 0 {
+		return input, nil
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return input, fmt.Errorf("decode payload: %w", err)
 	}
 	return input, nil
 }
@@ -311,113 +414,55 @@ func MustSchemaFor[T any]() json.RawMessage {
 
 func SchemaFor[T any]() (json.RawMessage, error) {
 	var zero T
-	schema := schemaForType(reflect.TypeOf(zero))
+	schema := schemaReflector().Reflect(zero)
 	raw, err := json.Marshal(schema)
 	if err != nil {
 		return nil, err
 	}
-	return raw, nil
+	return normalizeSchema(raw)
 }
 
-func schemaForType(typ reflect.Type) map[string]any {
-	if typ == nil {
-		return map[string]any{}
+func schemaReflector() *jsonschema.Reflector {
+	return &jsonschema.Reflector{
+		Anonymous:                  true,
+		DoNotReference:             true,
+		ExpandedStruct:             true,
+		RequiredFromJSONSchemaTags: false,
 	}
-	for typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
+}
+
+func normalizeSchema(raw json.RawMessage) (json.RawMessage, error) {
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, err
 	}
-	switch typ.Kind() {
-	case reflect.Struct:
-		return structSchema(typ)
-	case reflect.String:
-		return map[string]any{"type": "string"}
-	case reflect.Bool:
-		return map[string]any{"type": "boolean"}
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
-		return map[string]any{"type": "number"}
-	case reflect.Slice, reflect.Array:
-		return map[string]any{"type": "array", "items": schemaForType(typ.Elem())}
-	case reflect.Map:
-		return map[string]any{"type": "object"}
+	value = normalizeSchemaValue(value)
+	return json.Marshal(value)
+}
+
+func normalizeSchemaValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		delete(typed, "$schema")
+		for key, child := range typed {
+			typed[key] = normalizeSchemaValue(child)
+		}
+		if required, ok := typed["required"].([]any); ok {
+			sort.Slice(required, func(i, j int) bool {
+				left, _ := required[i].(string)
+				right, _ := required[j].(string)
+				return left < right
+			})
+		}
+		return typed
+	case []any:
+		for i, child := range typed {
+			typed[i] = normalizeSchemaValue(child)
+		}
+		return typed
 	default:
-		return map[string]any{}
+		return value
 	}
-}
-
-func structSchema(typ reflect.Type) map[string]any {
-	properties := map[string]any{}
-	var required []string
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
-		if field.PkgPath != "" {
-			continue
-		}
-		name, optional, ok := jsonFieldName(field)
-		if !ok {
-			continue
-		}
-		fieldSchema := schemaForType(field.Type)
-		tags := parseSchemaTag(field.Tag.Get("jsonschema"))
-		if description := tags["description"]; description != "" {
-			fieldSchema["description"] = description
-		}
-		if enum := tags["enum"]; enum != "" {
-			fieldSchema["enum"] = strings.Split(enum, "|")
-		}
-		properties[name] = fieldSchema
-		if _, forced := tags["required"]; forced || !optional {
-			required = append(required, name)
-		}
-	}
-	out := map[string]any{
-		"type":                 "object",
-		"properties":           properties,
-		"additionalProperties": false,
-	}
-	if len(required) > 0 {
-		sort.Strings(required)
-		out["required"] = required
-	}
-	return out
-}
-
-func jsonFieldName(field reflect.StructField) (string, bool, bool) {
-	tag := field.Tag.Get("json")
-	if tag == "-" {
-		return "", false, false
-	}
-	if tag == "" {
-		return field.Name, false, true
-	}
-	parts := strings.Split(tag, ",")
-	name := parts[0]
-	if name == "" {
-		name = field.Name
-	}
-	optional := false
-	for _, part := range parts[1:] {
-		if part == "omitempty" {
-			optional = true
-		}
-	}
-	return name, optional, true
-}
-
-func parseSchemaTag(tag string) map[string]string {
-	out := map[string]string{}
-	for _, part := range strings.Split(tag, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		key, value, ok := strings.Cut(part, "=")
-		if !ok {
-			out[part] = "true"
-			continue
-		}
-		out[strings.TrimSpace(key)] = strings.TrimSpace(value)
-	}
-	return out
 }
 
 func mergeOperationSpec(base, generated core.OperationSpec) core.OperationSpec {
@@ -439,6 +484,78 @@ func mergeOperationSpec(base, generated core.OperationSpec) core.OperationSpec {
 		base.SecretPurposes = generated.SecretPurposes
 	}
 	return base
+}
+
+func mergeDatasourceSpec(base, generated core.DatasourceSpec) core.DatasourceSpec {
+	base.Name = firstNonEmpty(base.Name, generated.Name)
+	base.Entity = firstNonEmpty(base.Entity, generated.Entity)
+	base.Description = firstNonEmpty(base.Description, generated.Description)
+	base.Capabilities = mergeStrings(base.Capabilities, generated.Capabilities)
+	if len(base.SecretPurposes) == 0 {
+		base.SecretPurposes = generated.SecretPurposes
+	}
+	if len(base.Input) == 0 {
+		base.Input = generated.Input
+	}
+	if len(base.Output) == 0 {
+		base.Output = generated.Output
+	}
+	return base
+}
+
+func selectDatasourceHandler(payload json.RawMessage, handlers []datasourceHandler) (datasourceHandler, error) {
+	if len(handlers) == 0 {
+		return nil, fmt.Errorf("no datasource handler")
+	}
+	entity, err := payloadStringField(payload, "entity")
+	if err != nil {
+		return nil, err
+	}
+	if entity == "" {
+		return handlers[0], nil
+	}
+	for _, handler := range handlers {
+		if handler.Spec().Entity == entity {
+			return handler, nil
+		}
+	}
+	return nil, fmt.Errorf("datasource does not expose entity %q", entity)
+}
+
+func payloadStringField(payload json.RawMessage, field string) (string, error) {
+	if len(payload) == 0 {
+		return "", nil
+	}
+	var object map[string]any
+	if err := json.Unmarshal(payload, &object); err != nil {
+		return "", fmt.Errorf("decode payload: %w", err)
+	}
+	if value, ok := object[field].(string); ok {
+		return strings.TrimSpace(value), nil
+	}
+	return "", nil
+}
+
+func ensureString(values []string, candidate string) []string {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" {
+		return append([]string(nil), values...)
+	}
+	for _, value := range values {
+		if value == candidate {
+			return append([]string(nil), values...)
+		}
+	}
+	out := append([]string(nil), values...)
+	return append(out, candidate)
+}
+
+func mergeStrings(base, generated []string) []string {
+	out := append([]string(nil), base...)
+	for _, value := range generated {
+		out = ensureString(out, value)
+	}
+	return out
 }
 
 func firstNonEmpty(values ...string) string {

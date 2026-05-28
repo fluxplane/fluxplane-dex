@@ -46,8 +46,8 @@ func (r Runner) InvokeInstance(ctx context.Context, pluginName, instance, comman
 		return protocol.Response{}, err
 	}
 	req.Instance = NormalizeInstance(instance)
-	if command == protocol.CommandDatasourcesSearch {
-		resp, ok, err := r.indexSearchResponse(entry.Name, req.Instance, payload)
+	if isDatasourceCommand(command) {
+		resp, ok, err := (hostIndexDatasource{state: r.State, plugin: entry.Name, instance: req.Instance}).Response(command, payload)
 		if err != nil {
 			return protocol.Response{}, err
 		}
@@ -55,23 +55,8 @@ func (r Runner) InvokeInstance(ctx context.Context, pluginName, instance, comman
 			return resp, nil
 		}
 	}
-	if command == protocol.CommandDatasourcesLookup {
-		resp, ok, err := r.indexLookupResponse(entry.Name, req.Instance, payload)
-		if err != nil {
-			return protocol.Response{}, err
-		}
-		if ok {
-			return resp, nil
-		}
-	}
-	if command == protocol.CommandDatasourcesGet {
-		resp, ok, err := r.indexGetResponse(entry.Name, req.Instance, payload)
-		if err != nil {
-			return protocol.Response{}, err
-		}
-		if ok {
-			return resp, nil
-		}
+	if isBuiltinPlugin(entry) {
+		return r.invokeBuiltin(ctx, entry, req)
 	}
 	if command == protocol.CommandOperationsCall || command == protocol.CommandOperationsBatch {
 		operations, purposes := r.operationGrantScope(ctx, entry.Name, payload)
@@ -80,6 +65,16 @@ func (r Runner) InvokeInstance(ctx context.Context, pluginName, instance, comman
 			return protocol.Response{}, err
 		}
 		req.Grant = grant.Token
+	}
+	if command == protocol.CommandDatasourcesSearch || command == protocol.CommandDatasourcesGet || command == protocol.CommandDatasourcesLookup {
+		operations, purposes := r.datasourceGrantScope(ctx, entry.Name, command, payload)
+		if len(purposes) > 0 {
+			grant, err := r.State.CreateGrant(entry.Name, req.Instance, operations, purposes, 5*time.Minute)
+			if err != nil {
+				return protocol.Response{}, err
+			}
+			req.Grant = grant.Token
+		}
 	}
 	return r.invokeRequest(ctx, entry, req)
 }
@@ -233,60 +228,6 @@ func (r Runner) OperationBatch(ctx context.Context, pluginName, instance string,
 	return result, nil
 }
 
-func (r Runner) indexSearchResponse(plugin, instance string, payload any) (protocol.Response, bool, error) {
-	hasRecords, err := r.State.HasIndexRecords(plugin, instance)
-	if err != nil {
-		return protocol.Response{}, false, err
-	}
-	if !hasRecords {
-		return protocol.Response{}, false, nil
-	}
-	options := searchPayload(payload)
-	records, err := r.State.SearchIndexWithOptions(plugin, instance, options)
-	if err != nil {
-		return protocol.Response{}, false, err
-	}
-	return protocol.OK(map[string]any{"source": "host_index", "query": options.Query, "count": len(records), "records": records}), true, nil
-}
-
-func (r Runner) indexLookupResponse(plugin, instance string, payload any) (protocol.Response, bool, error) {
-	hasRecords, err := r.State.HasIndexRecords(plugin, instance)
-	if err != nil {
-		return protocol.Response{}, false, err
-	}
-	if !hasRecords {
-		return protocol.Response{}, false, nil
-	}
-	options := lookupPayload(payload)
-	matches, err := r.State.LookupIndexWithOptions(plugin, instance, options)
-	if err != nil {
-		return protocol.Response{}, false, err
-	}
-	return protocol.OK(map[string]any{"source": "host_index", "text": options.Text, "terms": options.Terms, "count": len(matches), "matches": matches}), true, nil
-}
-
-func (r Runner) indexGetResponse(plugin, instance string, payload any) (protocol.Response, bool, error) {
-	hasRecords, err := r.State.HasIndexRecords(plugin, instance)
-	if err != nil {
-		return protocol.Response{}, false, err
-	}
-	if !hasRecords {
-		return protocol.Response{}, false, nil
-	}
-	id := getPayloadID(payload)
-	if id == "" {
-		return protocol.Fail("bad_payload", "datasource get requires id"), true, nil
-	}
-	record, ok, err := r.State.GetIndexRecord(plugin, instance, id)
-	if err != nil {
-		return protocol.Response{}, false, err
-	}
-	if !ok {
-		return protocol.Fail("not_found", "indexed record not found"), true, nil
-	}
-	return protocol.OK(map[string]any{"source": "host_index", "record": record}), true, nil
-}
-
 func (r Runner) Install(ctx context.Context, name string) error {
 	entry, ok := r.Marketplace.Resolve(name)
 	if !ok {
@@ -326,18 +267,7 @@ func (r Runner) operationGrantScope(ctx context.Context, plugin string, payload 
 	for _, op := range manifest.Operations {
 		byName[op.Name] = op
 	}
-	authEnv := map[string][]string{}
-	for _, method := range manifest.Auth {
-		for _, field := range method.Fields {
-			if field.Name != "" {
-				if len(field.Env) > 0 {
-					authEnv[field.Name] = append(authEnv[field.Name], field.Env...)
-				} else {
-					authEnv[field.Name] = append(authEnv[field.Name], method.Env...)
-				}
-			}
-		}
-	}
+	authEnv := manifestAuthEnv(manifest)
 	var operations []string
 	purposeByName := map[string]SecretPurpose{}
 	for _, call := range operationCalls(payload) {
@@ -358,6 +288,81 @@ func (r Runner) operationGrantScope(ctx context.Context, plugin string, payload 
 	return operations, purposes
 }
 
+func (r Runner) datasourceGrantScope(ctx context.Context, plugin, command string, payload any) ([]string, []SecretPurpose) {
+	manifest, err := r.manifest(ctx, plugin)
+	if err != nil {
+		return nil, nil
+	}
+	authEnv := manifestAuthEnv(manifest)
+	capability := datasourceCommandCapability(command)
+	entity := ""
+	switch command {
+	case protocol.CommandDatasourcesSearch:
+		entity = searchPayload(payload).Entity
+	case protocol.CommandDatasourcesLookup:
+		entity = lookupPayload(payload).Entity
+	}
+	purposeByName := map[string]SecretPurpose{}
+	for _, datasource := range manifest.Datasources {
+		if entity != "" && datasource.Entity != entity {
+			continue
+		}
+		if capability != "" && !containsString(datasource.Capabilities, capability) {
+			continue
+		}
+		for _, purpose := range datasource.SecretPurposes {
+			if strings.TrimSpace(purpose) == "" {
+				continue
+			}
+			purposeByName[purpose] = SecretPurpose{Name: purpose, Env: authEnv[purpose]}
+		}
+	}
+	var purposes []SecretPurpose
+	for _, purpose := range purposeByName {
+		purposes = append(purposes, purpose)
+	}
+	return []string{command}, purposes
+}
+
+func manifestAuthEnv(manifest core.PluginManifest) map[string][]string {
+	authEnv := map[string][]string{}
+	for _, method := range manifest.Auth {
+		for _, field := range method.Fields {
+			if field.Name == "" {
+				continue
+			}
+			if len(field.Env) > 0 {
+				authEnv[field.Name] = append(authEnv[field.Name], field.Env...)
+			} else {
+				authEnv[field.Name] = append(authEnv[field.Name], method.Env...)
+			}
+		}
+	}
+	return authEnv
+}
+
+func datasourceCommandCapability(command string) string {
+	switch command {
+	case protocol.CommandDatasourcesSearch:
+		return "search"
+	case protocol.CommandDatasourcesGet:
+		return "get"
+	case protocol.CommandDatasourcesLookup:
+		return "lookup"
+	default:
+		return ""
+	}
+}
+
+func containsString(values []string, candidate string) bool {
+	for _, value := range values {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
 func (r Runner) manifest(ctx context.Context, plugin string) (core.PluginManifest, error) {
 	entry, ok := r.Marketplace.Resolve(plugin)
 	if !ok {
@@ -368,7 +373,12 @@ func (r Runner) manifest(ctx context.Context, plugin string) (core.PluginManifes
 		return core.PluginManifest{}, err
 	}
 	req.Instance = DefaultInstance
-	resp, err := r.invokeRequest(ctx, entry, req)
+	var resp protocol.Response
+	if isBuiltinPlugin(entry) {
+		resp, err = r.invokeBuiltin(ctx, entry, req)
+	} else {
+		resp, err = r.invokeRequest(ctx, entry, req)
+	}
 	if err != nil {
 		return core.PluginManifest{}, err
 	}

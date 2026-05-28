@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-05-28
+
+### Added
+- Added the `fluxplaneplugin` adapter module that exposes dex marketplace
+  plugins to `fluxplane-core` consumers on rails parallel to native plugins.
+  `Bundles(ctx, engine)` returns one `resource.ContributionBundle` per dex
+  plugin (operation specs, `<plugin>` operation sets grouping every
+  `<plugin>.*` op, datasource specs + entities, a `PluginRef`, and a
+  dex-tagged `SourceRef`) so activation sets, `surface_prepare`, and the
+  resource catalog all see dex contributions exactly like native ones.
+  `Register(engine, host)` pushes a `pluginhost.Plugin` per dex plugin so
+  operation and datasource bindings resolve when the surface actually fires.
+  Plugins whose manifest can't be fetched (typically because the binary is
+  not installed) yield a stub bundle carrying just the `PluginRef` and a
+  warning `Diagnostic`, so they remain discoverable for activation flows
+  while `dex plugin install` / `dex auth connect` run on demand.
+- Exported lower-level building blocks `Wrap(engine, name)` for a single
+  dex plugin and `All(engine)` for the full marketplace plugin slice.
+
+### Changed
+- Updated plugin module requirements, workspace replacement, plugin manifest
+  versions, and builtin vision and websearch plugin versions for the `v0.9.0`
+  release.
+
 ## [0.8.0] - 2026-05-28
 
 ### Added

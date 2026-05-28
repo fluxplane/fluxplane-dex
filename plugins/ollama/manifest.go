@@ -7,7 +7,7 @@ import (
 
 const (
 	PluginName        = "ollama"
-	PluginVersion     = "0.8.0"
+	PluginVersion     = "0.9.0"
 	PluginDescription = "Ollama local LLM operations: inspect installed models, generate completions, chat, and embed."
 
 	OperationInfo      = "ollama.info"

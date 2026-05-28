@@ -52,6 +52,12 @@ const MarketplaceJSON = `{
       "metadata": {"kind": "builtin"}
     },
     {
+      "name": "vision",
+      "description": "Generic image understanding aggregator over vision provider plugins.",
+      "binary": "",
+      "metadata": {"kind": "builtin"}
+    },
+    {
       "name": "grafana",
       "description": "Grafana datasource catalog and proxy operations for Loki, Prometheus, Alertmanager, and Tempo.",
       "binary": "dex-plugin-grafana",
@@ -88,7 +94,7 @@ const MarketplaceJSON = `{
     },
     {
       "name": "openai",
-      "description": "OpenAI API plugin. Currently exposes image generation and model listing.",
+      "description": "OpenAI API plugin. Exposes image generation, image understanding, and model listing.",
       "binary": "dex-plugin-openai",
       "go_install": "github.com/fluxplane/fluxplane-dex/plugins/openai/cmd/dex-plugin-openai@latest",
       "local_path": "plugins/openai"

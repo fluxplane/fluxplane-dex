@@ -43,6 +43,25 @@ type ImageGenInputTokenDetail struct {
 	ImageTokens int `json:"image_tokens,omitempty" jsonschema:"description=Image tokens in the input prompt."`
 }
 
+type responsesOutput struct {
+	ID         string            `json:"id,omitempty"`
+	Model      string            `json:"model,omitempty"`
+	OutputText string            `json:"output_text,omitempty"`
+	Output     []responseMessage `json:"output,omitempty"`
+	Usage      map[string]any    `json:"usage,omitempty"`
+}
+
+type responseMessage struct {
+	Type    string            `json:"type,omitempty"`
+	Role    string            `json:"role,omitempty"`
+	Content []responseContent `json:"content,omitempty"`
+}
+
+type responseContent struct {
+	Type string `json:"type,omitempty"`
+	Text string `json:"text,omitempty"`
+}
+
 type ModelListInput struct{}
 
 type Model struct {

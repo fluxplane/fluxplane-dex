@@ -31,6 +31,8 @@ func (r Runner) invokeBuiltin(ctx context.Context, entry core.PluginEntry, req p
 	switch entry.Name {
 	case websearchPluginName:
 		return r.websearchPlugin(ctx).Handle(req), nil
+	case visionPluginName:
+		return r.visionPlugin(ctx).Handle(req), nil
 	default:
 		return protocol.Response{}, fmt.Errorf("unknown builtin plugin %q", entry.Name)
 	}

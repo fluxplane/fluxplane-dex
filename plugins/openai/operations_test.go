@@ -9,6 +9,7 @@ import (
 
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding/plugintest"
+	"github.com/fluxplane/fluxplane-dex/internal/vision"
 )
 
 func TestImageGenerateSendsRequestAndParsesResponse(t *testing.T) {
@@ -94,6 +95,63 @@ func TestImageGenerateFailsWhenSecretMissing(t *testing.T) {
 	})
 	err := plugintest.RunError(t, plugin, OperationImageGenerate, ImageGenerateInput{Prompt: "hello"})
 	if err == nil || err.Code != "secret" {
+		t.Fatalf("err = %#v", err)
+	}
+}
+
+func TestVisionAnalyzeSendsResponsesRequestAndParsesText(t *testing.T) {
+	doer := newRoutedDoer(t, map[string]string{
+		"POST /responses": `{"id":"resp_123","model":"gpt-4.1-mini","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The image shows a receipt."}]}],"usage":{"input_tokens":42,"output_tokens":9}}`,
+	})
+	plugin := newTestPlugin(doer, "test-key")
+
+	out := plugintest.RunOK[vision.AnalyzeOutput](t, plugin, OperationVisionAnalyze, vision.AnalyzeInput{
+		Prompt:    "Describe it",
+		Model:     "gpt-4.1-mini",
+		MaxTokens: 128,
+		Images: []vision.ImageInput{{
+			URL:    "https://example.com/receipt.png",
+			Detail: "high",
+		}},
+	})
+	if len(out.Results) != 1 || out.Results[0].Provider != PluginName || out.Results[0].Text != "The image shows a receipt." {
+		t.Fatalf("result = %#v", out)
+	}
+	body := doer.lastBody()
+	if body["model"] != "gpt-4.1-mini" || body["max_output_tokens"] != float64(128) {
+		t.Fatalf("body = %#v", body)
+	}
+	input := body["input"].([]any)[0].(map[string]any)
+	content := input["content"].([]any)
+	if content[0].(map[string]any)["text"] != "Describe it" {
+		t.Fatalf("content = %#v", content)
+	}
+	image := content[1].(map[string]any)
+	if image["image_url"] != "https://example.com/receipt.png" || image["detail"] != "high" {
+		t.Fatalf("image content = %#v", image)
+	}
+}
+
+func TestVisionAnalyzeAcceptsBase64ImageData(t *testing.T) {
+	doer := newRoutedDoer(t, map[string]string{
+		"POST /responses": `{"output_text":"A diagram."}`,
+	})
+	plugin := newTestPlugin(doer, "test-key")
+
+	_ = plugintest.RunOK[vision.AnalyzeOutput](t, plugin, OperationVisionAnalyze, vision.AnalyzeInput{
+		Images: []vision.ImageInput{{Data: "AAAA", MediaType: "image/png"}},
+	})
+	content := doer.lastBody()["input"].([]any)[0].(map[string]any)["content"].([]any)
+	image := content[1].(map[string]any)
+	if image["image_url"] != "data:image/png;base64,AAAA" {
+		t.Fatalf("image content = %#v", image)
+	}
+}
+
+func TestVisionAnalyzeRejectsMissingImage(t *testing.T) {
+	plugin := newTestPlugin(stubDoer{}, "test-key")
+	err := plugintest.RunError(t, plugin, OperationVisionAnalyze, vision.AnalyzeInput{})
+	if err == nil || err.Code != "bad_input" {
 		t.Fatalf("err = %#v", err)
 	}
 }

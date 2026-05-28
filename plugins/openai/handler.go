@@ -13,6 +13,7 @@ func NewPluginWithService(service Service) *pluginbinding.Plugin {
 	return pluginbinding.Define(manifestSpec(),
 		pluginbinding.WithSecretGetter(service.SecretGetter),
 		pluginbinding.RegisterOperation(imageGenerateSpec(), service.ImageGenerate),
+		pluginbinding.RegisterOperation(visionAnalyzeSpec(), service.VisionAnalyze),
 		pluginbinding.RegisterOperation(modelListSpec(), service.ModelList),
 	)
 }

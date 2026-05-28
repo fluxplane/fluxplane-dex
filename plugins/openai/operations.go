@@ -5,7 +5,10 @@ import (
 	"strings"
 
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
+	"github.com/fluxplane/fluxplane-dex/internal/vision"
 )
+
+const defaultVisionModel = "gpt-4.1-mini"
 
 type Service struct {
 	Client       Client
@@ -66,6 +69,43 @@ func (s Service) ImageGenerate(ctx pluginbinding.Context, input ImageGenerateInp
 	return out, nil
 }
 
+func (s Service) VisionAnalyze(ctx pluginbinding.Context, input vision.AnalyzeInput) (vision.AnalyzeOutput, error) {
+	if err := vision.ValidateImages(input.Images); err != nil {
+		return vision.AnalyzeOutput{}, err
+	}
+	client, err := s.authedClient(ctx)
+	if err != nil {
+		return vision.AnalyzeOutput{}, err
+	}
+	body := map[string]any{
+		"model": modelOrDefault(input.Model, defaultVisionModel),
+		"input": []map[string]any{{
+			"role":    "user",
+			"content": openAIVisionContent(input),
+		}},
+	}
+	if input.MaxTokens > 0 {
+		body["max_output_tokens"] = input.MaxTokens
+	}
+	if input.Temperature != nil {
+		body["temperature"] = *input.Temperature
+	}
+	var out responsesOutput
+	if err := client.post(context.Background(), "/responses", body, &out); err != nil {
+		return vision.AnalyzeOutput{}, pluginbinding.Errorf("openai", "%s", err)
+	}
+	text := responseOutputText(out)
+	if strings.TrimSpace(text) == "" {
+		return vision.AnalyzeOutput{}, pluginbinding.Fail("vision_failed", "openai returned no analysis text")
+	}
+	return vision.AnalyzeOutput{Results: []vision.AnalysisResult{{
+		Provider: PluginName,
+		Model:    firstNonEmpty(out.Model, modelOrDefault(input.Model, defaultVisionModel)),
+		Text:     text,
+		Usage:    out.Usage,
+	}}}, nil
+}
+
 func (s Service) ModelList(ctx pluginbinding.Context, _ ModelListInput) (pluginbinding.ListResult[Model], error) {
 	client, err := s.authedClient(ctx)
 	if err != nil {
@@ -90,4 +130,55 @@ func (s Service) authedClient(ctx pluginbinding.Context) (Client, error) {
 		client.APIKey = strings.TrimSpace(key.Value)
 	}
 	return client, nil
+}
+
+func openAIVisionContent(input vision.AnalyzeInput) []map[string]any {
+	content := []map[string]any{{
+		"type": "input_text",
+		"text": vision.NormalizePrompt(input.Prompt),
+	}}
+	for _, image := range input.Images {
+		item := map[string]any{
+			"type":      "input_image",
+			"image_url": vision.DataURL(image),
+		}
+		if detail := strings.TrimSpace(image.Detail); detail != "" {
+			item["detail"] = detail
+		}
+		content = append(content, item)
+	}
+	return content
+}
+
+func responseOutputText(out responsesOutput) string {
+	if strings.TrimSpace(out.OutputText) != "" {
+		return strings.TrimSpace(out.OutputText)
+	}
+	var parts []string
+	for _, message := range out.Output {
+		for _, content := range message.Content {
+			if content.Type == "output_text" || content.Type == "text" || content.Type == "" {
+				if text := strings.TrimSpace(content.Text); text != "" {
+					parts = append(parts, text)
+				}
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func modelOrDefault(model, fallback string) string {
+	if strings.TrimSpace(model) != "" {
+		return strings.TrimSpace(model)
+	}
+	return fallback
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

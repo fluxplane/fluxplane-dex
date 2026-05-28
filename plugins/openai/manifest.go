@@ -3,18 +3,20 @@ package openai
 import (
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
+	"github.com/fluxplane/fluxplane-dex/internal/vision"
 )
 
 const (
 	PluginName        = "openai"
 	PluginVersion     = "0.4.0"
-	PluginDescription = "OpenAI API plugin. Currently exposes image generation and model listing."
+	PluginDescription = "OpenAI API plugin. Exposes image generation, image understanding, and model listing."
 
 	AuthMethodAPIKey  = "api_key"
 	AuthPurposeAPIKey = "api_key"
 	EnvOpenAIAPIKey   = "OPENAI_API_KEY"
 
 	OperationImageGenerate = "openai.image.generate"
+	OperationVisionAnalyze = "openai.vision.analyze"
 	OperationModelList     = "openai.model.list"
 )
 
@@ -30,6 +32,7 @@ func manifestSpec() pluginbinding.ManifestSpec {
 		Aliases:     []string{"oai", PluginName},
 		Operations: []core.OperationSpec{
 			imageGenerateSpec(),
+			visionAnalyzeSpec(),
 			modelListSpec(),
 		},
 		Auth: []core.AuthMethod{pluginbinding.BearerAuth(
@@ -37,6 +40,7 @@ func manifestSpec() pluginbinding.ManifestSpec {
 			"OpenAI API key resolved by dex secret broker.",
 			pluginbinding.AuthField(AuthPurposeAPIKey, "OpenAI API key", true, true, EnvOpenAIAPIKey),
 		)},
+		Metadata: vision.ProviderMetadata(visionProviderSpec()),
 	}
 }
 
@@ -50,6 +54,27 @@ func imageGenerateSpec() core.OperationSpec {
 		pluginbinding.Idempotency(core.OperationNonIdempotent),
 		pluginbinding.SecretPurposes(AuthPurposeAPIKey),
 	)
+}
+
+func visionProviderSpec() vision.ProviderSpec {
+	return vision.ProviderSpec{
+		Name:                 PluginName,
+		Version:              PluginVersion,
+		Description:          PluginDescription,
+		Aliases:              []string{"oai", PluginName},
+		Operation:            OperationVisionAnalyze,
+		OperationDescription: "Analyze one or more images using OpenAI vision-capable models.",
+		Auth: []core.AuthMethod{pluginbinding.BearerAuth(
+			AuthMethodAPIKey,
+			"OpenAI API key resolved by dex secret broker.",
+			pluginbinding.AuthField(AuthPurposeAPIKey, "OpenAI API key", true, true, EnvOpenAIAPIKey),
+		)},
+		SecretPurposes: []string{AuthPurposeAPIKey},
+	}
+}
+
+func visionAnalyzeSpec() core.OperationSpec {
+	return vision.ProviderOperationSpec(visionProviderSpec())
 }
 
 func modelListSpec() core.OperationSpec {

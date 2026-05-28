@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -367,25 +368,60 @@ func (r Runner) OperationBatch(ctx context.Context, pluginName, instance string,
 }
 
 func (r Runner) Install(ctx context.Context, name string) error {
+	_, err := r.InstallPlugin(ctx, name)
+	return err
+}
+
+func (r Runner) InstallPlugin(ctx context.Context, name string) (InstalledPlugin, error) {
+	return r.installPlugin(ctx, name, true)
+}
+
+func (r Runner) UpgradePlugin(ctx context.Context, name string) (InstalledPlugin, error) {
+	installed, ok, err := r.State.InstalledPlugin(name)
+	if err != nil {
+		return InstalledPlugin{}, err
+	}
+	activated := true
+	if ok {
+		activated = installed.Activated
+	}
+	return r.installPlugin(ctx, name, activated)
+}
+
+func (r Runner) installPlugin(ctx context.Context, name string, activated bool) (InstalledPlugin, error) {
 	entry, ok := r.Marketplace.Resolve(name)
 	if !ok {
-		return fmt.Errorf("unknown plugin %q", name)
+		return InstalledPlugin{}, fmt.Errorf("unknown plugin %q", name)
 	}
 	if strings.TrimSpace(entry.GoInstall) == "" {
-		return fmt.Errorf("plugin %q has no go_install target", entry.Name)
+		return InstalledPlugin{}, fmt.Errorf("plugin %q has no go_install target", entry.Name)
 	}
-	cmd := exec.CommandContext(ctx, "go", "install", entry.GoInstall)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return err
+	if strings.TrimSpace(entry.Binary) == "" {
+		return InstalledPlugin{}, fmt.Errorf("plugin %q has no binary name", entry.Name)
 	}
-	return r.State.SaveInstalledPlugin(entry, true)
+	version := ""
+	if info, err := ResolveGoModuleVersion(ctx, entry.GoInstall, "latest"); err == nil {
+		version = info.Version
+	}
+	path := r.State.PluginBinaryPath(executableName(entry.Binary))
+	if err := InstallGoTarget(ctx, entry.GoInstall, r.State.PluginBinDir()); err != nil {
+		return InstalledPlugin{}, err
+	}
+	if err := r.State.SaveInstalledPluginVersionActivated(entry, true, path, version, activated); err != nil {
+		return InstalledPlugin{}, err
+	}
+	installed, _, err := r.State.InstalledPlugin(entry.Name)
+	return installed, err
 }
 
 func (r Runner) command(ctx context.Context, entry core.PluginEntry) (*exec.Cmd, error) {
 	if path := strings.TrimSpace(r.DevPlugins[entry.Name]); path != "" {
 		return goRunCommand(ctx, path, entry.Binary), nil
+	}
+	if path, ok, err := r.installedPluginCommandPath(entry); err != nil {
+		return nil, err
+	} else if ok {
+		return exec.CommandContext(ctx, path), nil
 	}
 	if path, ok := localPluginPath(r.WorkDir, entry.LocalPath); ok {
 		return goRunCommand(ctx, path, entry.Binary), nil
@@ -394,6 +430,82 @@ func (r Runner) command(ctx context.Context, entry core.PluginEntry) (*exec.Cmd,
 		return exec.CommandContext(ctx, binary), nil
 	}
 	return nil, fmt.Errorf("plugin %q is not installed; run dex plugin install %s", entry.Name, entry.Name)
+}
+
+func (r Runner) installedPluginCommandPath(entry core.PluginEntry) (string, bool, error) {
+	installed, ok, err := r.State.InstalledPlugin(entry.Name)
+	if err != nil || !ok {
+		return "", false, err
+	}
+	for _, candidate := range installedPluginCommandCandidates(r.State, installed, entry) {
+		if isExecutableFile(candidate) {
+			return candidate, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func installedPluginCommandCandidates(state State, installed InstalledPlugin, entry core.PluginEntry) []string {
+	var candidates []string
+	if path := strings.TrimSpace(installed.Path); path != "" {
+		candidates = append(candidates, path)
+	}
+	for _, binary := range []string{installed.Binary, entry.Binary} {
+		binary = strings.TrimSpace(binary)
+		if binary == "" {
+			continue
+		}
+		if filepath.IsAbs(binary) {
+			candidates = append(candidates, binary)
+			continue
+		}
+		candidates = append(candidates, state.PluginBinaryPath(executableName(binary)))
+	}
+	return dedupeStrings(candidates)
+}
+
+func isExecutableFile(path string) bool {
+	stat, err := os.Stat(path)
+	if err != nil || stat.IsDir() {
+		return false
+	}
+	if goruntime.GOOS == "windows" {
+		return true
+	}
+	return stat.Mode()&0o111 != 0
+}
+
+func executableName(binary string) string {
+	binary = strings.TrimSpace(binary)
+	if goruntime.GOOS == "windows" && strings.TrimSpace(filepath.Ext(binary)) == "" {
+		return binary + ".exe"
+	}
+	return binary
+}
+
+func withEnv(env []string, key, value string) []string {
+	prefix := key + "="
+	out := env[:0]
+	for _, item := range env {
+		if !strings.HasPrefix(item, prefix) {
+			out = append(out, item)
+		}
+	}
+	return append(out, prefix+value)
+}
+
+func dedupeStrings(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func (r Runner) operationGrantScope(ctx context.Context, plugin string, payload any) ([]string, []SecretPurpose) {

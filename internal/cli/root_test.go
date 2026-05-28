@@ -30,6 +30,82 @@ func TestRootHelp(t *testing.T) {
 	}
 }
 
+func TestVersionCommand(t *testing.T) {
+	oldVersion := Version
+	oldRevision := Revision
+	Version = "v1.2.3"
+	Revision = "0123456789abcdef"
+	t.Cleanup(func() {
+		Version = oldVersion
+		Revision = oldRevision
+	})
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"version", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Name    string `json:"name"`
+		Module  string `json:"module"`
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Name != "fluxplane-dex" || result.Module != dexModulePath || result.Version != "v1.2.3" {
+		t.Fatalf("version result = %#v", result)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"revision": "0123456789abcdef"`)) {
+		t.Fatalf("version output missing revision:\n%s", out.String())
+	}
+}
+
+func TestUnavailableActivatedPluginDoesNotBlockBuiltins(t *testing.T) {
+	home := t.TempDir()
+	state, err := runtime.NewState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := core.PluginEntry{Name: "gitlab", Binary: "dex-plugin-gitlab"}
+	if err := state.ActivatePlugin(entry); err != nil {
+		t.Fatal(err)
+	}
+	marketplacePath := filepath.Join(t.TempDir(), "marketplace.json")
+	if err := os.WriteFile(marketplacePath, []byte(`{"version":"1","plugins":[{"name":"gitlab","binary":"dex-plugin-gitlab"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := executeGeneratedRoot(t, "--dex-home", home, "--marketplace", marketplacePath, "version", "-o", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"name": "fluxplane-dex"`) {
+		t.Fatalf("version output = %s", out)
+	}
+}
+
+func TestRootHelpGroupsGeneratedIntegrationCommands(t *testing.T) {
+	pluginDir := writeFakeKubernetesAliasPlugin(t)
+	state, err := runtime.NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ActivatePlugin(core.PluginEntry{Name: "kubernetes", Binary: "dex-plugin-kubernetes", LocalPath: pluginDir}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := executeGeneratedRoot(t, "--dex-home", state.Home, "--dev-plugin", "kubernetes="+pluginDir, "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Essentials", "Plugin Management", "Data and Context", "Configuration", "Maintenance", "Integration Commands", "kubernetes"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("root help missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestPluginMarketplaceJSON(t *testing.T) {
 	cmd := NewRootCommand()
 	var out bytes.Buffer
@@ -622,6 +698,11 @@ func main() {
 
 func writeFakeOperationPlugin(t *testing.T, name string, aliases []string, operations []map[string]any) string {
 	t.Helper()
+	return writeFakeManifestPlugin(t, name, map[string]any{"name": name, "aliases": aliases, "operations": operations})
+}
+
+func writeFakeManifestPlugin(t *testing.T, name string, manifest map[string]any) string {
+	t.Helper()
 	pluginDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(pluginDir, "go.mod"), []byte("module fake"+name+"\n\ngo 1.26\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -630,7 +711,7 @@ func writeFakeOperationPlugin(t *testing.T, name string, aliases []string, opera
 	if err := os.MkdirAll(cmdDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := json.Marshal(map[string]any{"name": name, "aliases": aliases, "operations": operations})
+	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -641,7 +722,7 @@ import (
 	"os"
 )
 
-const manifestJSON = ` + strconv.Quote(string(manifest)) + `
+const manifestJSON = ` + strconv.Quote(string(manifestJSON)) + `
 
 func main() {
 	var req struct {
@@ -1014,6 +1095,168 @@ func TestGeneratedCommandHelpShowsSchemaFlags(t *testing.T) {
 	}
 	if strings.Contains(out, "--context") {
 		t.Fatalf("help includes unrelated operation flag:\n%s", out)
+	}
+}
+
+func TestSkillRendersActivatedPluginCommands(t *testing.T) {
+	pluginDir := writeFakeKubernetesAliasPlugin(t)
+	state, err := runtime.NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ActivatePlugin(core.PluginEntry{Name: "kubernetes", Binary: "dex-plugin-kubernetes", LocalPath: pluginDir}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := executeGeneratedRoot(t, "--dex-home", state.Home, "--dev-plugin", "kubernetes="+pluginDir, "skill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"# Dex Skill", "## kubernetes", "`dex kube pod logs`", "`--endpoint-ref`"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("skill output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestSkillSkipsPluginUntilRequiredAuthConfigured(t *testing.T) {
+	pluginDir := writeFakeManifestPlugin(t, "gitlab", map[string]any{
+		"name":        "gitlab",
+		"description": "GitLab test plugin.",
+		"auth": []map[string]any{{
+			"name": "token",
+			"kind": "bearer_token",
+			"fields": []map[string]any{{
+				"name":     "access_token",
+				"required": true,
+				"env":      []string{"GITLAB_TOKEN"},
+			}},
+		}},
+		"operations": []map[string]any{{
+			"name":        "gitlab.project.list",
+			"description": "List GitLab projects.",
+			"input_schema": map[string]any{
+				"properties": map[string]any{"limit": map[string]any{"type": "integer"}},
+			},
+		}},
+	})
+	state, err := runtime.NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ActivatePlugin(core.PluginEntry{Name: "gitlab", Binary: "dex-plugin-gitlab", LocalPath: pluginDir}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := executeGeneratedRoot(t, "--dex-home", state.Home, "--dev-plugin", "gitlab="+pluginDir, "skill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "## gitlab") {
+		t.Fatalf("skill output included plugin without required auth:\n%s", out)
+	}
+	if err := state.SaveSecret("gitlab", runtime.DefaultInstance, "access_token", runtime.StoredSecret{Value: "token"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err = executeGeneratedRoot(t, "--dex-home", state.Home, "--dev-plugin", "gitlab="+pluginDir, "skill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"## gitlab", "`access_token`: stored", "`dex gitlab project list`"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("skill output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestSkillInstallWritesDexHomeSkillAndReferences(t *testing.T) {
+	pluginDir := writeFakeKubernetesAliasPlugin(t)
+	state, err := runtime.NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := core.PluginEntry{Name: "kubernetes", Description: "Kubernetes test plugin.", Binary: "dex-plugin-kubernetes", LocalPath: pluginDir}
+	if err := state.ActivatePlugin(entry); err != nil {
+		t.Fatal(err)
+	}
+	marketplacePath := filepath.Join(t.TempDir(), "marketplace.json")
+	marketplaceData, err := json.Marshal(core.Marketplace{Version: "1", Plugins: []core.PluginEntry{
+		entry,
+		{Name: "gitlab", Description: "GitLab test plugin.", Binary: "dex-plugin-gitlab", GoInstall: "example.com/gitlab@latest"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marketplacePath, marketplaceData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := executeGeneratedRoot(t, "--dex-home", state.Home, "--marketplace", marketplacePath, "--dev-plugin", "kubernetes="+pluginDir, "skill", "install", "--no-claude-link", "-o", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Dir        string   `json:"dir"`
+		Main       string   `json:"main"`
+		References []string `json:"references"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	wantDir := filepath.Join(state.Home, "skills", "dex")
+	if result.Dir != wantDir || result.Main != filepath.Join(wantDir, "SKILL.md") {
+		t.Fatalf("install result = %#v", result)
+	}
+	main, err := os.ReadFile(filepath.Join(wantDir, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(main, []byte("[kubernetes](references/kubernetes.md)")) || !bytes.Contains(main, []byte("[gitlab](references/gitlab.md)")) {
+		t.Fatalf("main skill missing references:\n%s", string(main))
+	}
+	kubeRef, err := os.ReadFile(filepath.Join(wantDir, "references", "kubernetes.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(kubeRef, []byte("`dex kube pod logs`")) {
+		t.Fatalf("kubernetes reference missing dynamic command:\n%s", string(kubeRef))
+	}
+	gitlabRef, err := os.ReadFile(filepath.Join(wantDir, "references", "gitlab.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(gitlabRef, []byte("dex plugin install gitlab")) || !bytes.Contains(gitlabRef, []byte("Dynamic plugin metadata was unavailable")) {
+		t.Fatalf("gitlab reference missing install guidance:\n%s", string(gitlabRef))
+	}
+}
+
+func TestSkillInstallUsesAbsoluteClaudeSymlinkTarget(t *testing.T) {
+	state, err := runtime.NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	opts := newOptions()
+	opts.home = state.Home
+	runner, err := opts.runner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	relativeDir := filepath.Join("relative-skill-root", "dex")
+	result, err := writeDexSkillInstall(context.Background(), opts, runner, relativeDir, "", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := os.Readlink(filepath.Join(home, ".claude", "skills", "dex"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(cwd, relativeDir)
+	if target != want || result.ClaudeLink == "" || !result.Linked {
+		t.Fatalf("target = %q, want %q; result = %#v", target, want, result)
 	}
 }
 

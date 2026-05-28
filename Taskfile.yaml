@@ -1,0 +1,18 @@
+version: "3"
+
+vars:
+  DEX_REV:
+    sh: git rev-parse HEAD
+  DEX_VERSION:
+    sh: git describe --tags --match 'v[0-9]*' --always --dirty
+
+tasks:
+  default:
+    desc: List available tasks.
+    cmds:
+      - task --list
+
+  install:
+    desc: Install the dex CLI from this checkout.
+    cmds:
+      - go install -buildvcs=true -ldflags "-X github.com/fluxplane/fluxplane-dex/internal/cli.Version={{.DEX_VERSION}} -X github.com/fluxplane/fluxplane-dex/internal/cli.Revision={{.DEX_REV}}" ./cmd/dex

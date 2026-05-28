@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,11 +10,15 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
 	"syscall"
+	"text/template"
 	"time"
 
 	"github.com/fluxplane/fluxplane-dex/core"
@@ -23,6 +28,21 @@ import (
 	"github.com/fluxplane/fluxplane-dex/runtime"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+)
+
+var Version = ""
+var Revision = ""
+
+const dexModulePath = "github.com/fluxplane/fluxplane-dex"
+const dexGitRemote = "https://github.com/fluxplane/fluxplane-dex"
+
+const (
+	commandGroupEssentials    = "essentials"
+	commandGroupPlugins       = "plugins"
+	commandGroupData          = "data"
+	commandGroupConfiguration = "configuration"
+	commandGroupMaintenance   = "maintenance"
+	commandGroupIntegrations  = "integrations"
 )
 
 type options struct {
@@ -130,7 +150,7 @@ func parseStartupFlags(args []string, opts *options) error {
 
 func reservedRootCommand(name string) bool {
 	switch strings.TrimSpace(name) {
-	case "plugin", "op", "datasource", "auth", "secret", "search", "lookup", "context", "endpoint", "index", "doctor", "version":
+	case "plugin", "op", "datasource", "auth", "secret", "search", "lookup", "context", "endpoint", "index", "doctor", "version", "upgrade", "setup", "skill":
 		return true
 	default:
 		return false
@@ -162,26 +182,459 @@ func newRootCommand(opts *options) *cobra.Command {
 	root.PersistentFlags().StringVar(&opts.instance, "instance", opts.instance, "Integration instance name")
 	root.PersistentFlags().StringArrayVar(&opts.devPlugins, "dev-plugin", opts.devPlugins, "Development plugin override NAME=PATH")
 
-	root.AddCommand(newPluginCommand(opts))
-	root.AddCommand(newOpCommand(opts))
-	root.AddCommand(newDatasourceCommand(opts))
-	root.AddCommand(newAuthCommand(opts))
-	root.AddCommand(newSecretCommand(opts))
-	root.AddCommand(newSearchCommand(opts))
-	root.AddCommand(newLookupCommand(opts))
-	root.AddCommand(newContextCommand(opts))
-	root.AddCommand(newEndpointCommand(opts))
-	root.AddCommand(newIndexCommand(opts))
-	root.AddCommand(newDoctorCommand(opts))
-	root.AddCommand(&cobra.Command{
+	root.AddGroup(
+		&cobra.Group{ID: commandGroupEssentials, Title: "Essentials"},
+		&cobra.Group{ID: commandGroupPlugins, Title: "Plugin Management"},
+		&cobra.Group{ID: commandGroupData, Title: "Data and Context"},
+		&cobra.Group{ID: commandGroupConfiguration, Title: "Configuration"},
+		&cobra.Group{ID: commandGroupMaintenance, Title: "Maintenance"},
+		&cobra.Group{ID: commandGroupIntegrations, Title: "Integration Commands"},
+	)
+
+	root.AddCommand(withGroup(newVersionCommand(opts), commandGroupEssentials))
+	root.AddCommand(withGroup(newSearchCommand(opts), commandGroupEssentials))
+	root.AddCommand(withGroup(newLookupCommand(opts), commandGroupEssentials))
+	root.AddCommand(withGroup(newContextCommand(opts), commandGroupEssentials))
+	root.AddCommand(withGroup(newPluginCommand(opts), commandGroupPlugins))
+	root.AddCommand(withGroup(newOpCommand(opts), commandGroupPlugins))
+	root.AddCommand(withGroup(newDatasourceCommand(opts), commandGroupData))
+	root.AddCommand(withGroup(newSkillCommand(opts), commandGroupData))
+	root.AddCommand(withGroup(newEndpointCommand(opts), commandGroupConfiguration))
+	root.AddCommand(withGroup(newAuthCommand(opts), commandGroupConfiguration))
+	root.AddCommand(withGroup(newSecretCommand(opts), commandGroupConfiguration))
+	root.AddCommand(withGroup(newIndexCommand(opts), commandGroupMaintenance))
+	root.AddCommand(withGroup(newDoctorCommand(opts), commandGroupMaintenance))
+	root.AddCommand(withGroup(newUpgradeCommand(opts), commandGroupMaintenance))
+	root.AddCommand(withGroup(newSetupCommand(opts), commandGroupMaintenance))
+	return root
+}
+
+func withGroup(cmd *cobra.Command, groupID string) *cobra.Command {
+	cmd.GroupID = groupID
+	return cmd
+}
+
+func newVersionCommand(opts *options) *cobra.Command {
+	return &cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), "fluxplane-dex dev")
-			return err
+			return renderValue(cmd.OutOrStdout(), opts.output, dexVersion())
 		},
-	})
-	return root
+	}
+}
+
+func newUpgradeCommand(opts *options) *cobra.Command {
+	upgradeOpts := struct {
+		version string
+		check   bool
+	}{version: "latest"}
+	cmd := &cobra.Command{
+		Use:   "upgrade",
+		Short: "Upgrade the dex CLI",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			targetVersion := strings.TrimSpace(upgradeOpts.version)
+			if targetVersion == "" {
+				targetVersion = "latest"
+			}
+			latest, latestErr := runtime.ResolveGoModuleVersion(cmd.Context(), dexModulePath, targetVersion)
+			if latestErr == nil && strings.TrimSpace(latest.Version) != "" {
+				targetVersion = latest.Version
+			}
+			result := map[string]any{
+				"name":     "fluxplane-dex",
+				"module":   dexModulePath,
+				"current":  currentDexVersion(),
+				"target":   targetVersion,
+				"upgraded": false,
+			}
+			if latestErr == nil {
+				result["latest"] = latest.Version
+			} else if upgradeOpts.check {
+				result["error"] = latestErr.Error()
+				return renderValue(cmd.OutOrStdout(), opts.output, result)
+			}
+			if upgradeOpts.check {
+				return renderValue(cmd.OutOrStdout(), opts.output, result)
+			}
+			binDir, err := dexInstallBinDir(cmd.Context())
+			if err != nil {
+				return err
+			}
+			revision, err := dexRemoteRevision(cmd.Context(), targetVersion)
+			if err != nil {
+				return err
+			}
+			if err := runtime.InstallGoTargetWithLdflags(cmd.Context(), dexInstallTarget(targetVersion), binDir, dexLdflags(targetVersion, revision)); err != nil {
+				return err
+			}
+			result["bin_dir"] = binDir
+			result["revision"] = revision
+			result["upgraded"] = true
+			return renderValue(cmd.OutOrStdout(), opts.output, result)
+		},
+	}
+	cmd.Flags().StringVar(&upgradeOpts.version, "version", "latest", "Version to install")
+	cmd.Flags().BoolVar(&upgradeOpts.check, "check", false, "Only check the latest available version")
+	return cmd
+}
+
+type setupUpgradeItem struct {
+	Kind            string `json:"kind"`
+	Name            string `json:"name"`
+	Current         string `json:"current,omitempty"`
+	Latest          string `json:"latest,omitempty"`
+	Target          string `json:"target,omitempty"`
+	UpdateAvailable bool   `json:"update_available"`
+	Selected        bool   `json:"selected,omitempty"`
+	Upgraded        bool   `json:"upgraded,omitempty"`
+	Error           string `json:"error,omitempty"`
+}
+
+type setupResult struct {
+	Items    []setupUpgradeItem `json:"items"`
+	Checked  int                `json:"checked"`
+	Selected int                `json:"selected"`
+	Upgraded int                `json:"upgraded"`
+}
+
+func newSetupCommand(opts *options) *cobra.Command {
+	setupOpts := struct {
+		yes   bool
+		check bool
+	}{}
+	cmd := &cobra.Command{
+		Use:   "setup",
+		Short: "Check dex and installed plugins for available upgrades",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			result := setupResult{}
+			result.Items = append(result.Items, dexSetupItem(cmd.Context()))
+			pluginItems, err := pluginSetupItems(cmd.Context(), runner)
+			if err != nil {
+				return err
+			}
+			result.Items = append(result.Items, pluginItems...)
+			result.Checked = len(result.Items)
+			if setupOpts.check {
+				return renderValue(cmd.OutOrStdout(), opts.output, result)
+			}
+			reader := bufio.NewReader(cmd.InOrStdin())
+			interactive := setupOpts.yes || canPrompt(cmd.InOrStdin(), opts.output)
+			for i := range result.Items {
+				item := &result.Items[i]
+				if !item.UpdateAvailable || item.Error != "" {
+					continue
+				}
+				item.Selected = setupOpts.yes
+				if !setupOpts.yes && interactive {
+					question := fmt.Sprintf("Upgrade %s %s", item.Kind, item.Name)
+					if item.Current != "" || item.Latest != "" {
+						question += fmt.Sprintf(" (%s -> %s)", fallbackText(item.Current, "unknown"), fallbackText(item.Latest, item.Target))
+					}
+					yes, err := promptYes(reader, cmd.OutOrStdout(), question+"? [y/N] ")
+					if err != nil {
+						return err
+					}
+					item.Selected = yes
+				}
+				if !item.Selected {
+					continue
+				}
+				result.Selected++
+				if err := runSetupUpgrade(cmd.Context(), runner, item); err != nil {
+					item.Error = err.Error()
+					continue
+				}
+				item.Upgraded = true
+				result.Upgraded++
+			}
+			return renderValue(cmd.OutOrStdout(), opts.output, result)
+		},
+	}
+	cmd.Flags().BoolVarP(&setupOpts.yes, "yes", "y", false, "Upgrade all available items without prompting")
+	cmd.Flags().BoolVar(&setupOpts.check, "check", false, "Only check for available upgrades")
+	return cmd
+}
+
+func dexSetupItem(ctx context.Context) setupUpgradeItem {
+	item := setupUpgradeItem{Kind: "dex", Name: "fluxplane-dex", Current: currentDexVersion(), Target: "latest"}
+	latest, err := runtime.LatestGoModuleVersion(ctx, dexModulePath)
+	if err != nil {
+		item.Error = err.Error()
+		return item
+	}
+	item.Latest = latest.Version
+	item.UpdateAvailable = semverGreater(latest.Version, item.Current)
+	return item
+}
+
+func pluginSetupItems(ctx context.Context, runner runtime.Runner) ([]setupUpgradeItem, error) {
+	installed, err := runner.State.LoadInstalledPlugins()
+	if err != nil {
+		return nil, err
+	}
+	items := make([]setupUpgradeItem, 0, len(installed.Plugins))
+	for _, plugin := range installed.Plugins {
+		item := setupUpgradeItem{Kind: "plugin", Name: plugin.Name, Current: plugin.Version, Target: "latest"}
+		if !plugin.Managed {
+			item.Error = "plugin is not managed by dex"
+			items = append(items, item)
+			continue
+		}
+		entry, ok := runner.Marketplace.Resolve(plugin.Name)
+		if !ok {
+			item.Error = "plugin is not in the marketplace"
+			items = append(items, item)
+			continue
+		}
+		latest, err := runtime.LatestGoModuleVersion(ctx, entry.GoInstall)
+		if err != nil {
+			item.Error = err.Error()
+			items = append(items, item)
+			continue
+		}
+		item.Latest = latest.Version
+		item.UpdateAvailable = plugin.Version == "" || semverGreater(latest.Version, plugin.Version)
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func runSetupUpgrade(ctx context.Context, runner runtime.Runner, item *setupUpgradeItem) error {
+	switch item.Kind {
+	case "dex":
+		binDir, err := dexInstallBinDir(ctx)
+		if err != nil {
+			return err
+		}
+		target := strings.TrimSpace(item.Latest)
+		if target == "" {
+			target = item.Target
+		}
+		revision, err := dexRemoteRevision(ctx, target)
+		if err != nil {
+			return err
+		}
+		return runtime.InstallGoTargetWithLdflags(ctx, dexInstallTarget(target), binDir, dexLdflags(target, revision))
+	case "plugin":
+		installed, err := runner.UpgradePlugin(ctx, item.Name)
+		if err != nil {
+			return err
+		}
+		item.Current = installed.Version
+		return nil
+	default:
+		return fmt.Errorf("unknown setup item kind %q", item.Kind)
+	}
+}
+
+func currentDexVersion() string {
+	return dexVersion().Version
+}
+
+func dexInstallTarget(version string) string {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		version = "latest"
+	}
+	return dexModulePath + "/cmd/dex@" + version
+}
+
+type dexVersionInfo struct {
+	Text     string `json:"text"`
+	Name     string `json:"name"`
+	Module   string `json:"module"`
+	Version  string `json:"version"`
+	Revision string `json:"revision,omitempty"`
+	Modified bool   `json:"modified,omitempty"`
+}
+
+func dexVersion() dexVersionInfo {
+	info := dexVersionInfo{Name: "fluxplane-dex", Module: dexModulePath, Version: strings.TrimSpace(Version), Revision: strings.TrimSpace(Revision)}
+	if build, ok := debug.ReadBuildInfo(); ok {
+		if info.Version == "" && build.Main.Version != "" && build.Main.Version != "(devel)" {
+			info.Version = build.Main.Version
+		}
+		for _, setting := range build.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				if info.Revision == "" {
+					info.Revision = strings.TrimSpace(setting.Value)
+				}
+			case "vcs.modified":
+				info.Modified = setting.Value == "true"
+			}
+		}
+	}
+	if info.Version == "" {
+		info.Version = "dev"
+	}
+	if info.Revision != "" {
+		info.Text = "fluxplane-dex " + info.Revision
+	} else {
+		info.Text = "fluxplane-dex " + info.Version
+	}
+	return info
+}
+
+func dexLdflags(version, revision string) string {
+	parts := []string{}
+	if version = strings.TrimSpace(version); version != "" {
+		parts = append(parts, "-X", dexModulePath+"/internal/cli.Version="+version)
+	}
+	if revision = strings.TrimSpace(revision); revision != "" {
+		parts = append(parts, "-X", dexModulePath+"/internal/cli.Revision="+revision)
+	}
+	return strings.Join(parts, " ")
+}
+
+func dexRemoteRevision(ctx context.Context, version string) (string, error) {
+	version = strings.TrimSpace(version)
+	if version == "" || version == "latest" {
+		info, err := runtime.ResolveGoModuleVersion(ctx, dexModulePath, "latest")
+		if err != nil {
+			return "", err
+		}
+		version = info.Version
+	}
+	if version == "" {
+		return "", fmt.Errorf("could not resolve dex version")
+	}
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", dexGitRemote, "refs/tags/"+version, "refs/tags/"+version+"^{}")
+	data, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	var fallback string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		if strings.HasSuffix(fields[1], "^{}") {
+			return fields[0], nil
+		}
+		if fallback == "" {
+			fallback = fields[0]
+		}
+	}
+	if fallback == "" {
+		return "", fmt.Errorf("could not resolve git revision for dex %s", version)
+	}
+	return fallback, nil
+}
+
+func dexInstallBinDir(ctx context.Context) (string, error) {
+	if value := strings.TrimSpace(os.Getenv("GOBIN")); value != "" {
+		return value, nil
+	}
+	if value, err := goEnv(ctx, "GOBIN"); err == nil && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value), nil
+	}
+	gopath, err := goEnv(ctx, "GOPATH")
+	if err != nil {
+		return "", err
+	}
+	for _, value := range filepath.SplitList(gopath) {
+		if value = strings.TrimSpace(value); value != "" {
+			return filepath.Join(value, "bin"), nil
+		}
+	}
+	return "", fmt.Errorf("could not determine Go install bin dir")
+}
+
+func goEnv(ctx context.Context, key string) (string, error) {
+	cmd := exec.CommandContext(ctx, "go", "env", key)
+	data, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+func canPrompt(in io.Reader, output string) bool {
+	if output != "" && output != "text" {
+		return false
+	}
+	file, ok := in.(*os.File)
+	return ok && term.IsTerminal(int(file.Fd()))
+}
+
+func promptYes(reader *bufio.Reader, out io.Writer, question string) (bool, error) {
+	if _, err := fmt.Fprint(out, question); err != nil {
+		return false, err
+	}
+	text, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return false, err
+	}
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "y", "yes":
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+func fallbackText(value, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func semverGreater(candidate, current string) bool {
+	candidate = normalizeSemver(candidate)
+	current = normalizeSemver(current)
+	if candidate == "" || current == "" || current == "dev" {
+		return false
+	}
+	candidateParts, candidateOK := semverCore(candidate)
+	currentParts, currentOK := semverCore(current)
+	if !candidateOK || !currentOK {
+		return candidate != current
+	}
+	for i := 0; i < len(candidateParts); i++ {
+		if candidateParts[i] > currentParts[i] {
+			return true
+		}
+		if candidateParts[i] < currentParts[i] {
+			return false
+		}
+	}
+	return false
+}
+
+func normalizeSemver(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "v")
+	if idx := strings.IndexAny(value, "+-"); idx >= 0 {
+		value = value[:idx]
+	}
+	return value
+}
+
+func semverCore(value string) ([3]int, bool) {
+	var out [3]int
+	parts := strings.Split(value, ".")
+	if len(parts) < 2 || len(parts) > 3 {
+		return out, false
+	}
+	for i := 0; i < len(parts); i++ {
+		n, err := strconv.Atoi(parts[i])
+		if err != nil {
+			return out, false
+		}
+		out[i] = n
+	}
+	return out, true
 }
 
 type endpointCandidateView struct {
@@ -315,10 +768,36 @@ func newPluginCommand(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := runner.Install(cmd.Context(), args[0]); err != nil {
+			installed, err := runner.InstallPlugin(cmd.Context(), args[0])
+			if err != nil {
 				return err
 			}
-			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"plugin": args[0], "installed": true})
+			result := map[string]any{"plugin": installed.Name, "installed": true, "record": installed}
+			addSkillRefreshResult(cmd.Context(), opts, runner, result)
+			return renderValue(cmd.OutOrStdout(), opts.output, result)
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "upgrade NAME",
+		Short: "Upgrade an installed plugin from marketplace metadata",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			if installed, ok, err := runner.State.InstalledPlugin(args[0]); err != nil {
+				return err
+			} else if !ok || !installed.Managed {
+				return fmt.Errorf("plugin %q is not a managed installed plugin", args[0])
+			}
+			installed, err := runner.UpgradePlugin(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			result := map[string]any{"plugin": installed.Name, "upgraded": true, "record": installed}
+			addSkillRefreshResult(cmd.Context(), opts, runner, result)
+			return renderValue(cmd.OutOrStdout(), opts.output, result)
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
@@ -369,19 +848,27 @@ func newPluginCommand(opts *options) *cobra.Command {
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
-		Use:   "remove NAME",
-		Short: "Remove a plugin from the local installed registry",
+		Use:   "uninstall NAME",
+		Short: "Uninstall a managed plugin and remove its local state record",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runner, err := opts.runner()
 			if err != nil {
 				return err
 			}
-			removed, err := runner.State.RemoveInstalledPlugin(args[0])
+			result, err := runner.State.UninstallPlugin(args[0])
 			if err != nil {
 				return err
 			}
-			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"plugin": args[0], "removed": removed})
+			out := map[string]any{"plugin": result.Plugin, "removed": result.Removed}
+			if result.BinaryRemoved {
+				out["binary_removed"] = true
+			}
+			if strings.TrimSpace(result.Path) != "" {
+				out["path"] = result.Path
+			}
+			addSkillRefreshResult(cmd.Context(), opts, runner, out)
+			return renderValue(cmd.OutOrStdout(), opts.output, out)
 		},
 	})
 	return cmd
@@ -526,6 +1013,671 @@ func newDatasourceCommand(opts *options) *cobra.Command {
 		},
 	})
 	return cmd
+}
+
+func newSkillCommand(opts *options) *cobra.Command {
+	skillOpts := struct {
+		templatePath string
+	}{}
+	installOpts := struct {
+		dir                string
+		templatePath       string
+		pluginTemplatePath string
+		noClaudeLink       bool
+	}{}
+	cmd := &cobra.Command{
+		Use:   "skill [OUTPUT.md]",
+		Short: "Render a markdown skill for configured integrations",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			data, err := buildSkillTemplateData(cmd.Context(), runner, opts.instanceName())
+			if err != nil {
+				return err
+			}
+			rendered, err := renderSkillTemplate(skillOpts.templatePath, data)
+			if err != nil {
+				return err
+			}
+			if len(args) == 0 {
+				_, err = io.WriteString(cmd.OutOrStdout(), rendered)
+				return err
+			}
+			path := strings.TrimSpace(args[0])
+			if path == "" {
+				return fmt.Errorf("output path is empty")
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil && filepath.Dir(path) != "." {
+				return err
+			}
+			return os.WriteFile(path, []byte(rendered), 0o600)
+		},
+	}
+	cmd.Flags().StringVar(&skillOpts.templatePath, "template", "", "Go text/template file for markdown rendering")
+	install := &cobra.Command{
+		Use:   "install",
+		Short: "Install the dex skill into dex home and link it into Claude",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			dir := strings.TrimSpace(installOpts.dir)
+			if dir == "" {
+				dir = dexHomeSkillDir(runner.State)
+			}
+			result, err := writeDexSkillInstall(cmd.Context(), opts, runner, dir, installOpts.templatePath, installOpts.pluginTemplatePath, !installOpts.noClaudeLink)
+			if err != nil {
+				return err
+			}
+			return renderValue(cmd.OutOrStdout(), opts.output, result)
+		},
+	}
+	install.Flags().StringVar(&installOpts.dir, "dir", "", "Dex skill output directory (default: DEX_HOME/skills/dex)")
+	install.Flags().StringVar(&installOpts.templatePath, "template", "", "Go text/template file for SKILL.md")
+	install.Flags().StringVar(&installOpts.pluginTemplatePath, "plugin-template", "", "Go text/template file for plugin reference pages")
+	install.Flags().BoolVar(&installOpts.noClaudeLink, "no-claude-link", false, "Do not link ~/.claude/skills/dex to the dex-home skill directory")
+	cmd.AddCommand(install)
+	return cmd
+}
+
+type skillTemplateData struct {
+	GeneratedAt string        `json:"generated_at"`
+	Instance    string        `json:"instance"`
+	Help        string        `json:"help,omitempty"`
+	Plugins     []skillPlugin `json:"plugins"`
+}
+
+type skillPlugin struct {
+	Name        string            `json:"name"`
+	Version     string            `json:"version,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Command     string            `json:"command"`
+	Reference   string            `json:"reference,omitempty"`
+	Installed   bool              `json:"installed"`
+	Activated   bool              `json:"activated"`
+	Dynamic     bool              `json:"dynamic"`
+	Binary      string            `json:"binary,omitempty"`
+	GoInstall   string            `json:"go_install,omitempty"`
+	Install     string            `json:"install,omitempty"`
+	Aliases     []string          `json:"aliases,omitempty"`
+	Auth        []skillAuthField  `json:"auth,omitempty"`
+	Operations  []skillOperation  `json:"operations,omitempty"`
+	Datasources []skillDatasource `json:"datasources,omitempty"`
+}
+
+type skillInstallResult struct {
+	Dir        string   `json:"dir"`
+	Main       string   `json:"main"`
+	References []string `json:"references"`
+	ClaudeLink string   `json:"claude_link,omitempty"`
+	Linked     bool     `json:"linked,omitempty"`
+}
+
+type skillAuthField struct {
+	Name     string `json:"name"`
+	Required bool   `json:"required,omitempty"`
+	Status   string `json:"status,omitempty"`
+}
+
+type skillOperation struct {
+	Name        string      `json:"name"`
+	Command     string      `json:"command"`
+	Description string      `json:"description,omitempty"`
+	Required    []string    `json:"required,omitempty"`
+	Flags       []skillFlag `json:"flags,omitempty"`
+}
+
+type skillFlag struct {
+	Name        string `json:"name"`
+	Field       string `json:"field"`
+	Type        string `json:"type"`
+	Required    bool   `json:"required,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+type skillDatasource struct {
+	Name         string   `json:"name"`
+	Entity       string   `json:"entity,omitempty"`
+	Description  string   `json:"description,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
+}
+
+const defaultSkillTemplate = `# Dex Skill
+
+Use ` + "`dex`" + ` to access configured engineering integrations from the local dex state.
+
+Instance: ` + "`{{ .Instance }}`" + `
+Generated: {{ .GeneratedAt }}
+
+{{- if not .Plugins }}
+No activated integrations with configured auth were available when this file was generated.
+{{- end }}
+
+{{- range .Plugins }}
+## {{ .Name }}
+{{- if .Description }}
+
+{{ .Description }}
+{{- end }}
+
+Root command: ` + "`dex {{ .Command }}`" + `
+{{- if .Aliases }}
+Aliases: {{ range $i, $alias := .Aliases }}{{ if $i }}, {{ end }}` + "`dex {{ $alias }}`" + `{{ end }}
+{{- end }}
+
+{{- if .Auth }}
+Auth:
+{{- range .Auth }}
+- ` + "`{{ .Name }}`" + `: {{ .Status }}{{ if .Required }} (required){{ end }}
+{{- end }}
+{{- end }}
+
+{{- if .Operations }}
+Operations:
+{{- range .Operations }}
+- ` + "`dex {{ .Command }}`" + `{{ if .Description }} - {{ .Description }}{{ end }}
+  {{- if .Required }}
+  Required input: {{ range $i, $field := .Required }}{{ if $i }}, {{ end }}` + "`{{ $field }}`" + `{{ end }}
+  {{- end }}
+  {{- if .Flags }}
+  Flags: {{ range $i, $flag := .Flags }}{{ if $i }}, {{ end }}` + "`--{{ $flag.Name }}`" + `{{ end }}
+  {{- end }}
+{{- end }}
+{{- end }}
+
+{{- if .Datasources }}
+Datasources:
+{{- range .Datasources }}
+- ` + "`{{ .Name }}`" + `{{ if .Entity }} (` + "`{{ .Entity }}`" + `){{ end }}{{ if .Description }} - {{ .Description }}{{ end }}
+{{- end }}
+{{- end }}
+
+{{ end -}}
+`
+
+const installedSkillMainTemplate = `---
+name: dex
+description: Use dex to access engineering integrations through installed plugins and local dex state.
+---
+
+# Dex
+
+Use ` + "`dex`" + ` for local, plugin-backed access to engineering systems. Prefer the generated integration command references in ` + "`references/`" + ` for exact command names and available metadata.
+
+Generated: {{ .GeneratedAt }}
+Instance: ` + "`{{ .Instance }}`" + `
+
+## Basic Commands
+
+` + "```text" + `
+{{ .Help }}` + "```" + `
+
+## Integration References
+{{- range .Plugins }}
+- [{{ .Name }}]({{ .Reference }}){{ if .Description }} - {{ .Description }}{{ end }}
+{{- end }}
+`
+
+const installedSkillPluginTemplate = `# {{ .Name }}
+
+{{- if .Description }}
+{{ .Description }}
+{{- else }}
+Known dex plugin.
+{{- end }}
+
+Status: {{ if .Installed }}installed{{ else }}not installed{{ end }}{{ if .Activated }}, activated{{ end }}{{ if .Dynamic }}, manifest loaded{{ end }}
+{{- if .Version }}
+Version: ` + "`{{ .Version }}`" + `
+{{- end }}
+{{- if .Binary }}
+Binary: ` + "`{{ .Binary }}`" + `
+{{- end }}
+{{- if .GoInstall }}
+Go install target: ` + "`{{ .GoInstall }}`" + `
+{{- end }}
+
+{{- if .Install }}
+## Setup
+
+Install or enable this plugin:
+
+` + "```sh" + `
+{{ .Install }}
+` + "```" + `
+{{- end }}
+
+{{- if .Command }}
+## Commands
+
+Root command: ` + "`dex {{ .Command }}`" + `
+{{- if .Aliases }}
+Aliases: {{ range $i, $alias := .Aliases }}{{ if $i }}, {{ end }}` + "`dex {{ $alias }}`" + `{{ end }}
+{{- end }}
+{{- end }}
+
+{{- if .Auth }}
+## Auth
+{{- range .Auth }}
+- ` + "`{{ .Name }}`" + `: {{ .Status }}{{ if .Required }} (required){{ end }}
+{{- end }}
+{{- end }}
+
+{{- if .Operations }}
+## Operations
+{{- range .Operations }}
+- ` + "`dex {{ .Command }}`" + `{{ if .Description }} - {{ .Description }}{{ end }}
+  {{- if .Required }}
+  Required input: {{ range $i, $field := .Required }}{{ if $i }}, {{ end }}` + "`{{ $field }}`" + `{{ end }}
+  {{- end }}
+  {{- if .Flags }}
+  Flags: {{ range $i, $flag := .Flags }}{{ if $i }}, {{ end }}` + "`--{{ $flag.Name }}`" + `{{ end }}
+  {{- end }}
+{{- end }}
+{{- end }}
+
+{{- if .Datasources }}
+## Datasources
+{{- range .Datasources }}
+- ` + "`{{ .Name }}`" + `{{ if .Entity }} (` + "`{{ .Entity }}`" + `){{ end }}{{ if .Capabilities }} capabilities={{ .Capabilities }}{{ end }}{{ if .Description }} - {{ .Description }}{{ end }}
+{{- end }}
+{{- end }}
+
+{{- if not .Dynamic }}
+## Metadata
+
+Dynamic plugin metadata was unavailable when this reference was generated. Install and activate the plugin, then run ` + "`dex skill install`" + ` again to refresh operations, datasources, aliases, and auth metadata.
+{{- end }}
+`
+
+func buildSkillTemplateData(ctx context.Context, runner runtime.Runner, instance string) (skillTemplateData, error) {
+	manifests, err := activePluginManifests(ctx, runner)
+	if err != nil {
+		return skillTemplateData{}, err
+	}
+	data := skillTemplateData{GeneratedAt: time.Now().UTC().Format(time.RFC3339), Instance: runtime.NormalizeInstance(instance)}
+	for _, manifest := range manifests {
+		plugin, ok := skillPluginFromManifest(runner, data.Instance, manifest, true)
+		if !ok {
+			continue
+		}
+		data.Plugins = append(data.Plugins, plugin)
+	}
+	sort.Slice(data.Plugins, func(i, j int) bool { return data.Plugins[i].Name < data.Plugins[j].Name })
+	return data, nil
+}
+
+func buildInstalledSkillTemplateData(ctx context.Context, opts *options, runner runtime.Runner, instance string) (skillTemplateData, error) {
+	data := skillTemplateData{GeneratedAt: time.Now().UTC().Format(time.RFC3339), Instance: runtime.NormalizeInstance(instance)}
+	if help, err := dexRootHelpText(ctx, opts); err == nil {
+		data.Help = help
+	}
+	for _, entry := range runner.Marketplace.Plugins() {
+		plugin := skillPluginFromMarketplaceEntry(runner, entry)
+		if plugin.Activated {
+			if manifest, err := pluginManifest(ctx, runner, entry.Name); err == nil {
+				if dynamic, ok := skillPluginFromManifest(runner, data.Instance, manifest, false); ok {
+					dynamic.Installed = plugin.Installed
+					dynamic.Activated = plugin.Activated
+					dynamic.Dynamic = true
+					dynamic.Binary = plugin.Binary
+					dynamic.GoInstall = plugin.GoInstall
+					dynamic.Install = plugin.Install
+					if strings.TrimSpace(dynamic.Description) == "" {
+						dynamic.Description = plugin.Description
+					}
+					plugin = dynamic
+				}
+			}
+		}
+		plugin.Reference = filepath.ToSlash(filepath.Join("references", skillReferenceFileName(plugin.Name)))
+		data.Plugins = append(data.Plugins, plugin)
+	}
+	sort.Slice(data.Plugins, func(i, j int) bool { return data.Plugins[i].Name < data.Plugins[j].Name })
+	return data, nil
+}
+
+func skillPluginFromMarketplaceEntry(runner runtime.Runner, entry core.PluginEntry) skillPlugin {
+	status, err := runner.State.PluginStatus(entry)
+	installed := false
+	activated := false
+	if err == nil {
+		installed = status.Installed
+		activated = status.Activated
+	}
+	plugin := skillPlugin{
+		Name:        strings.TrimSpace(entry.Name),
+		Description: strings.TrimSpace(entry.Description),
+		Command:     strings.TrimSpace(entry.Name),
+		Installed:   installed,
+		Activated:   activated,
+		Binary:      strings.TrimSpace(entry.Binary),
+		GoInstall:   strings.TrimSpace(entry.GoInstall),
+	}
+	if !installed {
+		if strings.TrimSpace(entry.GoInstall) != "" {
+			plugin.Install = "dex plugin install " + entry.Name
+		} else {
+			plugin.Install = "dex plugin activate " + entry.Name
+		}
+	}
+	return plugin
+}
+
+func skillPluginFromManifest(runner runtime.Runner, instance string, manifest core.PluginManifest, requireReadyAuth bool) (skillPlugin, bool) {
+	auth, authReady := skillAuthFields(runner, instance, manifest)
+	if requireReadyAuth && !authReady {
+		return skillPlugin{}, false
+	}
+	commandNames := manifestCommandNames(manifest)
+	if len(commandNames) == 0 {
+		return skillPlugin{}, false
+	}
+	commandName := preferredSkillCommandName(commandNames)
+	plugin := skillPlugin{
+		Name:        strings.TrimSpace(manifest.Name),
+		Version:     strings.TrimSpace(manifest.Version),
+		Description: strings.TrimSpace(manifest.Description),
+		Command:     commandName,
+		Dynamic:     true,
+		Auth:        auth,
+	}
+	for _, name := range commandNames {
+		if name != commandName {
+			plugin.Aliases = append(plugin.Aliases, name)
+		}
+	}
+	for _, operation := range manifest.Operations {
+		path := generatedOperationPath(manifest, operation)
+		if len(path) == 0 {
+			continue
+		}
+		plugin.Operations = append(plugin.Operations, skillOperationFromSpec(plugin.Command, operation, path))
+	}
+	for _, datasource := range manifest.Datasources {
+		plugin.Datasources = append(plugin.Datasources, skillDatasource{
+			Name:         datasource.Name,
+			Entity:       datasource.Entity,
+			Description:  strings.TrimSpace(datasource.Description),
+			Capabilities: datasource.Capabilities,
+		})
+	}
+	sort.Slice(plugin.Operations, func(i, j int) bool { return plugin.Operations[i].Name < plugin.Operations[j].Name })
+	sort.Slice(plugin.Datasources, func(i, j int) bool { return plugin.Datasources[i].Name < plugin.Datasources[j].Name })
+	return plugin, true
+}
+
+func preferredSkillCommandName(names []string) string {
+	if len(names) > 1 {
+		for _, name := range names[1:] {
+			if name = strings.TrimSpace(name); name != "" {
+				return name
+			}
+		}
+	}
+	return strings.TrimSpace(names[0])
+}
+
+func skillAuthFields(runner runtime.Runner, instance string, manifest core.PluginManifest) ([]skillAuthField, bool) {
+	fields := authFieldsFromManifest(manifest)
+	if len(fields) == 0 {
+		return nil, true
+	}
+	purposes := make([]runtime.SecretPurpose, 0, len(fields))
+	for _, field := range fields {
+		purposes = append(purposes, runtime.SecretPurpose{Name: field.Name, Env: field.Env})
+	}
+	status := runner.State.SecretStatus(manifest.Name, instance, purposes)
+	out := make([]skillAuthField, 0, len(fields))
+	ready := true
+	for _, field := range fields {
+		fieldStatus := status[field.Name]
+		if field.Required && fieldStatus == "missing" {
+			ready = false
+		}
+		out = append(out, skillAuthField{Name: field.Name, Required: field.Required, Status: fieldStatus})
+	}
+	return out, ready
+}
+
+func authFieldsFromManifest(manifest core.PluginManifest) []core.AuthField {
+	seen := map[string]bool{}
+	var out []core.AuthField
+	for _, method := range manifest.Auth {
+		for _, field := range method.Fields {
+			name := strings.TrimSpace(field.Name)
+			if name == "" || seen[name] {
+				continue
+			}
+			field.Name = name
+			if len(field.Env) == 0 {
+				field.Env = method.Env
+			}
+			seen[name] = true
+			out = append(out, field)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func skillOperationFromSpec(rootCommand string, operation core.OperationSpec, path []string) skillOperation {
+	schema := parseOperationInputSchema(operation)
+	out := skillOperation{
+		Name:        operation.Name,
+		Command:     strings.TrimSpace(rootCommand + " " + strings.Join(path, " ")),
+		Description: strings.TrimSpace(operation.Description),
+		Required:    schema.Required,
+	}
+	required := map[string]bool{}
+	for _, field := range schema.Required {
+		required[field] = true
+	}
+	for _, field := range sortedSchemaFields(schema.Properties) {
+		spec := schema.Properties[field]
+		out.Flags = append(out.Flags, skillFlag{
+			Name:        fieldFlagName(field),
+			Field:       field,
+			Type:        schemaFieldType(spec),
+			Required:    required[field],
+			Description: strings.TrimSpace(spec.Description),
+		})
+	}
+	return out
+}
+
+func renderSkillTemplate(path string, data skillTemplateData) (string, error) {
+	source := defaultSkillTemplate
+	if strings.TrimSpace(path) != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		source = string(raw)
+	}
+	tmpl, err := template.New("dex-skill").Parse(source)
+	if err != nil {
+		return "", err
+	}
+	var out strings.Builder
+	if err := tmpl.Execute(&out, data); err != nil {
+		return "", err
+	}
+	return out.String(), nil
+}
+
+func renderNamedTemplate(name, defaultSource, path string, data any) (string, error) {
+	source := defaultSource
+	if strings.TrimSpace(path) != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		source = string(raw)
+	}
+	tmpl, err := template.New(name).Parse(source)
+	if err != nil {
+		return "", err
+	}
+	var out strings.Builder
+	if err := tmpl.Execute(&out, data); err != nil {
+		return "", err
+	}
+	return out.String(), nil
+}
+
+func writeDexSkillInstall(ctx context.Context, opts *options, runner runtime.Runner, dir, mainTemplatePath, pluginTemplatePath string, linkClaude bool) (skillInstallResult, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return skillInstallResult{}, fmt.Errorf("skill install dir is empty")
+	}
+	data, err := buildInstalledSkillTemplateData(ctx, opts, runner, opts.instanceName())
+	if err != nil {
+		return skillInstallResult{}, err
+	}
+	result := skillInstallResult{Dir: dir, Main: filepath.Join(dir, "SKILL.md")}
+	refsDir := filepath.Join(dir, "references")
+	if err := os.MkdirAll(refsDir, 0o700); err != nil {
+		return result, err
+	}
+	main, err := renderNamedTemplate("dex-skill-main", installedSkillMainTemplate, mainTemplatePath, data)
+	if err != nil {
+		return result, err
+	}
+	if err := os.WriteFile(result.Main, []byte(main), 0o600); err != nil {
+		return result, err
+	}
+	for _, plugin := range data.Plugins {
+		rendered, err := renderNamedTemplate("dex-skill-plugin", installedSkillPluginTemplate, pluginTemplatePath, plugin)
+		if err != nil {
+			return result, err
+		}
+		path := filepath.Join(refsDir, skillReferenceFileName(plugin.Name))
+		if err := os.WriteFile(path, []byte(rendered), 0o600); err != nil {
+			return result, err
+		}
+		result.References = append(result.References, path)
+	}
+	if linkClaude {
+		link, linked, err := linkClaudeDexSkill(dir)
+		if err != nil {
+			return result, err
+		}
+		result.ClaudeLink = link
+		result.Linked = linked
+	}
+	return result, nil
+}
+
+func dexHomeSkillDir(state runtime.State) string {
+	return filepath.Join(state.Home, "skills", "dex")
+}
+
+func skillReferenceFileName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	var out strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+			out.WriteRune(r)
+		case r >= '0' && r <= '9':
+			out.WriteRune(r)
+		case r == '-' || r == '_' || r == '.':
+			out.WriteRune(r)
+		default:
+			out.WriteRune('-')
+		}
+	}
+	if strings.TrimSpace(out.String()) == "" {
+		return "plugin.md"
+	}
+	return out.String() + ".md"
+}
+
+func linkClaudeDexSkill(target string) (string, bool, error) {
+	target, err := filepath.Abs(strings.TrimSpace(target))
+	if err != nil {
+		return "", false, err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", false, err
+	}
+	claudeDir := filepath.Join(home, ".claude")
+	if stat, err := os.Stat(claudeDir); err != nil || !stat.IsDir() {
+		return "", false, nil
+	}
+	skillsDir := filepath.Join(claudeDir, "skills")
+	if err := os.MkdirAll(skillsDir, 0o700); err != nil {
+		return "", false, err
+	}
+	link := filepath.Join(skillsDir, "dex")
+	if current, err := os.Readlink(link); err == nil {
+		if current == target {
+			return link, true, nil
+		}
+		if err := os.Remove(link); err != nil {
+			return link, false, err
+		}
+	} else if !os.IsNotExist(err) {
+		if stat, statErr := os.Lstat(link); statErr == nil && stat.IsDir() {
+			return link, false, fmt.Errorf("%s exists and is not a symlink", link)
+		}
+		if statErr := os.Remove(link); statErr != nil {
+			return link, false, err
+		}
+	}
+	if err := os.Symlink(target, link); err != nil {
+		return link, false, err
+	}
+	return link, true, nil
+}
+
+func refreshDexSkillIfInstalled(ctx context.Context, opts *options, runner runtime.Runner) (string, error) {
+	dir := dexHomeSkillDir(runner.State)
+	if stat, err := os.Stat(filepath.Join(dir, "SKILL.md")); err != nil || stat.IsDir() {
+		return "", nil
+	}
+	result, err := writeDexSkillInstall(ctx, opts, runner, dir, "", "", false)
+	if err != nil {
+		return "", err
+	}
+	return result.Dir, nil
+}
+
+func addSkillRefreshResult(ctx context.Context, opts *options, runner runtime.Runner, result map[string]any) {
+	dir, err := refreshDexSkillIfInstalled(ctx, opts, runner)
+	if err != nil {
+		result["skill_error"] = err.Error()
+		return
+	}
+	if dir != "" {
+		result["skill_dir"] = dir
+	}
+}
+
+func dexRootHelpText(ctx context.Context, opts *options) (string, error) {
+	copyOpts := *opts
+	copyOpts.output = "text"
+	var out bytes.Buffer
+	copyOpts.out = &out
+	copyOpts.errOut = &out
+	cmd := newRootCommand(&copyOpts)
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--help"})
+	if err := attachGeneratedPluginCommands(ctx, cmd, &copyOpts); err != nil {
+		return "", err
+	}
+	if err := cmd.Execute(); err != nil {
+		return "", err
+	}
+	return strings.TrimRight(out.String(), "\n") + "\n", nil
 }
 
 func newAuthCommand(opts *options) *cobra.Command {
@@ -1121,7 +2273,7 @@ func activePluginManifests(ctx context.Context, runner runtime.Runner) ([]core.P
 		}
 		manifest, err := pluginManifest(ctx, runner, entry.Name)
 		if err != nil {
-			return nil, err
+			continue
 		}
 		if strings.TrimSpace(manifest.Name) == "" {
 			manifest.Name = entry.Name
@@ -1150,6 +2302,7 @@ func newGeneratedPluginCommand(opts *options, runner runtime.Runner, manifest co
 		Use:     commandNames[0],
 		Aliases: commandNames[1:],
 		Short:   manifest.Description,
+		GroupID: commandGroupIntegrations,
 	}
 	paths := map[string]bool{}
 	for _, operation := range manifest.Operations {

@@ -15,7 +15,9 @@ import (
 type InstalledPlugin struct {
 	Name        string    `json:"name"`
 	Binary      string    `json:"binary,omitempty"`
+	Path        string    `json:"path,omitempty"`
 	GoInstall   string    `json:"go_install,omitempty"`
+	Version     string    `json:"version,omitempty"`
 	InstalledAt time.Time `json:"installed_at"`
 	Managed     bool      `json:"managed,omitempty"`
 	Activated   bool      `json:"activated,omitempty"`
@@ -32,11 +34,28 @@ type PluginStatus struct {
 	Activated bool   `json:"activated"`
 	Managed   bool   `json:"managed,omitempty"`
 	Binary    string `json:"binary,omitempty"`
+	Path      string `json:"path,omitempty"`
 	GoInstall string `json:"go_install,omitempty"`
+	Version   string `json:"version,omitempty"`
+}
+
+type PluginUninstallResult struct {
+	Plugin        string `json:"plugin"`
+	Removed       bool   `json:"removed"`
+	BinaryRemoved bool   `json:"binary_removed,omitempty"`
+	Path          string `json:"path,omitempty"`
 }
 
 func (s State) InstalledPluginsPath() string {
 	return filepath.Join(s.Home, "plugins", "installed.json")
+}
+
+func (s State) PluginBinDir() string {
+	return filepath.Join(s.Home, "plugins", "bin")
+}
+
+func (s State) PluginBinaryPath(binary string) string {
+	return filepath.Join(s.PluginBinDir(), filepath.Base(strings.TrimSpace(binary)))
 }
 
 func (s State) LoadInstalledPlugins() (InstalledRegistry, error) {
@@ -56,6 +75,26 @@ func (s State) LoadInstalledPlugins() (InstalledRegistry, error) {
 }
 
 func (s State) SaveInstalledPlugin(entry core.PluginEntry, managed bool) error {
+	return s.saveInstalledPlugin(entry, managed, "", "")
+}
+
+func (s State) SaveInstalledPluginAt(entry core.PluginEntry, managed bool, path string) error {
+	return s.saveInstalledPlugin(entry, managed, path, "")
+}
+
+func (s State) SaveInstalledPluginVersion(entry core.PluginEntry, managed bool, path, version string) error {
+	return s.saveInstalledPlugin(entry, managed, path, version)
+}
+
+func (s State) SaveInstalledPluginVersionActivated(entry core.PluginEntry, managed bool, path, version string, activated bool) error {
+	return s.saveInstalledPluginActivated(entry, managed, path, version, activated)
+}
+
+func (s State) saveInstalledPlugin(entry core.PluginEntry, managed bool, path, version string) error {
+	return s.saveInstalledPluginActivated(entry, managed, path, version, true)
+}
+
+func (s State) saveInstalledPluginActivated(entry core.PluginEntry, managed bool, path, version string, activated bool) error {
 	registry, err := s.LoadInstalledPlugins()
 	if err != nil {
 		return err
@@ -63,10 +102,12 @@ func (s State) SaveInstalledPlugin(entry core.PluginEntry, managed bool) error {
 	record := InstalledPlugin{
 		Name:        entry.Name,
 		Binary:      entry.Binary,
+		Path:        strings.TrimSpace(path),
 		GoInstall:   entry.GoInstall,
+		Version:     strings.TrimSpace(version),
 		InstalledAt: time.Now().UTC(),
 		Managed:     managed,
-		Activated:   true,
+		Activated:   activated,
 	}
 	replaced := false
 	for i := range registry.Plugins {
@@ -105,9 +146,29 @@ func (s State) PluginStatus(entry core.PluginEntry) (PluginStatus, error) {
 		if strings.TrimSpace(plugin.GoInstall) != "" {
 			status.GoInstall = plugin.GoInstall
 		}
+		if strings.TrimSpace(plugin.Path) != "" {
+			status.Path = plugin.Path
+		}
+		if strings.TrimSpace(plugin.Version) != "" {
+			status.Version = plugin.Version
+		}
 		return status, nil
 	}
 	return status, nil
+}
+
+func (s State) InstalledPlugin(name string) (InstalledPlugin, bool, error) {
+	registry, err := s.LoadInstalledPlugins()
+	if err != nil {
+		return InstalledPlugin{}, false, err
+	}
+	name = strings.TrimSpace(name)
+	for _, plugin := range registry.Plugins {
+		if plugin.Name == name {
+			return plugin, true, nil
+		}
+	}
+	return InstalledPlugin{}, false, nil
 }
 
 func (s State) PluginStatuses(m Marketplace) (map[string]PluginStatus, error) {
@@ -200,26 +261,34 @@ func (s State) DeactivatePlugin(name string) (bool, error) {
 	return false, nil
 }
 
-func (s State) RemoveInstalledPlugin(name string) (bool, error) {
+func (s State) UninstallPlugin(name string) (PluginUninstallResult, error) {
 	name = strings.TrimSpace(name)
+	result := PluginUninstallResult{Plugin: name}
 	registry, err := s.LoadInstalledPlugins()
 	if err != nil {
-		return false, err
+		return result, err
 	}
 	next := registry.Plugins[:0]
-	removed := false
 	for _, plugin := range registry.Plugins {
 		if plugin.Name == name {
-			removed = true
+			result.Removed = true
+			if plugin.Managed && insideDir(s.PluginBinDir(), plugin.Path) {
+				result.Path = plugin.Path
+				if err := os.Remove(plugin.Path); err == nil {
+					result.BinaryRemoved = true
+				} else if !os.IsNotExist(err) {
+					return result, err
+				}
+			}
 			continue
 		}
 		next = append(next, plugin)
 	}
 	registry.Plugins = next
 	if err := s.writeInstalledPlugins(registry); err != nil {
-		return false, err
+		return result, err
 	}
-	return removed, nil
+	return result, nil
 }
 
 func (s State) writeInstalledPlugins(registry InstalledRegistry) error {

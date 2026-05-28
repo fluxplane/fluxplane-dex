@@ -83,6 +83,32 @@ func TestEndpointDiscoverFindsMySQLConnectionSecret(t *testing.T) {
 	}
 }
 
+func TestEndpointDiscoverDefaultsExplicitMySQLSecretPort(t *testing.T) {
+	plugin := NewPluginWithService(Service{
+		Services: func(_ context.Context, _ EndpointDiscoverInput) ([]corev1.Service, error) { return nil, nil },
+		Secrets: func(_ context.Context, _ EndpointDiscoverInput) ([]corev1.Secret, error) {
+			return []corev1.Secret{{
+				ObjectMeta: metav1.ObjectMeta{Name: "connection-secret", Namespace: "apps"},
+				Data: map[string][]byte{
+					"host":     []byte("database.apps.svc"),
+					"database": []byte("app"),
+					"username": []byte("appuser"),
+					"password": []byte("secret"),
+				},
+			}}, nil
+		},
+	})
+
+	out := plugintest.RunOK[EndpointDiscoverResult](t, plugin, OperationEndpointDiscover, map[string]any{"product": "mysql", "context": "dev"})
+	if len(out.Candidates) != 1 {
+		t.Fatalf("candidates = %#v", out.Candidates)
+	}
+	candidate := out.Candidates[0]
+	if candidate.Product != "mysql" || candidate.URL != "mysql://database.apps.svc:3306/app" {
+		t.Fatalf("candidate = %#v", candidate)
+	}
+}
+
 func TestEndpointDiscoverFindsPostgresConnectionSecret(t *testing.T) {
 	plugin := NewPluginWithService(Service{
 		Services: func(_ context.Context, _ EndpointDiscoverInput) ([]corev1.Service, error) { return nil, nil },

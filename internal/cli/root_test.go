@@ -320,6 +320,22 @@ func main() {
 	}
 }
 
+func TestEndpointDiscoverPluginReturnsSinglePluginError(t *testing.T) {
+	pluginDir := writeFailingEndpointDiscoverPlugin(t)
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "--dev-plugin", "kubernetes=" + pluginDir, "endpoint", "discover", "mysql", "--plugin", "kubernetes", "-o", "json"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected discovery error")
+	}
+	if !strings.Contains(err.Error(), "kubeconfig missing") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestParseEndpointSelection(t *testing.T) {
 	selected, err := parseEndpointSelection("1,3-5,3")
 	if err != nil {
@@ -382,6 +398,52 @@ func main() {
 			"row_count": 1,
 			"rows": []map[string]any{{"ok": 1}},
 		},
+	})
+}
+`
+	if err := os.WriteFile(filepath.Join(cmdDir, "main.go"), []byte(mainGo), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return pluginDir
+}
+
+func writeFailingEndpointDiscoverPlugin(t *testing.T) string {
+	t.Helper()
+	pluginDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pluginDir, "go.mod"), []byte("module failingkubernetes\n\ngo 1.26\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmdDir := filepath.Join(pluginDir, "cmd", "dex-plugin-kubernetes")
+	if err := os.MkdirAll(cmdDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mainGo := `package main
+
+import (
+	"encoding/json"
+	"os"
+)
+
+func main() {
+	var req struct {
+		Command string
+	}
+	_ = json.NewDecoder(os.Stdin).Decode(&req)
+	if req.Command == "manifest" {
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"protocol": "dex.plugin.v1",
+			"ok": true,
+			"result": map[string]any{
+				"name": "kubernetes",
+				"endpoints": []map[string]any{{"name": "kubernetes.endpoint.discover", "products": []string{"mysql"}}},
+			},
+		})
+		return
+	}
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"protocol": "dex.plugin.v1",
+		"ok": false,
+		"error": map[string]any{"code": "kubernetes", "message": "kubeconfig missing"},
 	})
 }
 `

@@ -285,13 +285,9 @@ func classifySQLSecretProduct(haystack, port, productFilter string) string {
 	productFilter = strings.ToLower(strings.TrimSpace(productFilter))
 	switch productFilter {
 	case "postgres", "postgresql", "pg":
-		if strings.Contains(haystack, "postgres") || port == "5432" {
-			return "postgres"
-		}
+		return "postgres"
 	case "mysql", "mariadb":
-		if strings.Contains(haystack, "mysql") || port == "3306" {
-			return "mysql"
-		}
+		return "mysql"
 	case "", "database", "sql":
 		if strings.Contains(haystack, "postgres") || port == "5432" {
 			return "postgres"

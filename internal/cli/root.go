@@ -946,7 +946,12 @@ func discoverEndpoints(ctx context.Context, runner runtime.Runner, instance, pro
 		}
 		view.Results[plugin.Name] = pluginView
 	}
-	if len(view.Results) == 0 || strings.TrimSpace(pluginFilter) != "" {
+	if strings.TrimSpace(pluginFilter) != "" {
+		if result, ok := view.Results[view.Plugin]; ok && strings.TrimSpace(result.Error) != "" {
+			return view, fmt.Errorf("endpoint discovery with plugin %q failed: %s", view.Plugin, result.Error)
+		}
+		view.Results = nil
+	} else if len(view.Results) == 0 {
 		view.Results = nil
 	}
 	return view, nil

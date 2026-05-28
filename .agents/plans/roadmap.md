@@ -88,7 +88,8 @@ These are the next implementation slices implied by the concepts document,
 vision, and roadmap. They are intentionally smaller than the broad P0 themes.
 
 Current recommended order:
-1. Implement Shortcut Binding v1.
+1. Done: Shortcut Binding v1 executes marketplace operation/datasource
+   bindings.
 2. Maintain the plugin install/activation model so plugin-specific surfaces are
    driven by state and marketplace bindings, not hardcoded host commands.
 3. Stabilize current plugins, especially Slack live behavior, GitLab read
@@ -143,23 +144,26 @@ Acceptance:
 - Generic search can filter by stable entity names.
 - Lookup results retain source, score, matched fields, and record identity.
 
-### 3. Shortcut Binding v1
+### 3. Shortcut Binding v1 - Implemented
 
 Goal: make CLI shortcuts explicit bindings over operations and datasources,
 while keeping legacy ergonomics.
 
 Scope:
-- Extend marketplace command shortcut metadata so a shortcut can target an
+- Extended marketplace command shortcut metadata so a shortcut can target an
   operation or datasource capability.
-- Keep shortcut handlers as argument normalization and rendering glue.
-- Use GitLab project/MR shortcuts and websearch shortcuts as proof points.
-- Add tests that compare shortcut behavior with the underlying generic call.
+- Added generic host-side shortcut execution from marketplace bindings.
+- Kept shortcut handlers as argument normalization and rendering glue.
+- Added placeholder and flag mapping for current shortcut patterns, including
+  Kubernetes inventory shortcuts.
+- Used Kubernetes inventory shortcuts and datasource bindings as proof points.
 
 Acceptance:
-- A shortcut can be inspected and traced to its underlying operation or
+- Done: a shortcut can be inspected and traced to its underlying operation or
   datasource.
-- Shortcut failures surface the same structured errors as generic calls.
-- No plugin implementation needs Cobra command knowledge.
+- Done: shortcut execution invokes the same operation/datasource protocol paths
+  as generic calls.
+- Done: no plugin implementation needs Cobra command knowledge.
 
 ### 4. Context Provider v1 - Implemented
 
@@ -317,9 +321,9 @@ reference concepts ported or re-shaped locally before the larger integrations
 can be clean.
 
 Current local support:
-- Present: `PluginManifest`, typed operation schemas, operation safety/access metadata, auth methods/fields, datasource specs with capabilities/entities/views/relations/completion metadata, static context specs, dynamic context providers, endpoint specs, index specs, endpoint candidates, context blocks, typed pluginbinding handlers, batch calls, and secret purpose metadata.
-- Partial: marketplace command shortcuts, datasource search/get/lookup, host-owned indexes, builtin plugins, and live auth/secret resolution.
-- Missing for local parity: shortcut bindings, discovery providers, endpoint registry, structured auth-test reports, runtime system boundary, managed processes, and richer render metadata.
+- Present: `PluginManifest`, typed operation schemas, operation safety/access metadata, auth methods/fields, datasource specs with capabilities/entities/views/relations/completion metadata, static context specs, dynamic context providers, endpoint specs, index specs, endpoint candidates, context blocks, typed pluginbinding handlers, batch calls, secret purpose metadata, executable marketplace shortcut bindings, endpoint registry, and endpoint health.
+- Partial: datasource search/get/lookup, host-owned indexes, builtin plugins, live auth/secret resolution, and discovery providers.
+- Missing for local parity: structured auth-test reports, runtime system boundary, managed processes, and richer render metadata.
 - Deferred to contribution-provider phase: operation sets, activation sets,
   external identity, observers/assertions as contribution facts, usage/events,
   and catalog export shapes for `fluxplane-core`.
@@ -342,8 +346,8 @@ Concepts to port into this repo:
   render hints to `fluxplane-core` without importing `fluxplane-core`.
 
 Immediate concept priority:
-- P0: maintain operation semantics/access metadata, datasource entity/view model, and context providers; implement shortcut binding.
-- P1: Kubernetes-driven endpoint registry/discovery, auth test reports,
+- P0: maintain operation semantics/access metadata, datasource entity/view model, context providers, executable shortcut bindings, and endpoint health.
+- P1: broaden Kubernetes-driven endpoint registry/discovery, auth test reports,
   secret resolution/migration, runtime system boundary, and managed process
   handles.
 - P2: current plugin stabilization, richer render metadata, and high-value
@@ -811,7 +815,7 @@ The current plugin protocol can express operations, auth methods, datasources, c
    `fluxplane-core`; port selected behavior and concepts into this repo.
 2. Maintain Operation Metadata v1 and require it for new write operations.
 3. Maintain Datasource Entity/View v1 and require metadata for new datasources.
-4. Implement Shortcut Binding v1 for GitLab and websearch shortcuts.
+4. Done: Shortcut Binding v1 executes marketplace operation/datasource bindings.
 5. Extend Context Provider v1 beyond the system, GitLab, and websearch proof
    points as plugins gain richer context.
 6. Update protocol/runtime tests so builtins and external plugins behave the

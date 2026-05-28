@@ -216,8 +216,11 @@ Shortcuts should normalize arguments and render useful output, but the underlyin
 capability should remain available through generic operation or datasource
 interfaces.
 
-The roadmap makes shortcut bindings more explicit so legacy ergonomics can
-coexist with a clean plugin protocol.
+Shortcut bindings are declared in marketplace command metadata. The host resolves
+the shortcut pattern, maps placeholders and common flags into operation or
+datasource input, then invokes the same generic protocol path as `dex op run`,
+`dex search`, or `dex lookup`. Plugin implementations should not embed Cobra
+command parsing.
 
 ## Builtin Plugin
 

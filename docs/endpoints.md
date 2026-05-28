@@ -68,6 +68,9 @@ dex kube svc show latest/api --endpoint dev-kubernetes
 dex kube pod ls --endpoint dev-kubernetes --namespace latest --query api
 ```
 
+These shortcuts are resolved from marketplace metadata and call the same
+underlying `kubernetes.*` operations shown above.
+
 Datasource search exposes namespaces, services, and pods as common datasource
 records:
 

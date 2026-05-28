@@ -53,6 +53,10 @@ dex gl mr ls
 dex gl mr show group/project!123
 ```
 
+Shortcuts are marketplace bindings over operations or datasources. The same
+underlying capability remains available through `dex op run`, `dex search`, or
+`dex lookup`.
+
 Build indexes and use datasource search/lookup:
 
 ```bash
@@ -105,7 +109,8 @@ This project is actively being built. The current surface includes:
 - `duckduckgo`: web search provider without auth.
 - `websearch`: builtin generic search aggregator over web search providers.
 - `kubernetes`: kubeconfig context discovery, cluster endpoint health probes,
-  namespace/service/pod inventory, and in-cluster endpoint discovery.
+  namespace/service/pod inventory, executable inventory shortcuts, and
+  in-cluster endpoint discovery.
 - `sql`: read-only MySQL, PostgreSQL, and SQLite queries through URLs, DSNs, or
   registered endpoint refs.
 

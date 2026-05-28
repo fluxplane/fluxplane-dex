@@ -1960,7 +1960,7 @@ func main() {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.GitLab != "" || result.Slack != "" || !result.Host {
+	if result.GitLab != "" || result.Slack != "" || result.Host {
 		t.Fatalf("unexpected plugin env: %#v", result)
 	}
 

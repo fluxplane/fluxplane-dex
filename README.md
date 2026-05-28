@@ -129,9 +129,14 @@ This project is actively being built. The current surface includes:
 - `gitlab`: auth test, index build, project list/show, merge request list/show,
   indexed datasources, and live/index-backed lookup for projects, users,
   groups, issues, and merge requests.
-- `slack`: channel/user index build, live/index-backed lookup for users and
-  channels, message send/search/thread operations, and live datasource records
-  for messages, thread messages, and channel members.
+- `slack`: auth test, token identity info, channel/user index build,
+  live/index-backed lookup for users and channels, channel/user list, channel
+  join, unreads and mark-read including `latest`, presence get/set, message
+  send/edit/delete with text, markdown, and Block Kit blocks, reaction
+  add/remove, bookmark list/add/edit/delete, custom and built-in emoji list, file
+  list/info/upload/download/delete, search with ticket extraction, mentions
+  with pending/acked/replied classification, thread operations, and live
+  datasource records for messages, thread messages, and channel members.
 - `system`: local system information by category.
 - `tavily`: authenticated web search provider.
 - `duckduckgo`: web search provider without auth.

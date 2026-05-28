@@ -95,6 +95,9 @@ func TestPluginManifestIncludesGeneratedInputSchema(t *testing.T) {
 	if len(manifest.Operations) != 1 {
 		t.Fatalf("operations = %#v", manifest.Operations)
 	}
+	if manifest.Metadata[ManifestProtocolKey] != "" {
+		t.Fatalf("protocol metadata should be explicit opt-in: %#v", manifest.Metadata)
+	}
 	var schema struct {
 		Type       string   `json:"type"`
 		Required   []string `json:"required"`

@@ -944,6 +944,7 @@ func newOpCommand(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			runner.EventSink = cliEventSink(cmd.ErrOrStderr())
 			return callOperation(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), args[0], input)
 		},
 	})
@@ -965,6 +966,7 @@ func newOpCommand(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			runner.EventSink = cliEventSink(cmd.ErrOrStderr())
 			result, err := runner.OperationBatch(cmd.Context(), args[0], opts.instanceName(), calls)
 			if err != nil {
 				return err
@@ -2579,6 +2581,7 @@ func configureGeneratedOperationCommand(cmd *cobra.Command, opts *options, runne
 		if err != nil {
 			return err
 		}
+		runner.EventSink = cliEventSink(cmd.ErrOrStderr())
 		return callOperation(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), operation.Name, input)
 	}
 	for _, field := range sortedSchemaFields(schema.Properties) {
@@ -3643,6 +3646,7 @@ func invokeAndRender(cmd *cobra.Command, opts *options, plugin, command string, 
 	if err != nil {
 		return err
 	}
+	runner.EventSink = cliEventSink(cmd.ErrOrStderr())
 	resp, err := runner.InvokeInstance(cmd.Context(), plugin, opts.instanceName(), command, payload)
 	if err != nil {
 		return err
@@ -3754,6 +3758,35 @@ func callOperation(ctx context.Context, out io.Writer, output string, runner run
 		return fmt.Errorf("operation %s failed", name)
 	}
 	return render(out, output, resp.Result)
+}
+
+func cliEventSink(out io.Writer) func(context.Context, runtime.PluginEvent) {
+	return func(_ context.Context, event runtime.PluginEvent) {
+		if out == nil || strings.TrimSpace(event.Event) == "" {
+			return
+		}
+		message, current, total := pluginEventMessage(event.Payload)
+		switch {
+		case current > 0 && total > 0 && message != "":
+			_, _ = fmt.Fprintf(out, "%s [%d/%d]\n", message, current, total)
+		case message != "":
+			_, _ = fmt.Fprintln(out, message)
+		default:
+			_, _ = fmt.Fprintf(out, "%s\n", event.Event)
+		}
+	}
+}
+
+func pluginEventMessage(raw json.RawMessage) (string, int, int) {
+	var payload struct {
+		Message string `json:"message"`
+		Current int    `json:"current"`
+		Total   int    `json:"total"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &payload) != nil {
+		return "", 0, 0
+	}
+	return strings.TrimSpace(payload.Message), payload.Current, payload.Total
 }
 
 func authFields(ctx context.Context, runner runtime.Runner, plugin string) ([]core.AuthField, error) {

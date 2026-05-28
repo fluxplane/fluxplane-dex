@@ -10,23 +10,34 @@ import (
 	"github.com/fluxplane/fluxplane-dex/protocol"
 )
 
-type RunOption func(*protocol.Request)
+type runConfig struct {
+	req  protocol.Request
+	host pluginbinding.HostClient
+}
+
+type RunOption func(*runConfig)
 
 func WithInstance(instance string) RunOption {
-	return func(req *protocol.Request) {
-		req.Instance = instance
+	return func(cfg *runConfig) {
+		cfg.req.Instance = instance
 	}
 }
 
 func WithGrant(grant string) RunOption {
-	return func(req *protocol.Request) {
-		req.Grant = grant
+	return func(cfg *runConfig) {
+		cfg.req.Grant = grant
 	}
 }
 
 func WithRequest(request protocol.Request) RunOption {
-	return func(req *protocol.Request) {
-		*req = request
+	return func(cfg *runConfig) {
+		cfg.req = request
+	}
+}
+
+func WithHost(host pluginbinding.HostClient) RunOption {
+	return func(cfg *runConfig) {
+		cfg.host = host
 	}
 }
 
@@ -45,16 +56,16 @@ func Call(t *testing.T, name string, input any) protocol.OperationCall {
 
 func Run(t *testing.T, plugin *pluginbinding.Plugin, name string, input any, options ...RunOption) protocol.OperationResult {
 	t.Helper()
-	req := protocol.Request{Instance: "default"}
+	cfg := runConfig{req: protocol.Request{Instance: "default"}}
 	if plugin != nil {
-		req.Plugin = plugin.Manifest().Name
+		cfg.req.Plugin = plugin.Manifest().Name
 	}
 	for _, option := range options {
 		if option != nil {
-			option(&req)
+			option(&cfg)
 		}
 	}
-	return plugin.RunOperation(req, Call(t, name, input), pluginbinding.NewCache())
+	return plugin.RunOperationWithHost(cfg.req, Call(t, name, input), pluginbinding.NewCache(), cfg.host)
 }
 
 func RunOK[T any](t *testing.T, plugin *pluginbinding.Plugin, name string, input any, options ...RunOption) T {
@@ -84,23 +95,23 @@ func RunError(t *testing.T, plugin *pluginbinding.Plugin, name string, input any
 
 func Datasource(t *testing.T, plugin *pluginbinding.Plugin, command string, input any, options ...RunOption) protocol.Response {
 	t.Helper()
-	req := protocol.Request{Command: command, Instance: "default"}
+	cfg := runConfig{req: protocol.Request{Command: command, Instance: "default"}}
 	if plugin != nil {
-		req.Plugin = plugin.Manifest().Name
+		cfg.req.Plugin = plugin.Manifest().Name
 	}
 	if input != nil {
 		data, err := json.Marshal(input)
 		if err != nil {
 			t.Fatalf("marshal datasource input: %v", err)
 		}
-		req.Payload = data
+		cfg.req.Payload = data
 	}
 	for _, option := range options {
 		if option != nil {
-			option(&req)
+			option(&cfg)
 		}
 	}
-	return plugin.Handle(req)
+	return plugin.HandleWithHost(cfg.req, cfg.host)
 }
 
 func DatasourceOK[T any](t *testing.T, plugin *pluginbinding.Plugin, command string, input any, options ...RunOption) T {

@@ -132,6 +132,51 @@ go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke search acd -o j
 go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke lookup timo -o json
 ```
 
+Slack live smokes require `SLACK_BOT_TOKEN` and/or `SLACK_USER_TOKEN` or stored
+Slack auth fields on the throwaway instance. Use a non-critical workspace and a
+scratch channel:
+
+```bash
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke auth connect auto slack
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke op run slack.auth.test -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack info -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke index build slack -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack user list --query timo --limit 5 -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack channel list --query general --limit 5 -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack search "incident" --limit 5 -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack search "DEV-" --tickets --ticket-keys '["DEV"]' --limit 5 -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack mentions --user U123 --tickets --ticket-keys '["DEV"]' --limit 5 -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack mentions --user U123 --unhandled --limit 5 -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack unreads --channel C123 --since 1d --limit 10 -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack thread --channel C123 --ts 1710000000.123456 -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke datasource search slack.channel_members '{"channel":"C123","query":"timo","limit":5}' -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack emoji list --query check --limit 5 -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack emoji list --mode builtin --limit 5 -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack emoji list --mode all --include-aliases --query thumb --limit 10 -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack bookmark list --channel C123 -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack bookmark add --channel C123 --title "dex smoke bookmark" --link https://example.com --role bot -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack bookmark edit --channel C123 --bookmark-id B123 --title "dex smoke bookmark edited" --role bot -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack bookmark delete --channel C123 --bookmark-id B123 --role bot -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack file list --channel C123 --limit 5 -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack file info --file-id F123 -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack file download --file-id F123 --output-path /tmp/dex-slack-smoke-download --role bot -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack download --file-id F123 --output-path /tmp/dex-slack-smoke-download-top-level --role bot -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack file delete --file-id F123 --role bot -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack presence get --user U123 -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack presence set --presence auto --role user -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack channel join --channel C123 --role bot -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack message send --channel C123 --text "dex live smoke" --role bot -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack message send --channel C123 --markdown "*dex* markdown smoke" --role bot -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack message send --channel C123 --text "dex block fallback" --blocks '[{"type":"section","text":{"type":"mrkdwn","text":"*dex* block smoke"}}]' --role bot -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack message edit --channel C123 --ts 1710000000.123456 --text "dex live smoke edited" --role bot -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack reaction add --channel C123 --ts 1710000000.123456 --emoji white_check_mark --role bot -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack reaction remove --channel C123 --ts 1710000000.123456 --emoji white_check_mark --role bot -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack channel mark-read --channel C123 --ts 1710000000.123456 --role user -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack channel mark-read --channel C123 --ts latest --role user -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack message delete --channel C123 --ts 1710000000.123456 --role bot -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --instance release-smoke slack file upload --channel C123 --file-path ./README.md --initial-comment "dex upload smoke" --role bot -o json
+```
+
 Do not commit, tag, or push from an agent session unless explicitly asked.
 
 ## Module Packaging

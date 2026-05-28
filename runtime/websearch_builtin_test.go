@@ -32,6 +32,11 @@ import (
 )
 
 func main() {
+	var raw json.RawMessage
+	var frame struct {
+		ID      string          ` + "`json:\"id\"`" + `
+		Payload json.RawMessage ` + "`json:\"payload\"`" + `
+	}
 	var req struct {
 		Command string ` + "`json:\"command\"`" + `
 		Payload struct {
@@ -39,10 +44,18 @@ func main() {
 			Input json.RawMessage ` + "`json:\"input\"`" + `
 		} ` + "`json:\"payload\"`" + `
 	}
-	_ = json.NewDecoder(os.Stdin).Decode(&req)
+	_ = json.NewDecoder(os.Stdin).Decode(&raw)
+	_ = json.Unmarshal(raw, &frame)
+	if frame.ID != "" {
+		_ = json.Unmarshal(frame.Payload, &req)
+	} else {
+		_ = json.Unmarshal(raw, &req)
+	}
 	if req.Command == "manifest" {
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
-			"protocol": "dex.plugin.v1",
+			"protocol": "dex.plugin.v2",
+			"id": frame.ID,
+			"type": "response",
 			"ok": true,
 			"result": map[string]any{
 				"name": "fake",
@@ -59,7 +72,9 @@ func main() {
 	}
 	_ = json.Unmarshal(req.Payload.Input, &input)
 	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
-		"protocol": "dex.plugin.v1",
+		"protocol": "dex.plugin.v2",
+		"id": frame.ID,
+		"type": "response",
 		"ok": true,
 		"result": map[string]any{
 			"results": []map[string]any{{
@@ -249,6 +264,11 @@ import (
 )
 
 func main() {
+	var raw json.RawMessage
+	var frame struct {
+		ID      string          ` + "`json:\"id\"`" + `
+		Payload json.RawMessage ` + "`json:\"payload\"`" + `
+	}
 	var req struct {
 		Command string ` + "`json:\"command\"`" + `
 		Payload struct {
@@ -256,10 +276,18 @@ func main() {
 			Input json.RawMessage ` + "`json:\"input\"`" + `
 		} ` + "`json:\"payload\"`" + `
 	}
-	_ = json.NewDecoder(os.Stdin).Decode(&req)
+	_ = json.NewDecoder(os.Stdin).Decode(&raw)
+	_ = json.Unmarshal(raw, &frame)
+	if frame.ID != "" {
+		_ = json.Unmarshal(frame.Payload, &req)
+	} else {
+		_ = json.Unmarshal(raw, &req)
+	}
 	if req.Command == "manifest" {
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
-			"protocol": "dex.plugin.v1",
+			"protocol": "dex.plugin.v2",
+			"id": frame.ID,
+			"type": "response",
 			"ok": true,
 			"result": map[string]any{
 				"name": "` + name + `",
@@ -273,11 +301,13 @@ func main() {
 	var input struct{ Query string ` + "`json:\"query\"`" + ` }
 	_ = json.Unmarshal(req.Payload.Input, &input)
 	if ` + failLiteral + ` {
-		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"protocol":"dex.plugin.v1","ok":true,"result":map[string]any{"errors":[]map[string]any{{"message":"boom"}}}})
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"protocol":"dex.plugin.v2","id":frame.ID,"type":"response","ok":true,"result":map[string]any{"errors":[]map[string]any{{"message":"boom"}}}})
 		return
 	}
 	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
-		"protocol": "dex.plugin.v1",
+		"protocol": "dex.plugin.v2",
+		"id": frame.ID,
+		"type": "response",
 		"ok": true,
 		"result": map[string]any{"results": []map[string]any{{"provider":"` + name + `-provider","query":input.Query,"results":[]map[string]any{{"url":"https://example.com/"+input.Query,"title":input.Query}}}}},
 	})

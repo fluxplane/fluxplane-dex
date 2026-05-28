@@ -25,6 +25,8 @@ type Context struct {
 	Request protocol.Request
 	Call    protocol.OperationCall
 	Cache   *Cache
+	Host    HostClient
+	Events  EventSink
 	plugin  *Plugin
 }
 
@@ -101,7 +103,9 @@ func New(manifest core.PluginManifest) *Plugin {
 }
 
 func Serve(plugin *Plugin) {
-	protocol.Serve(plugin.Handle)
+	protocol.Serve(func(req protocol.Request, host protocol.HostCaller) protocol.Response {
+		return plugin.HandleWithHostAndEvents(req, newHostClient(host), newEventSink(host))
+	})
 }
 
 func Operation[I any, O any](plugin *Plugin, spec core.OperationSpec, handler OperationHandler[I, O]) {
@@ -194,7 +198,7 @@ func (p *Plugin) AuthTestOperation(name string) {
 		if ctx.Request.Grant == "" {
 			return OKText(p.manifest.Name+" auth is host-managed; use dex auth status "+p.manifest.Name+" or dex op run "+name, map[string]any{"status": "host_managed"})
 		}
-		return p.callOperation(ctx.Request, protocol.OperationCall{Name: name}, NewCache(), true)
+		return p.callOperation(ctx.Request, protocol.OperationCall{Name: name}, NewCache(), ctx.Host, ctx.Events, true)
 	})
 }
 
@@ -203,16 +207,30 @@ func (p *Plugin) IndexBuildOperation(name string) {
 		if ctx.Request.Grant == "" {
 			return OKText("Use dex op run "+name+" to build live records", map[string]any{"status": "requires_operation_grant"})
 		}
-		return p.callOperation(ctx.Request, protocol.OperationCall{Name: name, Input: ctx.Request.Payload}, NewCache(), false)
+		return p.callOperation(ctx.Request, protocol.OperationCall{Name: name, Input: ctx.Request.Payload}, NewCache(), ctx.Host, ctx.Events, false)
 	})
 }
 
 func (p *Plugin) Handle(req protocol.Request) protocol.Response {
+	return p.HandleWithHostAndEvents(req, unavailableHostClient{}, unavailableEventSink{})
+}
+
+func (p *Plugin) HandleWithHost(req protocol.Request, host HostClient) protocol.Response {
+	return p.HandleWithHostAndEvents(req, host, unavailableEventSink{})
+}
+
+func (p *Plugin) HandleWithHostAndEvents(req protocol.Request, host HostClient, events EventSink) protocol.Response {
 	if p == nil {
 		return protocol.Fail("plugin_error", "plugin is nil")
 	}
+	if host == nil {
+		host = unavailableHostClient{}
+	}
+	if events == nil {
+		events = unavailableEventSink{}
+	}
 	cache := NewCache()
-	ctx := Context{Request: req, Cache: cache, plugin: p}
+	ctx := Context{Request: req, Cache: cache, Host: host, Events: events, plugin: p}
 	if handler := p.commandHandlers[req.Command]; handler != nil {
 		return handler(ctx)
 	}
@@ -228,9 +246,9 @@ func (p *Plugin) Handle(req protocol.Request) protocol.Response {
 		if err != nil {
 			return protocol.Fail("bad_payload", err.Error())
 		}
-		return p.callOperation(req, call, cache, true)
+		return p.callOperation(req, call, cache, host, events, true)
 	case protocol.CommandOperationsBatch:
-		return p.callBatch(req, cache)
+		return p.callBatch(req, cache, host, events)
 	case protocol.CommandDatasourcesList:
 		return protocol.OK(p.Manifest().Datasources)
 	case protocol.CommandDatasourcesSearch:
@@ -255,20 +273,20 @@ func (p *Plugin) Manifest() core.PluginManifest {
 	return manifest
 }
 
-func (p *Plugin) callBatch(req protocol.Request, cache *Cache) protocol.Response {
+func (p *Plugin) callBatch(req protocol.Request, cache *Cache, host HostClient, events EventSink) protocol.Response {
 	batch, err := protocol.DecodePayload[protocol.OperationBatch](req.Payload)
 	if err != nil {
 		return protocol.Fail("bad_payload", err.Error())
 	}
 	results := make([]protocol.OperationResult, 0, len(batch.Calls))
 	for _, call := range batch.Calls {
-		results = append(results, p.runOperation(req, call, cache))
+		results = append(results, p.runOperation(req, call, cache, host, events))
 	}
 	return protocol.OK(protocol.OperationBatchResult{Results: results})
 }
 
-func (p *Plugin) callOperation(req protocol.Request, call protocol.OperationCall, cache *Cache, unwrap bool) protocol.Response {
-	result := p.runOperation(req, call, cache)
+func (p *Plugin) callOperation(req protocol.Request, call protocol.OperationCall, cache *Cache, host HostClient, events EventSink, unwrap bool) protocol.Response {
+	result := p.runOperation(req, call, cache, host, events)
 	if !result.OK {
 		return protocol.Response{Protocol: protocol.Version, OK: false, Error: result.Error}
 	}
@@ -284,7 +302,7 @@ func (p *Plugin) callOperation(req protocol.Request, call protocol.OperationCall
 	return OKData(value)
 }
 
-func (p *Plugin) runOperation(req protocol.Request, call protocol.OperationCall, cache *Cache) protocol.OperationResult {
+func (p *Plugin) runOperation(req protocol.Request, call protocol.OperationCall, cache *Cache, host HostClient, events EventSink) protocol.OperationResult {
 	if call.ID == "" {
 		call.ID = call.Name
 	}
@@ -292,14 +310,24 @@ func (p *Plugin) runOperation(req protocol.Request, call protocol.OperationCall,
 	if op == nil {
 		return OperationError(call, "unknown_operation", "unknown operation "+call.Name)
 	}
-	return op.Run(Context{Request: req, Call: call, Cache: cache, plugin: p})
+	if host == nil {
+		host = unavailableHostClient{}
+	}
+	if events == nil {
+		events = unavailableEventSink{}
+	}
+	return op.Run(Context{Request: req, Call: call, Cache: cache, Host: host, Events: events, plugin: p})
 }
 
 func (p *Plugin) RunOperation(req protocol.Request, call protocol.OperationCall, cache *Cache) protocol.OperationResult {
+	return p.RunOperationWithHost(req, call, cache, unavailableHostClient{})
+}
+
+func (p *Plugin) RunOperationWithHost(req protocol.Request, call protocol.OperationCall, cache *Cache, host HostClient) protocol.OperationResult {
 	if cache == nil {
 		cache = NewCache()
 	}
-	return p.runOperation(req, call, cache)
+	return p.runOperation(req, call, cache, host, unavailableEventSink{})
 }
 
 func (p *Plugin) upsertOperation(spec core.OperationSpec) {
@@ -354,7 +382,7 @@ func (p *Plugin) runContext(ctx Context) protocol.Response {
 	}
 	var out ContextBuildResult
 	for _, provider := range p.contextProviders {
-		resp := provider.Run(Context{Request: ctx.Request, Cache: ctx.Cache, plugin: p})
+		resp := provider.Run(Context{Request: ctx.Request, Cache: ctx.Cache, Host: ctx.Host, Events: ctx.Events, plugin: p})
 		if !resp.OK {
 			return resp
 		}

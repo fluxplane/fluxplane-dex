@@ -1,11 +1,8 @@
 package pluginbinding
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 )
 
@@ -118,25 +115,8 @@ func ReadWithPreferredSecrets[C any, R any](ctx Context, purposes []string, open
 }
 
 func DefaultSecretGetter(ctx Context, purpose string) (SecretMaterial, error) {
-	host := strings.TrimSpace(os.Getenv("DEX_HOST_CMD"))
-	if host == "" {
-		host = "dex"
-	}
-	plugin := strings.TrimSpace(ctx.Request.Plugin)
-	if plugin == "" && ctx.plugin != nil {
-		plugin = ctx.plugin.manifest.Name
-	}
-	args := []string{"secret", "get", plugin, "--instance", ctx.Request.Instance, "--grant", ctx.Request.Grant, "--purpose", purpose, "-o", "json"}
-	cmd := exec.Command(host, args...)
-	data, err := cmd.Output()
+	material, err := ctx.Host.Secret(purpose)
 	if err != nil {
-		if exit, ok := err.(*exec.ExitError); ok && len(exit.Stderr) > 0 {
-			return SecretMaterial{}, fmt.Errorf("%s", strings.TrimSpace(string(exit.Stderr)))
-		}
-		return SecretMaterial{}, err
-	}
-	var material SecretMaterial
-	if err := json.Unmarshal(data, &material); err != nil {
 		return SecretMaterial{}, err
 	}
 	if material.Purpose == "" {

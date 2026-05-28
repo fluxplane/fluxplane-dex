@@ -35,7 +35,7 @@ explicit host CLI feature with comparable behavior.
 
 Implemented or scaffolded now:
 - `gitlab`: auth test, index build, project list/show, merge request list/show; indexed datasources for projects, users, groups, issues, merge requests.
-- `slack`: index build for users/channels; live message send, search, thread reads, and live read datasources for messages, thread messages, and channel members with indexed user/channel enrichment.
+- `slack`: auth test, token identity, index build and live list operations for users/channels; live presence get/set, message send/edit/delete with text, markdown, and Block Kit blocks, reaction add/remove, unreads, mark-read including `latest`, channel join, bookmark list/add/edit/delete, emoji list for custom and built-in modes, file list/info/upload/download/delete, search with ticket extraction, mentions with pending/acked/replied classification, thread reads, and live read datasources for messages, thread messages, and channel members with indexed user/channel enrichment.
 - `system`: local system info by category.
 - `tavily`: web search provider with API key auth and datasource search.
 - `duckduckgo`: web search provider without auth and datasource search.
@@ -89,7 +89,7 @@ Current recommended order:
    manifests.
 2. Maintain the plugin install/activation model so plugin-specific surfaces are
    driven by activation state and manifests, not hardcoded host commands.
-3. Stabilize current plugins, especially Slack auth/test/info and remaining
+3. Stabilize current plugins, especially Slack live-test coverage and remaining
    parity behavior, GitLab read coverage, and provider-neutral websearch
    hardening.
 4. Done: validate Kubernetes endpoint discovery live against the dev cluster's
@@ -431,25 +431,33 @@ Legacy support:
 - `slack bookmarks`
 
 Current status:
-- Partially implemented.
-- Present: index build for users/channels; live `slack.message.send`,
-  `slack.search`, and `slack.thread`; live read datasources for
-  `slack.messages`, `slack.thread_messages`, and `slack.channel_members`;
-  channel member records can be enriched from indexed Slack user/channel data.
+- Functionally complete after the Slack parity-polish slice; remaining work is
+  stabilization, render polish, and auth flow integration.
+- Present: auth test, identity info, index build for users/channels; live
+  `slack.channel.list`, `slack.user.list`, `slack.channel.join`,
+  `slack.channel.mark-read`, `slack.presence.get`, `slack.presence.set`,
+  `slack.message.send`, `slack.message.edit`, `slack.message.delete`,
+  `slack.reaction.add`, `slack.reaction.remove`, `slack.bookmark.list`,
+  `slack.bookmark.add`, `slack.bookmark.edit`, `slack.bookmark.delete`,
+  `slack.emoji.list` with custom, built-in, and all modes,
+  `slack.file.list`, `slack.file.info`,
+  `slack.file.upload`, `slack.file.download`, `slack.download`,
+  `slack.file.delete`, `slack.search` with optional ticket extraction,
+  `slack.mentions` with pending/acked/replied classification, and
+  `slack.unreads`, and `slack.thread`; live read datasources for `slack.messages`,
+  `slack.thread_messages`, and `slack.channel_members`; channel member records
+  can be enriched from indexed Slack user/channel data; write operations expose
+  `role` for selecting `bot` or `user` tokens; message send/edit supports plain
+  text, markdown convenience blocks, raw Block Kit JSON, unfurl controls, and
+  parse passthrough; mark-read can resolve `latest`.
 - Core overlap: `fluxplane-core` has Slack auth/test, active channel send/thread reply/progress operations, and richer live datasources for users, channels, messages, thread messages, and channel membership views.
+  Slack context provider work is deferred to the fluxplane-core integration gate.
 
 Missing operations/features:
-- OAuth auth flow, auth test, and identity info operations.
-- Presence read/write.
-- Channel/user list shortcuts and channel join.
-- Message edit/delete.
-- File upload, file list/info/download/delete, and top-level download shortcut.
-- Emoji list and reaction operations.
-- Unreads, mark-read, mentions, and pending/acked/replied classification.
-- Bookmarks.
-- Broader mention and channel name resolution using indexes.
-- Ticket extraction from Slack search results.
-- Compact/JSON/YAML render parity and Slack URL/timestamp parsing parity.
+- OAuth auth flow.
+- Presence detail/render parity beyond the basic get/set operation.
+- Broader mention and channel name resolution using indexes and completions.
+- Compact/JSON/YAML render parity.
 - Datasource coverage for mentions, files, bookmarks, and any channel/user
   live views not covered by the existing indexes.
 - Relaxation: channel/user/message/thread reads should prefer datasource/list/search/get rather than dedicated command-style operations unless there is a side effect.
@@ -820,8 +828,9 @@ The current plugin protocol can express operations, auth methods, datasources, c
 
 ### Phase 1: Stabilize Current Partial Plugins
 
-1. Add Slack auth/test/info and live-test documentation now that live
-   send/search/thread plus message/thread/member datasources are implemented.
+1. Add Slack live-test documentation now that auth test, identity info, live
+   send/edit/delete/react/upload/search/thread, channel join, and
+   message/thread/member datasources are implemented.
 2. Reconcile `fluxplane-dex` GitLab with the old GitLab reference: port richer
    datasource entities first, then fill CLI shortcuts over those reads.
 3. Add GitLab action operations where the typed operation model is already clear:
@@ -857,9 +866,10 @@ The current plugin protocol can express operations, auth methods, datasources, c
 1. Jira plugin: port the Atlassian auth pattern, issue search/create/comment,
    and issue/project datasource; then add view/my/lookup, transitions,
    update/delete, links, and project workflow detail.
-2. Slack parity expansion: build on the completed live message/thread/member
-   datasource behavior; then add mentions, unreads, mark-read, reactions,
-   edit/delete, files, bookmarks, and Slack URL/timestamp parsing.
+2. Slack stabilization: parity-polish is complete for mentions, unreads,
+   mark-read, file lifecycle, bookmarks, presence, emoji modes, and rich
+   messages; keep remaining work to live-test coverage, render/completion
+   behavior, and fluxplane-core context-provider integration.
 3. GitHub plugin: issue list/view/create/comment/edit/close, label list,
    release list/view, repo create; decide native API versus `gh` wrapper first.
 4. GitLab parity expansion: read-only CLI shortcut parity, job logs, blob

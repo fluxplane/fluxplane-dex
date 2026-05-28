@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fluxplane/fluxplane-dex/core"
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/protocol"
 )
 
@@ -23,6 +24,15 @@ type Runner struct {
 	WorkDir     string
 	Timeout     time.Duration
 	HostCommand string
+	EventSink   func(context.Context, PluginEvent)
+}
+
+type PluginEvent struct {
+	Plugin   string          `json:"plugin"`
+	Instance string          `json:"instance"`
+	Command  string          `json:"command,omitempty"`
+	Event    string          `json:"event"`
+	Payload  json.RawMessage `json:"payload,omitempty"`
 }
 
 func (r Runner) Invoke(ctx context.Context, pluginName, command string, payload any) (protocol.Response, error) {
@@ -288,10 +298,71 @@ func (r Runner) BuildIndex(ctx context.Context, pluginName, instance string, inp
 }
 
 func (r Runner) invokeRequest(ctx context.Context, entry core.PluginEntry, req protocol.Request) (protocol.Response, error) {
+	if req.Command == protocol.CommandManifest || !r.pluginUsesFramedProtocol(ctx, entry) {
+		return r.invokeRequestV1(ctx, entry, req)
+	}
+	return r.invokeRequestV2(ctx, entry, req)
+}
+
+func (r Runner) pluginUsesFramedProtocol(ctx context.Context, entry core.PluginEntry) bool {
+	if isBuiltinPlugin(entry) {
+		return false
+	}
+	manifest, err := r.manifest(ctx, entry.Name)
+	if err != nil {
+		return false
+	}
+	if manifest.Metadata[pluginbinding.ManifestProtocolKey] != protocol.Version {
+		return false
+	}
+	return r.probeFramedProtocol(ctx, entry)
+}
+
+func (r Runner) probeFramedProtocol(ctx context.Context, entry core.PluginEntry) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+	}
+	cmd, err := r.command(ctx, entry)
+	if err != nil {
+		return false
+	}
+	req, err := protocol.NewRequest(protocol.CommandManifest, entry.Name, nil)
+	if err != nil {
+		return false
+	}
+	frame, err := protocol.NewRequestFrame("probe", protocol.TargetPlugin, protocol.CommandManifest, req)
+	if err != nil {
+		return false
+	}
+	data, err := json.Marshal(frame)
+	if err != nil {
+		return false
+	}
+	cmd.Stdin = bytes.NewReader(data)
+	cmd.Env = r.pluginEnv()
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		return false
+	}
+	var resp protocol.Frame
+	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+		return false
+	}
+	return resp.Protocol == protocol.Version && resp.Type == protocol.FrameResponse && resp.ID == "probe" && resp.OK
+}
+
+func (r Runner) invokeRequestV1(ctx context.Context, entry core.PluginEntry, req protocol.Request) (protocol.Response, error) {
 	cmd, err := r.command(ctx, entry)
 	if err != nil {
 		return protocol.Response{}, err
 	}
+	req.Protocol = protocol.VersionV1
 	data, err := json.Marshal(req)
 	if err != nil {
 		return protocol.Response{}, err
@@ -304,7 +375,7 @@ func (r Runner) invokeRequest(ctx context.Context, entry core.PluginEntry, req p
 	if err := cmd.Run(); err != nil {
 		if stdout.Len() > 0 {
 			resp, decodeErr := decodeResponse(stdout.Bytes())
-			if resp.Protocol == protocol.Version {
+			if resp.Protocol == protocol.Version || resp.Protocol == protocol.VersionV1 {
 				return resp, decodeErr
 			}
 		}
@@ -315,6 +386,197 @@ func (r Runner) invokeRequest(ctx context.Context, entry core.PluginEntry, req p
 		return protocol.Response{}, fmt.Errorf("run plugin %s: %s", entry.Name, msg)
 	}
 	return decodeResponse(stdout.Bytes())
+}
+
+func (r Runner) invokeRequestV2(ctx context.Context, entry core.PluginEntry, req protocol.Request) (protocol.Response, error) {
+	cmd, err := r.command(ctx, entry)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	cmd.Env = r.pluginEnv()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return protocol.Response{}, err
+	}
+	enc := json.NewEncoder(stdin)
+	dec := json.NewDecoder(stdout)
+	frame, err := protocol.NewRequestFrame("root", protocol.TargetPlugin, req.Command, req)
+	if err != nil {
+		_ = stdin.Close()
+		_ = cmd.Wait()
+		return protocol.Response{}, err
+	}
+	if err := enc.Encode(frame); err != nil {
+		_ = stdin.Close()
+		_ = cmd.Wait()
+		return protocol.Response{}, err
+	}
+	for {
+		var frame protocol.Frame
+		if err := dec.Decode(&frame); err != nil {
+			_ = stdin.Close()
+			waitErr := cmd.Wait()
+			msg := strings.TrimSpace(stderr.String())
+			if msg == "" && waitErr != nil {
+				msg = waitErr.Error()
+			}
+			if msg == "" {
+				msg = err.Error()
+			}
+			return protocol.Response{}, fmt.Errorf("run plugin %s: %s", entry.Name, msg)
+		}
+		if frame.Protocol != protocol.Version {
+			_ = stdin.Close()
+			_ = cmd.Wait()
+			return protocol.Response{}, fmt.Errorf("plugin protocol mismatch: %s", frame.Protocol)
+		}
+		switch frame.Type {
+		case protocol.FrameResponse:
+			if frame.ID != "root" {
+				_ = stdin.Close()
+				_ = cmd.Wait()
+				return protocol.Response{}, fmt.Errorf("unexpected plugin response frame %q", frame.ID)
+			}
+			_ = stdin.Close()
+			waitErr := cmd.Wait()
+			resp := protocol.Response{Protocol: protocol.Version, OK: frame.OK, Result: frame.Result, Error: frame.Error}
+			if waitErr != nil && resp.OK {
+				msg := strings.TrimSpace(stderr.String())
+				if msg == "" {
+					msg = waitErr.Error()
+				}
+				return protocol.Response{}, fmt.Errorf("run plugin %s: %s", entry.Name, msg)
+			}
+			if !resp.OK && resp.Error != nil {
+				return resp, fmt.Errorf("%s", resp.Error.Message)
+			}
+			return resp, nil
+		case protocol.FrameRequest:
+			if frame.Target != protocol.TargetHost {
+				_ = enc.Encode(protocol.FrameResponseError(frame.ID, "bad_request", "plugin may only request host target"))
+				continue
+			}
+			resp := r.handleHostRequest(ctx, entry.Name, req.Instance, req.Grant, frame)
+			if err := enc.Encode(protocol.NewResponseFrame(frame.ID, resp)); err != nil {
+				_ = stdin.Close()
+				_ = cmd.Wait()
+				return protocol.Response{}, err
+			}
+		case protocol.FrameEvent:
+			if frame.Target != "" && frame.Target != protocol.TargetHost {
+				_ = stdin.Close()
+				_ = cmd.Wait()
+				return protocol.Response{}, fmt.Errorf("plugin event may only target host")
+			}
+			r.handlePluginEvent(ctx, entry.Name, req.Instance, req.Command, frame)
+		default:
+			_ = stdin.Close()
+			_ = cmd.Wait()
+			if frame.Type == "" {
+				return protocol.Response{}, fmt.Errorf("plugin %s returned an unframed response on v2 framed protocol", entry.Name)
+			}
+			return protocol.Response{}, fmt.Errorf("unexpected plugin frame type %q", frame.Type)
+		}
+	}
+}
+
+func (r Runner) handlePluginEvent(ctx context.Context, plugin, instance, command string, frame protocol.Frame) {
+	if r.EventSink == nil {
+		return
+	}
+	payload := append(json.RawMessage(nil), frame.Payload...)
+	r.EventSink(ctx, PluginEvent{
+		Plugin:   plugin,
+		Instance: instance,
+		Command:  command,
+		Event:    strings.TrimSpace(frame.Command),
+		Payload:  payload,
+	})
+}
+
+func (r Runner) handleHostRequest(ctx context.Context, plugin, instance, grant string, frame protocol.Frame) protocol.Response {
+	if err := rejectCrossPluginHostCall(plugin, frame.Payload); err != nil {
+		return protocol.Fail("forbidden", err.Error())
+	}
+	switch frame.Command {
+	case pluginbinding.HostSecretGet:
+		var input struct {
+			Purpose string `json:"purpose"`
+		}
+		if err := json.Unmarshal(frame.Payload, &input); err != nil {
+			return protocol.Fail("bad_payload", err.Error())
+		}
+		material, err := r.State.ResolveSecret(ctx, plugin, instance, input.Purpose, grant)
+		if err != nil {
+			return protocol.Fail("secret", err.Error())
+		}
+		return protocol.OK(material)
+	case pluginbinding.HostIndexLookup:
+		options := lookupPayload(frame.Payload)
+		matches, err := r.State.LookupIndexWithOptions(plugin, instance, options)
+		if err != nil {
+			return protocol.Fail("host_index", err.Error())
+		}
+		return protocol.OK(pluginbinding.NewDatasourceLookupResult("host_index", options.Text, options.Terms, matches))
+	case pluginbinding.HostIndexSearch:
+		options := searchPayload(frame.Payload)
+		records, err := r.State.SearchIndexWithOptions(plugin, instance, options)
+		if err != nil {
+			return protocol.Fail("host_index", err.Error())
+		}
+		return protocol.OK(pluginbinding.NewDatasourceSearchResult("host_index", options.Query, records))
+	case pluginbinding.HostIndexGet:
+		id := getPayloadID(frame.Payload)
+		entity := getPayloadEntity(frame.Payload)
+		if id == "" {
+			return protocol.Fail("bad_payload", "host index get requires id")
+		}
+		record, ok, err := r.State.GetIndexRecordByEntity(plugin, instance, entity, id)
+		if err != nil {
+			return protocol.Fail("host_index", err.Error())
+		}
+		if !ok {
+			return protocol.Fail("not_found", "indexed record not found")
+		}
+		return protocol.OK(pluginbinding.NewDatasourceGetResult("host_index", record))
+	case pluginbinding.HostEndpointResolve:
+		var input struct {
+			EndpointRef string `json:"endpoint_ref"`
+		}
+		if err := json.Unmarshal(frame.Payload, &input); err != nil {
+			return protocol.Fail("bad_payload", err.Error())
+		}
+		endpoint, ok, err := r.State.GetEndpoint(input.EndpointRef)
+		if err != nil {
+			return protocol.Fail("endpoint", err.Error())
+		}
+		if !ok {
+			return protocol.Fail("not_found", "unknown endpoint_ref "+input.EndpointRef)
+		}
+		return protocol.OK(endpoint.EndpointRef)
+	default:
+		return protocol.Fail("unknown_host_command", "unknown host command "+frame.Command)
+	}
+}
+
+func rejectCrossPluginHostCall(plugin string, raw json.RawMessage) error {
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil
+	}
+	if value, _ := payload["plugin"].(string); strings.TrimSpace(value) != "" && strings.TrimSpace(value) != plugin {
+		return fmt.Errorf("host call cannot access plugin %q from plugin %q", value, plugin)
+	}
+	return nil
 }
 
 func (r Runner) pluginEnv() []string {
@@ -347,10 +609,6 @@ func (r Runner) pluginEnv() []string {
 		if value, ok := os.LookupEnv(key); ok {
 			env = append(env, key+"="+value)
 		}
-	}
-	env = append(env, "DEX_HOST_CMD="+r.hostCommand())
-	if strings.TrimSpace(r.State.Home) != "" {
-		env = append(env, "DEX_HOME="+r.State.Home)
 	}
 	return env
 }
@@ -737,6 +995,18 @@ func getPayloadDatasource(payload any) string {
 	return firstPayloadString(input, "datasource")
 }
 
+func getPayloadEntity(payload any) string {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	var input map[string]any
+	if err := json.Unmarshal(data, &input); err != nil {
+		return ""
+	}
+	return firstPayloadString(input, "entity")
+}
+
 func getPayloadID(payload any) string {
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -837,7 +1107,7 @@ func decodeResponse(data []byte) (protocol.Response, error) {
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return resp, fmt.Errorf("decode plugin response: %w", err)
 	}
-	if resp.Protocol != protocol.Version {
+	if resp.Protocol != protocol.Version && resp.Protocol != protocol.VersionV1 {
 		return resp, fmt.Errorf("plugin protocol mismatch: %s", resp.Protocol)
 	}
 	if !resp.OK && resp.Error != nil {

@@ -362,9 +362,49 @@ func (s Service) DatasourceHealth(ctx pluginbinding.Context, input DatasourceHea
 	}
 	raw, err := client.get(context.Background(), "/api/datasources/uid/"+url.PathEscape(uid)+"/health", nil)
 	if err != nil {
+		if fallback, ok := s.datasourceHealthFallback(context.Background(), target, client, uid); ok {
+			return fallback, nil
+		}
 		return ProxyQueryResult{}, pluginbinding.Errorf("grafana", "%s", err)
 	}
 	return ProxyQueryResult{URL: target.URL, UID: uid, Data: raw}, nil
+}
+
+func (s Service) datasourceHealthFallback(ctx context.Context, target target, client Client, uid string) (ProxyQueryResult, bool) {
+	datasources, err := s.datasources(ctx, target)
+	if err != nil {
+		return ProxyQueryResult{}, false
+	}
+	datasource, ok := datasourceByUID(datasources, uid)
+	if !ok {
+		return ProxyQueryResult{}, false
+	}
+	switch normalizeDatasourceType(datasource.Type) {
+	case "alertmanager":
+		raw, err := client.get(ctx, grafanaProxyPath(uid, "/api/v2/status"), nil)
+		if err != nil {
+			payload, marshalErr := json.Marshal(map[string]any{
+				"status": "error",
+				"source": "alertmanager_status",
+				"error":  err.Error(),
+			})
+			if marshalErr != nil {
+				return ProxyQueryResult{}, false
+			}
+			return ProxyQueryResult{URL: target.URL, UID: uid, Data: payload}, true
+		}
+		payload, err := json.Marshal(map[string]any{
+			"status":   "OK",
+			"source":   "alertmanager_status",
+			"response": json.RawMessage(raw),
+		})
+		if err != nil {
+			return ProxyQueryResult{}, false
+		}
+		return ProxyQueryResult{URL: target.URL, UID: uid, Data: payload}, true
+	default:
+		return ProxyQueryResult{}, false
+	}
 }
 
 func (s Service) FolderList(ctx pluginbinding.Context, input FolderListInput) (FolderListResult, error) {
@@ -1095,6 +1135,16 @@ func datasourceListResult(baseURL string, datasources []Datasource) DatasourceLi
 		sort.Strings(types[typ])
 	}
 	return DatasourceListResult{URL: baseURL, Count: len(datasources), Datasources: datasources, Clusters: clusters, Types: types}
+}
+
+func datasourceByUID(datasources []Datasource, uid string) (Datasource, bool) {
+	uid = strings.TrimSpace(uid)
+	for _, datasource := range datasources {
+		if strings.EqualFold(strings.TrimSpace(datasource.UID), uid) {
+			return datasource, true
+		}
+	}
+	return Datasource{}, false
 }
 
 func stringField(fields map[string]any, key string) string {

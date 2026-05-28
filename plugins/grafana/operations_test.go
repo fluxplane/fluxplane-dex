@@ -120,6 +120,52 @@ func TestLokiQueryNormalizesLogEntries(t *testing.T) {
 	}
 }
 
+func TestDatasourceHealthFallsBackForAlertmanager(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/datasources/uid/alertmanager-alpha/health":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"message":"Plugin unavailable"}`))
+		case "/api/datasources":
+			_, _ = w.Write([]byte(`[{"uid":"alertmanager-alpha","name":"Alertmanager Alpha","type":"alertmanager"}]`))
+		case "/api/datasources/proxy/uid/alertmanager-alpha/api/v2/status":
+			_, _ = w.Write([]byte(`{"cluster":{"status":"ready"}}`))
+		default:
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	plugin := NewPluginWithService(NewService())
+
+	out := plugintest.RunOK[ProxyQueryResult](t, plugin, OperationDatasourceHealth, map[string]any{"url": server.URL, "uid": "alertmanager-alpha"})
+	if out.UID != "alertmanager-alpha" || !strings.Contains(string(out.Data), "alertmanager_status") {
+		t.Fatalf("result = %#v", out)
+	}
+}
+
+func TestDatasourceHealthReturnsAlertmanagerProxyError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/datasources/uid/alertmanager-alpha/health":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"message":"Plugin unavailable"}`))
+		case "/api/datasources":
+			_, _ = w.Write([]byte(`[{"uid":"alertmanager-alpha","name":"Alertmanager Alpha","type":"alertmanager"}]`))
+		case "/api/datasources/proxy/uid/alertmanager-alpha/api/v2/status":
+			http.NotFound(w, r)
+		default:
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	plugin := NewPluginWithService(NewService())
+
+	out := plugintest.RunOK[ProxyQueryResult](t, plugin, OperationDatasourceHealth, map[string]any{"url": server.URL, "uid": "alertmanager-alpha"})
+	if out.UID != "alertmanager-alpha" || !strings.Contains(string(out.Data), `"status":"error"`) || !strings.Contains(string(out.Data), "alertmanager_status") {
+		t.Fatalf("result = %#v", out)
+	}
+}
+
 func TestManifestIncludesExpectedOperations(t *testing.T) {
 	manifest := Manifest()
 	operations := map[string]bool{}

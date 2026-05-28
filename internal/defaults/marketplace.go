@@ -11,6 +11,20 @@ const MarketplaceJSON = `{
       "local_path": "plugins/gitlab"
     },
     {
+      "name": "jira",
+      "description": "Jira Cloud issue operations, comments, attachments, transitions, datasources, indexes, and reverse lookups.",
+      "binary": "dex-plugin-jira",
+      "go_install": "github.com/fluxplane/fluxplane-dex/plugins/jira/cmd/dex-plugin-jira@latest",
+      "local_path": "plugins/jira"
+    },
+    {
+      "name": "confluence",
+      "description": "Confluence Cloud page/user operations, attachments, datasources, indexes, and reverse lookups.",
+      "binary": "dex-plugin-confluence",
+      "go_install": "github.com/fluxplane/fluxplane-dex/plugins/confluence/cmd/dex-plugin-confluence@latest",
+      "local_path": "plugins/confluence"
+    },
+    {
       "name": "slack",
       "description": "Slack token info, messaging, file upload, search, thread, channel member, and reverse lookup operations.",
       "binary": "dex-plugin-slack",

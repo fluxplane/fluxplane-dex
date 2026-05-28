@@ -82,3 +82,29 @@ func TestEndpointDiscoverFindsMySQLConnectionSecret(t *testing.T) {
 		t.Fatalf("candidate = %#v", candidate)
 	}
 }
+
+func TestEndpointDiscoverFindsPostgresConnectionSecret(t *testing.T) {
+	plugin := NewPluginWithService(Service{
+		Services: func(_ context.Context, _ EndpointDiscoverInput) ([]corev1.Service, error) { return nil, nil },
+		Secrets: func(_ context.Context, _ EndpointDiscoverInput) ([]corev1.Secret, error) {
+			return []corev1.Secret{{
+				ObjectMeta: metav1.ObjectMeta{Name: "crossplane-provider-sql-db-secret-user-latest-acd-providerconfig-latest-aurora-postgresql2", Namespace: "latest"},
+				Data: map[string][]byte{
+					"endpoint": []byte("postgres.example.com"),
+					"port":     []byte("5432"),
+					"username": []byte("latest-acd"),
+					"password": []byte("secret"),
+				},
+			}}, nil
+		},
+	})
+
+	out := plugintest.RunOK[EndpointDiscoverResult](t, plugin, OperationEndpointDiscover, map[string]any{"product": "postgres", "context": "dev", "namespace": "latest"})
+	if len(out.Candidates) != 1 {
+		t.Fatalf("candidates = %#v", out.Candidates)
+	}
+	candidate := out.Candidates[0]
+	if candidate.Product != "postgres" || candidate.URL != "postgres://postgres.example.com:5432/latest-acd?sslmode=require" || candidate.CredentialRef == "" {
+		t.Fatalf("candidate = %#v", candidate)
+	}
+}

@@ -40,6 +40,10 @@ Implemented or scaffolded now:
 - `tavily`: web search provider with API key auth and datasource search.
 - `duckduckgo`: web search provider without auth and datasource search.
 - `websearch`: builtin generic provider discovery, aggregated search, and datasource search across web search providers.
+- `kubernetes`: kubeconfig/client-go context listing and endpoint discovery from services and MySQL-like connection secrets.
+- `prometheus`: endpoint-aware health, query, query range, labels, targets, and alerts operations.
+- `loki`: endpoint-aware health, query, labels, and recent log operations.
+- `sql`: endpoint-ref and DSN/URL based read-only SQL queries for MySQL, PostgreSQL, and SQLite.
 
 `system`, `tavily`, `duckduckgo`, and `websearch` are new plugin work and are not legacy dex parity targets.
 
@@ -85,18 +89,18 @@ vision, and roadmap. They are intentionally smaller than the broad P0 themes.
 
 Current recommended order:
 1. Implement Shortcut Binding v1.
-2. Stabilize the plugin install/activation model so plugin-specific surfaces
-   are driven by state, not hardcoded host commands.
+2. Maintain the plugin install/activation model so plugin-specific surfaces are
+   driven by state and marketplace bindings, not hardcoded host commands.
 3. Stabilize current plugins, especially Slack live behavior, GitLab read
    coverage, and provider-neutral websearch hardening.
-4. Add Kubernetes as the first endpoint discovery proof point. Kubernetes uses
-   kubeconfig/client-go to discover cluster endpoints for products such as
-   Prometheus and Loki; Prometheus and Loki do not discover themselves.
-5. Add Prometheus and Loki as endpoint consumers with test/query/labels style
-   operations over configured or discovered URLs.
-6. Add SQL/MySQL using endpoint/secret-aware read-only query semantics.
-7. Continue through the remaining codewandler/dex parity gaps.
-8. Keep `fluxplane-core` contribution-provider work as the final integration
+4. Done: validate Kubernetes endpoint discovery live against the dev cluster's
+   `latest` namespace, including Crossplane-style MySQL/PostgreSQL secrets and
+   SQL queries through endpoint refs.
+5. Promote Prometheus, Loki, and SQL endpoint-ref flows from proof points to
+   polished parity features with live-test docs, rendering, and datasource
+   mappings.
+6. Continue through the remaining codewandler/dex parity gaps.
+7. Keep `fluxplane-core` contribution-provider work as the final integration
    phase, after functional parity.
 
 ### 1. Operation Metadata v1 - Implemented
@@ -174,27 +178,36 @@ Acceptance:
 - Context blocks include source identity and stable IDs.
 - Empty context is a successful empty result, not a protocol error.
 
-### 5. Kubernetes Endpoint Discovery Proof Point
+### 5. Kubernetes Endpoint Discovery Proof Point - Implemented
 
 Goal: create the shared endpoint model through the first real endpoint
 discovery plugin instead of designing a registry without endpoints to discover.
 
 Scope:
-- Add a minimal Kubernetes plugin that uses kubeconfig and `client-go` to list
-  clusters and discover product endpoints from Kubernetes services.
-- Define endpoint refs, registry storage, endpoint candidate normalization, and
-  endpoint test/report shape as Kubernetes discovery needs them.
-- Keep discovery providers separate from stored endpoint refs.
-- Add CLI inspection commands for endpoint candidates and registered endpoints.
-- Use Kubernetes-discovered Prometheus and Loki services as the proof point
-  before SQL or Homer depend on the endpoint registry.
+- Added a minimal Kubernetes plugin that uses kubeconfig and `client-go` to
+  list clusters and discover product endpoints from Kubernetes services.
+- Added endpoint refs, registry storage, endpoint candidate normalization, and
+  secret refs.
+- Kept discovery providers separate from stored endpoint refs.
+- Added CLI inspection commands for endpoint candidates and registered
+  endpoints.
+- Added endpoint candidate import so agents can run a deterministic two-step
+  flow: discover JSON, then import one selected candidate into the registry.
+- Added opt-in interactive discovery selection for human sessions.
+- Added Kubernetes-discovered MySQL connection-secret candidates so SQL can
+  consume cluster-intrinsic credentials without copying secret material into
+  the host.
+- Added Kubernetes-discovered PostgreSQL connection-secret candidates using the
+  same endpoint-ref and credential-ref model.
 
 Acceptance:
-- Plugins can return endpoint candidates through the protocol.
-- The host can store and reference endpoint refs by stable ID.
-- Endpoint refs can carry secret refs without exposing secret material.
-- Prometheus and Loki can use discovered or registered endpoint refs for their
-  read operations, but they do not act as their own discoverers.
+- Done: plugins can return endpoint candidates through the protocol.
+- Done: the host can store and reference endpoint refs by stable ID.
+- Done: endpoint refs can carry secret refs without exposing secret material.
+- Done: Prometheus, Loki, and SQL can consume registered endpoint refs.
+- Done: credential-gated live validation against the dev Kubernetes cluster's
+  `latest` namespace with Crossplane-managed MySQL/PostgreSQL connection
+  secrets and SQL queries through registered endpoint refs.
 
 ### 6. Current Plugin Stabilization
 
@@ -549,17 +562,19 @@ Legacy support:
 - aliases: `kube`, `kubernetes`
 
 Current status:
-- Missing as a plugin.
+- Minimal plugin implemented.
 - Core overlap: `fluxplane-core` already has datasource inventory for clusters, namespaces, pods, services, deployments, and containers; port-forwarding; observers; endpoint discovery; and Kubernetes secret resolution.
 
 Missing operations/features:
-- Kubeconfig context and namespace discovery.
+- Namespace, pod, service, deployment, and container datasource inventory.
 - Namespace, pod, and service list/show.
 - Pod logs with follow, previous container, include/exclude regex, tail, since, all containers, and container selection.
 - Detached port-forward lifecycle and PID/status tracking.
 - Smart pod/service discovery for port-forward targets.
 - Shell completion metadata for contexts, namespaces, pods, containers, services, and forwards.
 - Datasources for contexts, namespaces, pods, services, logs, and forwards.
+- Broader live validation docs/matrix across dev/staging/prod contexts for
+  service and Crossplane-style SQL secret discovery.
 - Relaxation: list/show commands should be datasource shortcuts. Keep explicit operations for side effects and streaming/long-running behavior such as logs and port-forwarding.
 
 ### SQL
@@ -569,18 +584,25 @@ Legacy support:
 - `sql query`
 
 Current status:
-- Missing as a plugin.
+- Implemented as generic `sql` plugin with MySQL, PostgreSQL, and SQLite
+  drivers.
 - Core overlap: `fluxplane-core` has a MySQL query operation using endpoint refs and secret refs.
 
 Missing operations/features:
 - Configured SQL datasource discovery.
-- MySQL query execution.
-- Read-only session guard.
-- 60-second timeout behavior.
+- Legacy named datasource listing/migration.
 - Table result rendering.
 - Datasource protocol mapping for named database connections and query results.
-- Secret/config handling for host, port, username, password, and database.
+- Full live documentation for manual local MySQL/PostgreSQL/SQLite and
+  Kubernetes-discovered endpoint refs.
 - Relaxation: support legacy named datasource migration, but internally prefer runtime endpoint refs and secret refs over the old `~/.dex/config.json` SQL shape.
+
+Implemented:
+- Read-only query operation with bounded result rows.
+- Manual connection via URL or DSN.
+- Endpoint-ref resolution through the host endpoint registry.
+- Kubernetes secret refs for cluster-intrinsic MySQL credentials.
+- Real SQLite test and container-backed MySQL/PostgreSQL tests.
 
 ### GitHub
 
@@ -800,16 +822,16 @@ The current plugin protocol can express operations, auth methods, datasources, c
 
 ### Phase 2: Kubernetes and Endpoint Discovery Proof Point
 
-1. Add a Kubernetes plugin using kubeconfig/client-go for cluster context
+1. Done: Kubernetes plugin uses kubeconfig/client-go for cluster context
    listing and product endpoint discovery from services.
-2. Implement Endpoint Registry/Discovery v1 from the Kubernetes use case:
-   endpoint candidates, registered endpoint refs, endpoint health/test reports,
-   and secret refs.
-3. Add CLI inspection for discovered candidates and registered endpoints.
-4. Add Prometheus and Loki as endpoint consumers: test/query/labels style
-   operations over configured or discovered endpoint URLs.
-5. Reuse the endpoint model later for SQL/MySQL, Homer, and any hosted product
+2. Done: Endpoint Registry/Discovery v1 stores endpoint candidates, registered
+   endpoint refs, and secret refs.
+3. Done: CLI inspection exists for discovered candidates and registered
    endpoints.
+4. Done: Prometheus, Loki, and SQL can consume configured or registered endpoint
+   URLs/refs.
+5. Next: add endpoint health/test reports and a documented live-test matrix for
+   Kubernetes service discovery and Crossplane-style SQL secret discovery.
 
 ### Phase 3: Port High-Value Daily Workflow Integrations
 
@@ -837,8 +859,9 @@ The current plugin protocol can express operations, auth methods, datasources, c
 
 ### Phase 5: Specialized and Local Tools
 
-1. SQL/MySQL plugin: port the endpoint-ref read-only query model, then add
-   legacy named datasource listing/migration.
+1. SQL plugin: endpoint-ref read-only query model is implemented for MySQL,
+   PostgreSQL, and SQLite. Next add legacy named datasource listing/migration
+   and datasource result mapping.
 2. Confluence plugin: port the Atlassian auth and page/space datasource
    patterns, then add legacy shortcuts.
 3. Homer plugin: discovery, search/calls/show first; export/QoS/analyze after

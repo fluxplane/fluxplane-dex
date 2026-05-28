@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -96,6 +97,24 @@ type shortcutView struct {
 	Capability  string         `json:"capability,omitempty"`
 	Entity      string         `json:"entity,omitempty"`
 	Defaults    map[string]any `json:"defaults,omitempty"`
+}
+
+type endpointCandidateView struct {
+	Index int `json:"index"`
+	core.EndpointCandidate
+}
+
+type endpointDiscoveryPluginView struct {
+	Candidates []endpointCandidateView `json:"candidates,omitempty"`
+	Error      string                  `json:"error,omitempty"`
+}
+
+type endpointDiscoveryView struct {
+	Product    string                                 `json:"product,omitempty"`
+	Plugin     string                                 `json:"plugin,omitempty"`
+	Candidates []endpointCandidateView                `json:"candidates,omitempty"`
+	Results    map[string]endpointDiscoveryPluginView `json:"results,omitempty"`
+	Saved      []runtime.EndpointRecord               `json:"saved,omitempty"`
 }
 
 func newShortcutCommand(opts *options) *cobra.Command {
@@ -713,7 +732,69 @@ func newEndpointCommand(opts *options) *cobra.Command {
 			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"id": args[0], "removed": removed})
 		},
 	})
-	cmd.AddCommand(&cobra.Command{
+	importOpts := struct {
+		from        string
+		candidate   int
+		id          string
+		source      string
+		labels      []string
+		annotations []string
+	}{}
+	importCmd := &cobra.Command{
+		Use:   "import [JSON|-]",
+		Short: "Import a discovered endpoint candidate",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			raw, err := endpointImportInput(cmd.InOrStdin(), importOpts.from, args)
+			if err != nil {
+				return err
+			}
+			candidate, err := endpointCandidateFromImport(raw, importOpts.candidate)
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(importOpts.id) != "" {
+				candidate.ID = strings.TrimSpace(importOpts.id)
+			}
+			if strings.TrimSpace(importOpts.source) != "" {
+				candidate.Source = strings.TrimSpace(importOpts.source)
+			}
+			labels, err := parseStringMapFlags(importOpts.labels)
+			if err != nil {
+				return err
+			}
+			annotations, err := parseStringMapFlags(importOpts.annotations)
+			if err != nil {
+				return err
+			}
+			candidate.Labels = mergeStringMaps(candidate.Labels, labels)
+			candidate.Annotations = mergeStringMaps(candidate.Annotations, annotations)
+			record, err := runner.State.SaveEndpointCandidate(candidate)
+			if err != nil {
+				return err
+			}
+			return renderValue(cmd.OutOrStdout(), opts.output, record)
+		},
+	}
+	importCmd.Flags().StringVar(&importOpts.from, "from", "", "Read candidate JSON from file")
+	importCmd.Flags().IntVar(&importOpts.candidate, "candidate", 0, "Candidate index to import from discovery output")
+	importCmd.Flags().StringVar(&importOpts.id, "id", "", "Endpoint ID override")
+	importCmd.Flags().StringVar(&importOpts.source, "source", "", "Endpoint source override")
+	importCmd.Flags().StringArrayVar(&importOpts.labels, "label", nil, "Endpoint label key=value")
+	importCmd.Flags().StringArrayVar(&importOpts.annotations, "annotation", nil, "Endpoint annotation key=value")
+	cmd.AddCommand(importCmd)
+	discoverOpts := struct {
+		plugin      string
+		contextName string
+		namespace   string
+		limit       int
+		interactive bool
+	}{}
+	discover := &cobra.Command{
 		Use:   "discover [PRODUCT]",
 		Short: "Discover endpoint candidates",
 		Args:  cobra.MaximumNArgs(1),
@@ -726,12 +807,36 @@ func newEndpointCommand(opts *options) *cobra.Command {
 			if len(args) == 1 {
 				product = args[0]
 			}
-			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{
-				"product": product,
-				"results": fanout(cmd.Context(), runner, opts.instanceName(), protocol.CommandEndpointsDiscover, map[string]any{"product": product}),
-			})
+			input := map[string]any{"product": product}
+			if strings.TrimSpace(discoverOpts.contextName) != "" {
+				input["context"] = strings.TrimSpace(discoverOpts.contextName)
+			}
+			if strings.TrimSpace(discoverOpts.namespace) != "" {
+				input["namespace"] = strings.TrimSpace(discoverOpts.namespace)
+			}
+			if discoverOpts.limit > 0 {
+				input["limit"] = discoverOpts.limit
+			}
+			result, err := discoverEndpoints(cmd.Context(), runner, opts.instanceName(), product, discoverOpts.plugin, input)
+			if err != nil {
+				return err
+			}
+			if discoverOpts.interactive {
+				saved, err := importEndpointSelections(cmd.InOrStdin(), cmd.ErrOrStderr(), runner.State, result.Candidates)
+				if err != nil {
+					return err
+				}
+				result.Saved = saved
+			}
+			return renderValue(cmd.OutOrStdout(), opts.output, result)
 		},
-	})
+	}
+	discover.Flags().StringVar(&discoverOpts.plugin, "plugin", "", "Discover with one plugin")
+	discover.Flags().StringVar(&discoverOpts.contextName, "context", "", "Discovery context")
+	discover.Flags().StringVar(&discoverOpts.namespace, "namespace", "", "Discovery namespace")
+	discover.Flags().IntVar(&discoverOpts.limit, "limit", 0, "Maximum candidates")
+	discover.Flags().BoolVar(&discoverOpts.interactive, "interactive", false, "Interactively select candidates to import")
+	cmd.AddCommand(discover)
 	return cmd
 }
 
@@ -749,6 +854,226 @@ func parseStringMapFlags(values []string) (map[string]string, error) {
 		out[key] = strings.TrimSpace(val)
 	}
 	return out, nil
+}
+
+func discoverEndpoints(ctx context.Context, runner runtime.Runner, instance, product, pluginFilter string, input map[string]any) (endpointDiscoveryView, error) {
+	view := endpointDiscoveryView{Product: product, Results: map[string]endpointDiscoveryPluginView{}}
+	var plugins []core.PluginEntry
+	if strings.TrimSpace(pluginFilter) != "" {
+		plugin, ok := runner.Marketplace.Resolve(pluginFilter)
+		if !ok {
+			return endpointDiscoveryView{}, fmt.Errorf("unknown plugin %q", pluginFilter)
+		}
+		plugins = []core.PluginEntry{plugin}
+		view.Plugin = plugin.Name
+	} else {
+		var err error
+		plugins, err = endpointDiscovererAvailablePlugins(ctx, runner, instance)
+		if err != nil {
+			return endpointDiscoveryView{}, err
+		}
+	}
+	for _, plugin := range plugins {
+		resp, err := runner.InvokeInstance(ctx, plugin.Name, instance, protocol.CommandEndpointsDiscover, input)
+		if err != nil {
+			view.Results[plugin.Name] = endpointDiscoveryPluginView{Error: err.Error()}
+			continue
+		}
+		if !resp.OK {
+			message := "endpoint discovery failed"
+			if resp.Error != nil && strings.TrimSpace(resp.Error.Message) != "" {
+				message = resp.Error.Message
+			}
+			view.Results[plugin.Name] = endpointDiscoveryPluginView{Error: message}
+			continue
+		}
+		var result struct {
+			Candidates []core.EndpointCandidate `json:"candidates"`
+		}
+		if err := json.Unmarshal(resp.Result, &result); err != nil {
+			view.Results[plugin.Name] = endpointDiscoveryPluginView{Error: err.Error()}
+			continue
+		}
+		pluginView := endpointDiscoveryPluginView{}
+		for _, candidate := range result.Candidates {
+			index := len(view.Candidates) + 1
+			candidateView := endpointCandidateView{Index: index, EndpointCandidate: candidate}
+			view.Candidates = append(view.Candidates, candidateView)
+			pluginView.Candidates = append(pluginView.Candidates, candidateView)
+		}
+		view.Results[plugin.Name] = pluginView
+	}
+	if len(view.Results) == 0 || strings.TrimSpace(pluginFilter) != "" {
+		view.Results = nil
+	}
+	return view, nil
+}
+
+func endpointImportInput(in io.Reader, from string, args []string) ([]byte, error) {
+	if strings.TrimSpace(from) != "" {
+		return os.ReadFile(strings.TrimSpace(from))
+	}
+	if len(args) > 0 && strings.TrimSpace(args[0]) != "-" {
+		return []byte(strings.TrimSpace(args[0])), nil
+	}
+	data, err := io.ReadAll(bufio.NewReader(in))
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func endpointCandidateFromImport(raw []byte, selectedIndex int) (core.EndpointCandidate, error) {
+	candidates, err := endpointCandidatesFromImport(raw)
+	if err != nil {
+		return core.EndpointCandidate{}, err
+	}
+	if len(candidates) == 0 {
+		return core.EndpointCandidate{}, fmt.Errorf("endpoint import JSON did not contain candidates")
+	}
+	if selectedIndex > 0 {
+		for i, candidate := range candidates {
+			if candidate.Index == selectedIndex || i+1 == selectedIndex {
+				return candidate.EndpointCandidate, nil
+			}
+		}
+		return core.EndpointCandidate{}, fmt.Errorf("candidate %d not found", selectedIndex)
+	}
+	if len(candidates) == 1 {
+		return candidates[0].EndpointCandidate, nil
+	}
+	return core.EndpointCandidate{}, fmt.Errorf("multiple candidates found; pass --candidate")
+}
+
+func endpointCandidatesFromImport(raw []byte) ([]endpointCandidateView, error) {
+	raw = []byte(strings.TrimSpace(string(raw)))
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("endpoint import input is empty")
+	}
+	var single endpointCandidateView
+	if err := json.Unmarshal(raw, &single); err == nil && strings.TrimSpace(single.URL) != "" {
+		if single.Index == 0 {
+			single.Index = 1
+		}
+		return []endpointCandidateView{single}, nil
+	}
+	var view endpointDiscoveryView
+	if err := json.Unmarshal(raw, &view); err != nil {
+		return nil, fmt.Errorf("endpoint import input must be JSON: %w", err)
+	}
+	var out []endpointCandidateView
+	out = append(out, view.Candidates...)
+	if len(out) == 0 {
+		for _, result := range view.Results {
+			out = append(out, result.Candidates...)
+		}
+	}
+	seen := map[int]bool{}
+	for i := range out {
+		if out[i].Index == 0 || seen[out[i].Index] {
+			out[i].Index = i + 1
+		}
+		seen[out[i].Index] = true
+	}
+	return out, nil
+}
+
+func importEndpointSelections(in io.Reader, out io.Writer, state runtime.State, candidates []endpointCandidateView) ([]runtime.EndpointRecord, error) {
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no endpoint candidates to import")
+	}
+	for _, candidate := range candidates {
+		if _, err := fmt.Fprintf(out, "%d\t%s\t%s\t%s\n", candidate.Index, candidate.Product, candidate.URL, candidate.CredentialRef); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := fmt.Fprint(out, "Select endpoint candidates to import: "); err != nil {
+		return nil, err
+	}
+	line, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+	selected, err := parseEndpointSelection(line)
+	if err != nil {
+		return nil, err
+	}
+	byIndex := map[int]core.EndpointCandidate{}
+	for _, candidate := range candidates {
+		byIndex[candidate.Index] = candidate.EndpointCandidate
+	}
+	var saved []runtime.EndpointRecord
+	for _, index := range selected {
+		candidate, ok := byIndex[index]
+		if !ok {
+			return nil, fmt.Errorf("candidate %d not found", index)
+		}
+		record, err := state.SaveEndpointCandidate(candidate)
+		if err != nil {
+			return nil, err
+		}
+		saved = append(saved, record)
+	}
+	return saved, nil
+}
+
+func parseEndpointSelection(value string) ([]int, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, fmt.Errorf("no endpoint candidates selected")
+	}
+	seen := map[int]bool{}
+	var out []int
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		startText, endText, isRange := strings.Cut(part, "-")
+		start, err := parsePositiveInt(startText)
+		if err != nil {
+			return nil, fmt.Errorf("invalid selection %q", part)
+		}
+		end := start
+		if isRange {
+			end, err = parsePositiveInt(endText)
+			if err != nil || end < start {
+				return nil, fmt.Errorf("invalid selection range %q", part)
+			}
+		}
+		for i := start; i <= end; i++ {
+			if !seen[i] {
+				seen[i] = true
+				out = append(out, i)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no endpoint candidates selected")
+	}
+	return out, nil
+}
+
+func parsePositiveInt(value string) (int, error) {
+	out, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || out <= 0 {
+		return 0, fmt.Errorf("expected positive integer")
+	}
+	return out, nil
+}
+
+func mergeStringMaps(base, override map[string]string) map[string]string {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for key, value := range base {
+		out[key] = value
+	}
+	for key, value := range override {
+		out[key] = value
+	}
+	return out
 }
 
 func newIndexCommand(opts *options) *cobra.Command {

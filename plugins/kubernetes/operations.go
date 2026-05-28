@@ -67,7 +67,7 @@ func (s Service) EndpointDiscover(ctx pluginbinding.Context, input EndpointDisco
 		return EndpointDiscoverResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
 	candidates := serviceCandidates(services, input)
-	if shouldDiscoverMySQL(input.Product) {
+	if shouldDiscoverSQLSecret(input.Product) {
 		secrets, err := s.secrets()(context.Background(), input)
 		if err != nil {
 			return EndpointDiscoverResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
@@ -221,15 +221,15 @@ func serviceCandidates(services []corev1.Service, input EndpointDiscoverInput) [
 func secretCandidates(secrets []corev1.Secret, input EndpointDiscoverInput) []core.EndpointCandidate {
 	var candidates []core.EndpointCandidate
 	for _, secret := range secrets {
-		endpoint, database, ok := mysqlEndpointFromSecret(secret)
+		endpoint, database, product, ok := sqlEndpointFromSecret(secret, input.Product)
 		if !ok {
 			continue
 		}
 		candidate := core.EndpointCandidate{
-			ID:            endpointCandidateID("mysql", endpoint, secret.Namespace, secret.Name),
+			ID:            endpointCandidateID(product, endpoint, secret.Namespace, secret.Name),
 			URL:           endpoint,
-			Product:       "mysql",
-			Protocol:      "mysql",
+			Product:       product,
+			Protocol:      product,
 			Source:        "kubernetes_secret",
 			Score:         0.9,
 			CredentialRef: kubernetesCredentialRef(input.Context, secret.Namespace, secret.Name),
@@ -247,24 +247,74 @@ func secretCandidates(secrets []corev1.Secret, input EndpointDiscoverInput) []co
 	return candidates
 }
 
-func mysqlEndpointFromSecret(secret corev1.Secret) (string, string, bool) {
+func sqlEndpointFromSecret(secret corev1.Secret, productFilter string) (string, string, string, bool) {
 	host := secretValue(secret, "host", "hostname", "endpoint", "address")
-	port := firstNonEmpty(secretValue(secret, "port"), "3306")
+	port := secretValue(secret, "port")
 	database := secretValue(secret, "database", "dbname", "db")
 	username := secretValue(secret, "username", "user")
 	password := secretValue(secret, "password", "pass")
 	if host == "" || username == "" || password == "" {
-		return "", "", false
+		return "", "", "", false
 	}
 	haystack := strings.ToLower(secret.Name + " " + joinMap(secret.Labels) + " " + joinMap(secret.Annotations) + " " + host + " " + port)
-	if !strings.Contains(haystack, "mysql") && port != "3306" {
-		return "", "", false
+	product := classifySQLSecretProduct(haystack, port, productFilter)
+	if product == "" {
+		return "", "", "", false
 	}
-	endpoint := "mysql://" + host + ":" + port
+	if port == "" {
+		if product == "postgres" {
+			port = "5432"
+		} else {
+			port = "3306"
+		}
+	}
+	if database == "" && product == "postgres" {
+		database = crossplaneSecretRole(secret.Name)
+	}
+	endpoint := product + "://" + host + ":" + port
 	if database != "" {
 		endpoint += "/" + database
 	}
-	return endpoint, database, true
+	if product == "postgres" {
+		endpoint += "?sslmode=require"
+	}
+	return endpoint, database, product, true
+}
+
+func classifySQLSecretProduct(haystack, port, productFilter string) string {
+	productFilter = strings.ToLower(strings.TrimSpace(productFilter))
+	switch productFilter {
+	case "postgres", "postgresql", "pg":
+		if strings.Contains(haystack, "postgres") || port == "5432" {
+			return "postgres"
+		}
+	case "mysql", "mariadb":
+		if strings.Contains(haystack, "mysql") || port == "3306" {
+			return "mysql"
+		}
+	case "", "database", "sql":
+		if strings.Contains(haystack, "postgres") || port == "5432" {
+			return "postgres"
+		}
+		if strings.Contains(haystack, "mysql") || port == "3306" {
+			return "mysql"
+		}
+	}
+	return ""
+}
+
+func crossplaneSecretRole(name string) string {
+	const prefix = "crossplane-provider-sql-db-secret-user-"
+	name = strings.TrimSpace(name)
+	if !strings.HasPrefix(name, prefix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(name, prefix)
+	role, _, ok := strings.Cut(rest, "-providerconfig-")
+	if !ok {
+		return ""
+	}
+	return role
 }
 
 func secretValue(secret corev1.Secret, keys ...string) string {
@@ -284,9 +334,9 @@ func kubernetesCredentialRef(contextName, namespace, secretName string) string {
 	return "kubernetes://" + namespace + "/secrets/" + secretName + "?" + values.Encode()
 }
 
-func shouldDiscoverMySQL(product string) bool {
+func shouldDiscoverSQLSecret(product string) bool {
 	product = strings.ToLower(strings.TrimSpace(product))
-	return product == "" || product == "mysql" || product == "database" || product == "sql"
+	return product == "" || product == "mysql" || product == "mariadb" || product == "postgres" || product == "postgresql" || product == "pg" || product == "database" || product == "sql"
 }
 
 func limitCandidates(candidates []core.EndpointCandidate, limit int) []core.EndpointCandidate {
@@ -304,7 +354,7 @@ func limitCandidates(candidates []core.EndpointCandidate, limit int) []core.Endp
 
 func classifyService(item corev1.Service, productFilter string) (string, float64) {
 	haystack := strings.ToLower(item.Name + " " + joinMap(item.Labels) + " " + joinMap(item.Annotations))
-	products := []string{"prometheus", "loki", "homer", "mysql"}
+	products := []string{"prometheus", "loki", "homer", "mysql", "postgres"}
 	for _, product := range products {
 		if productFilter != "" && product != productFilter {
 			continue
@@ -340,8 +390,12 @@ func serviceURLs(item corev1.Service, product string) []string {
 			}
 		}
 		clusterHost := item.Name + "." + item.Namespace + ".svc"
-		if product == "mysql" {
+		switch product {
+		case "mysql", "postgres":
 			scheme = "mysql"
+			if product == "postgres" {
+				scheme = "postgres"
+			}
 		}
 		urls = append(urls, scheme+"://"+clusterHost+":"+strconv.Itoa(int(port.Port)))
 	}

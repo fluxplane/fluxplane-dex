@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -145,6 +146,114 @@ func TestEndpointAddListShow(t *testing.T) {
 	}
 	if shown.ID != "local-mysql" {
 		t.Fatalf("shown = %#v", shown)
+	}
+}
+
+func TestEndpointImportCandidateFromDiscoveryJSON(t *testing.T) {
+	home := t.TempDir()
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetIn(strings.NewReader(`{"candidates":[{"index":2,"id":"mysql:abc","url":"mysql://db.example.com:3306/app","product":"mysql","protocol":"mysql","source":"kubernetes_secret","credential_ref":"kubernetes://latest/secrets/mysql","labels":{"namespace":"latest"}}]}`))
+	cmd.SetArgs([]string{"--dex-home", home, "endpoint", "import", "--candidate", "2", "--id", "latest-mysql", "--label", "role=read", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var record runtime.EndpointRecord
+	if err := json.Unmarshal(out.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.ID != "latest-mysql" || record.URL != "mysql://db.example.com:3306/app" || record.CredentialRef != "kubernetes://latest/secrets/mysql" {
+		t.Fatalf("record = %#v", record)
+	}
+	if record.Labels["namespace"] != "latest" || record.Labels["role"] != "read" {
+		t.Fatalf("labels = %#v", record.Labels)
+	}
+}
+
+func TestEndpointDiscoverPluginPassesInputAndIndexesCandidates(t *testing.T) {
+	pluginDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pluginDir, "go.mod"), []byte("module fakekubernetes\n\ngo 1.26\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmdDir := filepath.Join(pluginDir, "cmd", "dex-plugin-kubernetes")
+	if err := os.MkdirAll(cmdDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mainGo := `package main
+
+import (
+	"encoding/json"
+	"os"
+)
+
+func main() {
+	var req struct {
+		Command string          ` + "`json:\"command\"`" + `
+		Payload json.RawMessage ` + "`json:\"payload\"`" + `
+	}
+	_ = json.NewDecoder(os.Stdin).Decode(&req)
+	if req.Command == "manifest" {
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"protocol": "dex.plugin.v1",
+			"ok": true,
+			"result": map[string]any{
+				"name": "kubernetes",
+				"endpoints": []map[string]any{{"name": "kubernetes.endpoint.discover", "products": []string{"mysql"}}},
+			},
+		})
+		return
+	}
+	var input map[string]any
+	_ = json.Unmarshal(req.Payload, &input)
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"protocol": "dex.plugin.v1",
+		"ok": true,
+		"result": map[string]any{"candidates": []map[string]any{{
+			"id": "mysql:abc",
+			"url": "mysql://db.example.com:3306/app",
+			"product": input["product"],
+			"protocol": "mysql",
+			"source": "kubernetes_secret",
+			"credential_ref": "kubernetes://latest/secrets/mysql",
+			"labels": map[string]any{"context": input["context"], "namespace": input["namespace"], "limit": "3"},
+		}}},
+	})
+}
+`
+	if err := os.WriteFile(filepath.Join(cmdDir, "main.go"), []byte(mainGo), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "--dev-plugin", "kubernetes=" + pluginDir, "endpoint", "discover", "mysql", "--plugin", "kubernetes", "--context", "dev", "--namespace", "latest", "--limit", "3", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var result endpointDiscoveryView
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Plugin != "kubernetes" || len(result.Candidates) != 1 || result.Candidates[0].Index != 1 {
+		t.Fatalf("result = %#v", result)
+	}
+	labels := result.Candidates[0].Labels
+	if labels["context"] != "dev" || labels["namespace"] != "latest" || labels["limit"] != "3" {
+		t.Fatalf("labels = %#v", labels)
+	}
+}
+
+func TestParseEndpointSelection(t *testing.T) {
+	selected, err := parseEndpointSelection("1,3-5,3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(selected, []int{1, 3, 4, 5}) {
+		t.Fatalf("selected = %#v", selected)
 	}
 }
 

@@ -78,6 +78,7 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newContextCommand(opts))
 	root.AddCommand(newEndpointCommand(opts))
 	root.AddCommand(newIndexCommand(opts))
+	root.AddCommand(newDoctorCommand(opts))
 	root.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
@@ -130,6 +131,14 @@ type endpointTestResult struct {
 	DurationMS int64          `json:"duration_ms,omitempty"`
 	Error      string         `json:"error,omitempty"`
 	Details    map[string]any `json:"details,omitempty"`
+}
+
+type endpointDoctorResult struct {
+	Product   string               `json:"product,omitempty"`
+	Count     int                  `json:"count"`
+	OK        int                  `json:"ok"`
+	Failed    int                  `json:"failed"`
+	Endpoints []endpointTestResult `json:"endpoints"`
 }
 
 func newShortcutCommand(opts *options) *cobra.Command {
@@ -640,6 +649,37 @@ func newContextCommand(opts *options) *cobra.Command {
 	}
 }
 
+func newDoctorCommand(opts *options) *cobra.Command {
+	cmd := &cobra.Command{Use: "doctor", Short: "Run host health checks"}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "endpoints [PRODUCT]",
+		Short: "Test registered endpoints and update health",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			product := ""
+			if len(args) == 1 {
+				product = strings.TrimSpace(args[0])
+			}
+			result, err := doctorEndpoints(cmd.Context(), runner, opts.instanceName(), product)
+			if err != nil {
+				return err
+			}
+			if err := renderValue(cmd.OutOrStdout(), opts.output, result); err != nil {
+				return err
+			}
+			if result.Failed > 0 {
+				return fmt.Errorf("%d endpoint(s) failed health checks", result.Failed)
+			}
+			return nil
+		},
+	})
+	return cmd
+}
+
 func newEndpointCommand(opts *options) *cobra.Command {
 	cmd := &cobra.Command{Use: "endpoint", Short: "Discover and inspect endpoints"}
 	cmd.AddCommand(&cobra.Command{
@@ -1126,6 +1166,27 @@ func mergeStringMaps(base, override map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+func doctorEndpoints(ctx context.Context, runner runtime.Runner, instance, product string) (endpointDoctorResult, error) {
+	endpoints, err := runner.State.ListEndpoints(product)
+	if err != nil {
+		return endpointDoctorResult{}, err
+	}
+	result := endpointDoctorResult{Product: product, Count: len(endpoints)}
+	for _, endpoint := range endpoints {
+		testResult := testEndpoint(ctx, runner, instance, endpoint)
+		if _, err := runner.State.SaveEndpointHealth(endpoint.ID, endpointHealthFromTestResult(testResult)); err != nil {
+			return endpointDoctorResult{}, err
+		}
+		result.Endpoints = append(result.Endpoints, testResult)
+		if testResult.OK {
+			result.OK++
+		} else {
+			result.Failed++
+		}
+	}
+	return result, nil
 }
 
 func testEndpoint(ctx context.Context, runner runtime.Runner, instance string, endpoint runtime.EndpointRecord) endpointTestResult {

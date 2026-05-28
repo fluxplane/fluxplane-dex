@@ -121,10 +121,18 @@ const MarketplaceJSON = `{
       "local_path": "plugins/kubernetes",
       "commands": [
         {"use": "k8s clusters", "target": "operation", "operation": "kubernetes.cluster.list"},
+        {"use": "kube ns ls", "target": "operation", "operation": "kubernetes.namespace.list"},
+        {"use": "kube svc ls", "target": "operation", "operation": "kubernetes.service.list"},
+        {"use": "kube svc show <namespace/name>", "target": "operation", "operation": "kubernetes.service.show"},
+        {"use": "kube pod ls", "target": "operation", "operation": "kubernetes.pod.list"},
+        {"use": "kube pod show <namespace/name>", "target": "operation", "operation": "kubernetes.pod.show"},
+        {"use": "search --plugin kubernetes <query>", "target": "datasource", "datasource": "kubernetes.inventory", "capability": "search", "entity": "kubernetes.resource"},
         {"use": "k8s discover <product>", "target": "operation", "operation": "kubernetes.endpoint.discover"},
+        {"use": "endpoint discover kubernetes", "target": "endpoint", "capability": "discover", "entity": "kubernetes"},
         {"use": "endpoint discover prometheus", "target": "endpoint", "capability": "discover", "entity": "prometheus"},
         {"use": "endpoint discover loki", "target": "endpoint", "capability": "discover", "entity": "loki"},
-        {"use": "endpoint discover mysql", "target": "endpoint", "capability": "discover", "entity": "mysql"}
+        {"use": "endpoint discover mysql", "target": "endpoint", "capability": "discover", "entity": "mysql"},
+        {"use": "endpoint discover postgres", "target": "endpoint", "capability": "discover", "entity": "postgres"}
       ]
     },
     {

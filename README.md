@@ -77,6 +77,12 @@ dex sys info
 dex sys info --category os --category network -o json
 ```
 
+Check registered endpoint health:
+
+```bash
+dex doctor endpoints
+```
+
 ## Current Status
 
 This project is actively being built. The current surface includes:

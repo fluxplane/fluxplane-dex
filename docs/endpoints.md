@@ -29,6 +29,18 @@ dex endpoint show dev-kubernetes -o json
 The test uses `kubernetes.cluster.test`, which calls the Kubernetes API server
 through client-go and stores the result as `last_health` on the endpoint.
 
+Run health checks for every registered endpoint:
+
+```bash
+dex doctor endpoints -o json
+```
+
+You can scope the check to one product:
+
+```bash
+dex doctor endpoints kubernetes -o json
+```
+
 ## Cluster Inventory
 
 Once the Kubernetes plugin can reach a cluster, use read-only operations to

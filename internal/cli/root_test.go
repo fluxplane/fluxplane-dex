@@ -229,6 +229,54 @@ func TestEndpointTestUsesTCPFallback(t *testing.T) {
 	}
 }
 
+func TestDoctorEndpointsTestsAndStoresHealth(t *testing.T) {
+	home := t.TempDir()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+	state, err := runtime.NewState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveEndpoint(core.EndpointRef{ID: "local-tcp", URL: "tcp://" + listener.Addr().String(), Product: "custom", Protocol: "tcp"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", home, "doctor", "endpoints", "custom", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var result endpointDoctorResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 1 || result.OK != 1 || result.Failed != 0 || result.Endpoints[0].Method != "tcp_connect" {
+		t.Fatalf("result = %#v", result)
+	}
+	record, ok, err := state.GetEndpoint("local-tcp")
+	if err != nil || !ok {
+		t.Fatalf("get endpoint ok=%v err=%v", ok, err)
+	}
+	if record.LastHealth == nil || !record.LastHealth.OK {
+		t.Fatalf("last health = %#v", record.LastHealth)
+	}
+}
+
 func TestEndpointTestUsesKubernetesPlugin(t *testing.T) {
 	home := t.TempDir()
 	state, err := runtime.NewState(home)
@@ -603,6 +651,36 @@ func TestShortcutShowTracesDatasourceBinding(t *testing.T) {
 	}
 	if found.Plugin != "websearch" || found.Datasource != "websearch.results" || found.Capability != "search" {
 		t.Fatalf("shortcut = %#v", result)
+	}
+}
+
+func TestShortcutListIncludesKubernetesInventoryBindings(t *testing.T) {
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "shortcut", "ls", "kubernetes", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Shortcuts []shortcutView `json:"shortcuts"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	foundPodList := false
+	foundSearch := false
+	for _, shortcut := range result.Shortcuts {
+		if shortcut.Use == "kube pod ls" && shortcut.Operation == "kubernetes.pod.list" {
+			foundPodList = true
+		}
+		if shortcut.Use == "search --plugin kubernetes <query>" && shortcut.Datasource == "kubernetes.inventory" {
+			foundSearch = true
+		}
+	}
+	if !foundPodList || !foundSearch {
+		t.Fatalf("shortcuts = %#v", result.Shortcuts)
 	}
 }
 

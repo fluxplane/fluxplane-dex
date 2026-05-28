@@ -3,7 +3,7 @@ module github.com/fluxplane/fluxplane-dex/plugins/sql
 go 1.26.0
 
 require (
-	github.com/fluxplane/fluxplane-dex v0.1.0
+	github.com/fluxplane/fluxplane-dex v0.2.0
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/testcontainers/testcontainers-go v0.42.0
@@ -113,5 +113,3 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-replace github.com/fluxplane/fluxplane-dex v0.1.0 => ../..

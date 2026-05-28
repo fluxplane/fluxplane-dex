@@ -2,7 +2,7 @@ module github.com/fluxplane/fluxplane-dex/plugins/kubernetes
 
 go 1.26.0
 
-require github.com/fluxplane/fluxplane-dex v0.1.0
+require github.com/fluxplane/fluxplane-dex v0.2.0
 
 require (
 	k8s.io/api v0.36.1
@@ -53,5 +53,3 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-replace github.com/fluxplane/fluxplane-dex v0.1.0 => ../..

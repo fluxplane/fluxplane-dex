@@ -252,6 +252,7 @@ func (s Service) ServiceList(ctx pluginbinding.Context, input InventoryInput) (S
 }
 
 func (s Service) ServiceShow(ctx pluginbinding.Context, input InventoryInput) (ServiceShowResult, error) {
+	input = normalizeInventoryInput(input)
 	items, err := s.services()(context.Background(), endpointInputFromInventory(input))
 	if err != nil {
 		return ServiceShowResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
@@ -277,6 +278,7 @@ func (s Service) PodList(ctx pluginbinding.Context, input InventoryInput) (PodLi
 }
 
 func (s Service) PodShow(ctx pluginbinding.Context, input InventoryInput) (PodShowResult, error) {
+	input = normalizeInventoryInput(input)
 	items, err := s.pods()(context.Background(), input)
 	if err != nil {
 		return PodShowResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
@@ -302,6 +304,7 @@ func (s Service) DeploymentList(ctx pluginbinding.Context, input InventoryInput)
 }
 
 func (s Service) DeploymentShow(ctx pluginbinding.Context, input InventoryInput) (DeploymentShowResult, error) {
+	input = normalizeInventoryInput(input)
 	items, err := s.deployments()(context.Background(), input)
 	if err != nil {
 		return DeploymentShowResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
@@ -316,6 +319,7 @@ func (s Service) DeploymentShow(ctx pluginbinding.Context, input InventoryInput)
 }
 
 func (s Service) PodLogs(ctx pluginbinding.Context, input PodLogsInput) (PodLogsResult, error) {
+	input = normalizePodLogsInput(input)
 	result, err := s.logs()(context.Background(), input)
 	if err != nil {
 		return PodLogsResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
@@ -335,6 +339,7 @@ func (s Service) ContainerList(ctx pluginbinding.Context, input InventoryInput) 
 }
 
 func (s Service) ContainerShow(ctx pluginbinding.Context, input InventoryInput) (ContainerShowResult, error) {
+	input = normalizeInventoryInput(input)
 	items, err := s.pods()(context.Background(), input)
 	if err != nil {
 		return ContainerShowResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
@@ -1280,6 +1285,32 @@ func containerRecordMatches(record ContainerRecord, input InventoryInput) bool {
 		return false
 	}
 	return record.ID == name || record.Pod+"/"+record.Name == name || record.Name == name
+}
+
+func normalizeInventoryInput(input InventoryInput) InventoryInput {
+	if strings.TrimSpace(input.Namespace) != "" {
+		return input
+	}
+	namespace, name, ok := strings.Cut(strings.TrimSpace(input.Name), "/")
+	if !ok {
+		return input
+	}
+	input.Namespace = strings.TrimSpace(namespace)
+	input.Name = strings.TrimSpace(name)
+	return input
+}
+
+func normalizePodLogsInput(input PodLogsInput) PodLogsInput {
+	if strings.TrimSpace(input.Namespace) != "" {
+		return input
+	}
+	namespace, name, ok := strings.Cut(strings.TrimSpace(input.Name), "/")
+	if !ok {
+		return input
+	}
+	input.Namespace = strings.TrimSpace(namespace)
+	input.Name = strings.TrimSpace(name)
+	return input
 }
 
 func filterDeploymentRecords(records []DeploymentRecord, query string) []DeploymentRecord {

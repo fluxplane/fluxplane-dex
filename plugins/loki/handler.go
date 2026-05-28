@@ -15,6 +15,8 @@ func NewPluginWithService(service Service) *pluginbinding.Plugin {
 		pluginbinding.RegisterOperation(querySpec(), service.Query),
 		pluginbinding.RegisterOperation(labelsSpec(), service.Labels),
 		pluginbinding.RegisterOperation(recentLogsSpec(), service.RecentLogs),
+		pluginbinding.RegisterDatasourceSearch(logEntriesDatasourceSpec(), service.LogEntriesDatasource),
+		pluginbinding.RegisterDatasourceSearch(labelsDatasourceSpec(), service.LabelsDatasource),
 	)
 }
 

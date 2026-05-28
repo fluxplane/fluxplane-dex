@@ -19,12 +19,13 @@ const (
 )
 
 type SearchInput struct {
-	Queries   []string `json:"queries,omitempty" jsonschema:"description=Search queries to run."`
-	Query     string   `json:"query,omitempty" jsonschema:"description=Single search query convenience field."`
-	Providers []string `json:"providers,omitempty" jsonschema:"description=Optional provider names declared by web search provider plugins."`
-	Max       int      `json:"max,omitempty" jsonschema:"description=Maximum results per query/provider. Defaults to 10."`
-	Limit     int      `json:"limit,omitempty" jsonschema:"description=Alias for max used by datasource search."`
-	Entity    string   `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
+	Datasource string   `json:"datasource,omitempty" jsonschema:"description=Exact datasource name."`
+	Queries    []string `json:"queries,omitempty" jsonschema:"description=Search queries to run."`
+	Query      string   `json:"query,omitempty" jsonschema:"description=Single search query convenience field."`
+	Providers  []string `json:"providers,omitempty" jsonschema:"description=Optional provider names declared by web search provider plugins."`
+	Max        int      `json:"max,omitempty" jsonschema:"description=Maximum results per query/provider. Defaults to 10."`
+	Limit      int      `json:"limit,omitempty" jsonschema:"description=Alias for max used by datasource search."`
+	Entity     string   `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
 }
 
 type SearchOutput struct {
@@ -146,7 +147,7 @@ func ProviderFromManifest(entry core.PluginEntry, manifest core.PluginManifest) 
 	provider := Provider{
 		Name:      providerName,
 		Plugin:    entry.Name,
-		Aliases:   uniqueStrings(append(append([]string(nil), entry.Aliases...), manifest.Aliases...)),
+		Aliases:   uniqueStrings(append([]string(nil), manifest.Aliases...)),
 		Operation: strings.TrimSpace(manifest.Metadata[MetadataOperation]),
 	}
 	for _, datasource := range manifest.Datasources {

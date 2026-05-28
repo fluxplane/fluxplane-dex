@@ -69,21 +69,23 @@ Read bounded pod logs:
 dex op run kubernetes.pod.logs '{"endpoint_ref":"dev-kubernetes","namespace":"latest","name":"api-123","tail_lines":50}'
 ```
 
-The same operations are available through shortcut bindings:
+After activating the Kubernetes plugin, the same operations are available
+through manifest-generated aliases:
 
 ```bash
-dex kube ns ls --endpoint dev-kubernetes
-dex kube svc ls --endpoint dev-kubernetes --namespace latest
-dex kube svc show latest/api --endpoint dev-kubernetes
-dex kube pod ls --endpoint dev-kubernetes --namespace latest --query api
-dex kube pod logs latest/api-123 --endpoint dev-kubernetes --tail-lines 50
-dex kube container ls --endpoint dev-kubernetes --namespace latest --query api
-dex kube container show latest/api-123/api --endpoint dev-kubernetes
-dex kube deploy ls --endpoint dev-kubernetes --namespace latest
-dex kube deploy show latest/api --endpoint dev-kubernetes
+dex plugin activate kubernetes
+dex kube namespace list --endpoint-ref dev-kubernetes
+dex kube service list --endpoint-ref dev-kubernetes --namespace latest
+dex kube service show latest/api --endpoint-ref dev-kubernetes
+dex kube pod list --endpoint-ref dev-kubernetes --namespace latest --query api
+dex kube pod logs latest/api-123 --endpoint-ref dev-kubernetes --tail-lines 50
+dex kube container list --endpoint-ref dev-kubernetes --namespace latest --query api
+dex kube container show latest/api-123/api --endpoint-ref dev-kubernetes
+dex kube deployment list --endpoint-ref dev-kubernetes --namespace latest
+dex kube deployment show latest/api --endpoint-ref dev-kubernetes
 ```
 
-These shortcuts are resolved from marketplace metadata and call the same
+These commands are resolved from the activated plugin manifest and call the same
 underlying `kubernetes.*` operations shown above.
 
 Datasource search exposes namespaces, services, pods, deployments, and
@@ -95,7 +97,7 @@ dex search --plugin kubernetes --endpoint dev-kubernetes api
 
 The generic search command can pass a DEX endpoint ref into datasource calls.
 Provider-specific scoping, such as Kubernetes namespaces, stays on Kubernetes
-operations and shortcuts.
+operations.
 
 ## In-Cluster Product Discovery
 

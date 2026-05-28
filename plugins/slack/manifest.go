@@ -7,8 +7,8 @@ import (
 
 const (
 	PluginName        = "slack"
-	PluginVersion     = "0.1.0"
-	PluginDescription = "Slack messaging, search, thread, unread, and reverse lookup operations."
+	PluginVersion     = "0.2.0"
+	PluginDescription = "Slack token info, messaging, search, thread, channel member, and reverse lookup operations."
 
 	AuthMethodTokenSet = "token_set"
 	AuthPurposeBot     = "bot_token"
@@ -20,15 +20,22 @@ const (
 	EnvSlackAppToken  = "SLACK_APP_TOKEN"
 
 	OperationIndexBuild  = "slack.index.build"
+	OperationInfo        = "slack.info"
 	OperationMessageSend = "slack.message.send"
 	OperationSearch      = "slack.search"
 	OperationThread      = "slack.thread"
 
-	DatasourceChannels = "slack.channels"
-	DatasourceUsers    = "slack.users"
+	DatasourceChannels       = "slack.channels"
+	DatasourceUsers          = "slack.users"
+	DatasourceMessages       = "slack.messages"
+	DatasourceThreadMessages = "slack.thread_messages"
+	DatasourceChannelMembers = "slack.channel_members"
 
-	EntityChannel = "slack.channel"
-	EntityUser    = "slack.user"
+	EntityChannel       = "slack.channel"
+	EntityUser          = "slack.user"
+	EntityMessage       = "slack.message"
+	EntityThreadMessage = "slack.thread_message"
+	EntityChannelMember = "slack.channel_member"
 
 	ContextName = "slack.context"
 )
@@ -51,6 +58,11 @@ func manifestSpec() pluginbinding.ManifestSpec {
 			pluginbinding.AuthField(AuthPurposeApp, "Slack app token", false, true, EnvSlackAppToken),
 		)},
 		Operations: operationSpecs(),
+		Datasources: []core.DatasourceSpec{
+			slackMessagesDatasourceSpec(),
+			slackThreadMessagesDatasourceSpec(),
+			slackChannelMembersDatasourceSpec(),
+		},
 		IndexedDatasources: []pluginbinding.IndexedDatasourceSpec{
 			pluginbinding.IndexedDatasourceWithOptions(DatasourceChannels, EntityChannel, "Slack channels.", "Slack channel reverse lookup index.", pluginbinding.SearchableIndexCapabilities(),
 				pluginbinding.EntitySchemaFor[ChannelRecord](),
@@ -70,6 +82,7 @@ func manifestSpec() pluginbinding.ManifestSpec {
 func operationSpecs() []core.OperationSpec {
 	return []core.OperationSpec{
 		indexBuildSpec(),
+		infoSpec(),
 		messageSendSpec(),
 		searchSpec(),
 		threadSpec(),
@@ -81,6 +94,14 @@ func indexBuildSpec() core.OperationSpec {
 		OperationIndexBuild,
 		"Build Slack channel and user indexes.",
 		slackReadOptions(core.OperationConditional)...,
+	)
+}
+
+func infoSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[NoInput, InfoResult](
+		OperationInfo,
+		"Show Slack token identity and workspace information.",
+		slackReadOptions(core.OperationIdempotent)...,
 	)
 }
 
@@ -121,4 +142,43 @@ func slackUsersLookupSpec() core.DatasourceSpec {
 
 func slackChannelsLookupSpec() core.DatasourceSpec {
 	return pluginbinding.TypedDatasourceSpec[LookupInput, LookupResult](DatasourceChannels, EntityChannel, "Lookup Slack channels.", []string{pluginbinding.CapabilityLookup}, pluginbinding.DatasourceSecretPurposes(AuthPurposeUser, AuthPurposeBot))
+}
+
+func slackMessagesDatasourceSpec() core.DatasourceSpec {
+	return pluginbinding.TypedDatasourceSpec[MessageSearchInput, MessageDatasourceResult](
+		DatasourceMessages,
+		EntityMessage,
+		"Search Slack messages.",
+		[]string{pluginbinding.CapabilitySearch},
+		pluginbinding.DatasourceSecretPurposes(AuthPurposeUser, AuthPurposeBot),
+		pluginbinding.EntitySchemaFor[MessageRecord](),
+		pluginbinding.EntitySchema(core.DatasourceEntitySchema{IDField: "message_id", TitleField: "title"}),
+		pluginbinding.Completion("Slack message fields.", "channel", "user", "text"),
+	)
+}
+
+func slackThreadMessagesDatasourceSpec() core.DatasourceSpec {
+	return pluginbinding.TypedDatasourceSpec[ThreadMessagesInput, ThreadMessagesDatasourceResult](
+		DatasourceThreadMessages,
+		EntityThreadMessage,
+		"Read Slack thread messages.",
+		[]string{pluginbinding.CapabilitySearch},
+		pluginbinding.DatasourceSecretPurposes(AuthPurposeUser, AuthPurposeBot),
+		pluginbinding.EntitySchemaFor[ThreadMessageRecord](),
+		pluginbinding.EntitySchema(core.DatasourceEntitySchema{IDField: "thread_message_id", TitleField: "title"}),
+		pluginbinding.Completion("Slack thread message fields.", "channel", "root_ts", "reply_ts", "user", "text"),
+	)
+}
+
+func slackChannelMembersDatasourceSpec() core.DatasourceSpec {
+	return pluginbinding.TypedDatasourceSpec[ChannelMembersInput, ChannelMembersDatasourceResult](
+		DatasourceChannelMembers,
+		EntityChannelMember,
+		"List Slack channel members.",
+		[]string{pluginbinding.CapabilitySearch},
+		pluginbinding.DatasourceSecretPurposes(AuthPurposeUser, AuthPurposeBot),
+		pluginbinding.EntitySchemaFor[ChannelMemberRecord](),
+		pluginbinding.EntitySchema(core.DatasourceEntitySchema{IDField: "channel_member_id", TitleField: "title"}),
+		pluginbinding.Completion("Slack channel member fields.", "channel", "user_id", "name", "real_name", "display_name", "email"),
+	)
 }

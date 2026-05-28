@@ -10,23 +10,10 @@ type Marketplace struct {
 type PluginEntry struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description,omitempty"`
-	Aliases     []string          `json:"aliases,omitempty"`
 	Binary      string            `json:"binary"`
 	GoInstall   string            `json:"go_install,omitempty"`
 	LocalPath   string            `json:"local_path,omitempty"`
-	Commands    []CommandShortcut `json:"commands,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
-}
-
-type CommandShortcut struct {
-	Use         string         `json:"use"`
-	Description string         `json:"description,omitempty"`
-	Target      string         `json:"target,omitempty"`
-	Operation   string         `json:"operation,omitempty"`
-	Datasource  string         `json:"datasource,omitempty"`
-	Capability  string         `json:"capability,omitempty"`
-	Entity      string         `json:"entity,omitempty"`
-	Defaults    map[string]any `json:"defaults,omitempty"`
 }
 
 type PluginManifest struct {

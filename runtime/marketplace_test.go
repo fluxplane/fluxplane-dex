@@ -2,20 +2,23 @@ package runtime
 
 import "testing"
 
-func TestLoadMarketplaceResolvesAliases(t *testing.T) {
+func TestLoadMarketplaceResolvesCanonicalNames(t *testing.T) {
 	marketplace, err := LoadMarketplaceData([]byte(`{"version":"1","plugins":[{"name":"example","aliases":["ex"],"binary":"dex-plugin-example","go_install":"example.com/plugin@latest"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	plugin, ok := marketplace.Resolve("ex")
+	plugin, ok := marketplace.Resolve("example")
 	if !ok {
-		t.Fatal("alias did not resolve")
+		t.Fatal("plugin did not resolve")
 	}
 	if plugin.Name != "example" {
-		t.Fatalf("alias resolved to %q", plugin.Name)
+		t.Fatalf("plugin resolved to %q", plugin.Name)
 	}
 	if plugin.Binary == "" || plugin.GoInstall == "" {
 		t.Fatalf("plugin install metadata incomplete: %#v", plugin)
+	}
+	if _, ok := marketplace.Resolve("ex"); ok {
+		t.Fatal("marketplace aliases should not resolve")
 	}
 }
 

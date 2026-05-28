@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.7.0
-	github.com/fluxplane/fluxplane-dex v0.1.0
+	github.com/fluxplane/fluxplane-dex v0.2.0
 	github.com/moby/go-archive v0.2.0
 	github.com/moby/patternmatcher v0.6.0
 	github.com/opencontainers/image-spec v1.1.1
@@ -49,5 +49,3 @@ require (
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 )
-
-replace github.com/fluxplane/fluxplane-dex v0.1.0 => ../..

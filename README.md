@@ -26,6 +26,17 @@ dex plugin ls
 dex plugin show gitlab
 ```
 
+Plugin aliases such as `gl`, `slack`, `sys`, `web`, and `kube` are generated
+from activated plugin manifests. Activate the plugins you want to expose as
+top-level commands:
+
+```bash
+dex plugin activate gitlab
+dex plugin activate slack
+dex plugin activate system
+dex plugin activate websearch
+```
+
 Connect configured integrations from environment variables:
 
 ```bash
@@ -48,24 +59,31 @@ dex op ls gitlab
 dex op run gitlab.project.list '{"limit":10}'
 ```
 
-Use a shortcut command:
+Use manifest-driven plugin aliases:
 
 ```bash
-dex gl index
-dex gl proj ls
-dex gl mr ls
-dex gl mr show group/project!123
+dex gl index build
+dex gl project list
+dex gl mr list
+dex gl mr show '{"project":"group/project","iid":123}'
 ```
 
-Shortcuts are marketplace bindings over operations or datasources. The same
-underlying capability remains available through `dex op run`, `dex search`, or
-`dex lookup`.
+Aliases are resolved from activated plugin manifests. Operation names map to
+words after the plugin alias, so `gitlab.project.list` can be called as
+`dex gl project list`.
 
 Build indexes and use datasource search/lookup:
 
 ```bash
 dex index build gitlab
+dex slack info
 dex search manager
+dex datasource ls
+dex datasource show kubernetes.inventory
+dex datasource search slack.messages '{"query":"incident"}'
+dex datasource search slack.thread_messages '{"channel":"C123","ts":"1710000000.123456"}'
+dex datasource search slack.channel_members '{"channel":"C123","query":"timo"}'
+dex datasource search sql.query_rows '{"driver":"sqlite","dsn":"./app.db","query":"select 1 as ok"}'
 dex lookup "https://gitlab.example.com/group/project/-/merge_requests/123"
 dex lookup timo
 ```
@@ -73,8 +91,8 @@ dex lookup timo
 Search the web:
 
 ```bash
-dex websearch providers
-dex websearch search "fluxplane dex"
+dex web provider list
+dex web search "fluxplane dex"
 dex search --plugin websearch "fluxplane dex"
 ```
 
@@ -82,7 +100,7 @@ Inspect local system context:
 
 ```bash
 dex sys info
-dex sys info --category os --category network -o json
+dex sys info --categories '["os","network"]' -o json
 ```
 
 Check registered endpoint health:
@@ -91,15 +109,15 @@ Check registered endpoint health:
 dex doctor endpoints
 ```
 
-Use Kubernetes inventory shortcuts:
+Use Kubernetes operation aliases and datasource search:
 
 ```bash
-dex kube svc ls --endpoint dev-kubernetes --namespace latest
-dex kube pod ls --endpoint dev-kubernetes --namespace latest --query api
-dex kube pod logs latest/api-123 --endpoint dev-kubernetes --tail-lines 50
-dex kube container ls --endpoint dev-kubernetes --namespace latest --query api
-dex kube container show latest/api-123/api --endpoint dev-kubernetes
-dex kube deploy ls --endpoint dev-kubernetes --namespace latest
+dex kube service list --endpoint-ref dev-kubernetes --namespace latest
+dex kube pod list --endpoint-ref dev-kubernetes --namespace latest --query api
+dex kube pod logs latest/api-123 --endpoint-ref dev-kubernetes --tail-lines 50
+dex kube container list --endpoint-ref dev-kubernetes --namespace latest --query api
+dex kube container show latest/api-123/api --endpoint-ref dev-kubernetes
+dex kube deployment list --endpoint-ref dev-kubernetes --namespace latest
 dex search --plugin kubernetes --endpoint dev-kubernetes api
 ```
 
@@ -110,19 +128,28 @@ This project is actively being built. The current surface includes:
 - `gitlab`: auth test, index build, project list/show, merge request list/show,
   indexed datasources, and live/index-backed lookup for projects, users,
   groups, issues, and merge requests.
-- `slack`: channel/user index build and live/index-backed lookup for users and
-  channels; send/search/thread are declared but still pending live-client
-  migration.
+- `slack`: channel/user index build, live/index-backed lookup for users and
+  channels, message send/search/thread operations, and live datasource records
+  for messages, thread messages, and channel members.
 - `system`: local system information by category.
 - `tavily`: authenticated web search provider.
 - `duckduckgo`: web search provider without auth.
 - `websearch`: builtin generic search aggregator over web search providers.
 - `kubernetes`: kubeconfig context discovery, cluster endpoint health probes,
-  namespace/service/pod/deployment/container inventory, bounded pod logs,
-  executable inventory shortcuts, and
+  namespace/service/pod/deployment/container inventory, bounded pod logs, and
   in-cluster endpoint discovery.
+- `docker`: local Docker Engine inspection and lifecycle operations for
+  containers, images, networks, volumes, contexts, build cache, daemon events,
+  and disk usage.
+- `prometheus`: endpoint-aware health, query, query range, labels, targets,
+  alerts, and datasource records for query results, labels, targets, and alerts.
+- `loki`: endpoint-aware health, query, recent logs, labels, and datasource
+  records for log entries and labels.
 - `sql`: read-only MySQL, PostgreSQL, and SQLite queries through URLs, DSNs, or
-  registered endpoint refs.
+  registered endpoint refs, plus datasource records for query rows.
+- `ollama`: local Ollama model list/show, running models, generation, chat, and
+  embeddings.
+- `openai`: OpenAI image generation and model listing.
 
 The broader roadmap is tracked in [.agents/plans/roadmap.md](.agents/plans/roadmap.md).
 The endpoint workflow is documented in [docs/endpoints.md](docs/endpoints.md).
@@ -182,8 +209,8 @@ Supported formats are currently `text`, `compact`, `json`, and `yaml`.
 - indexes
 
 The host owns routing, auth state, scoped secret grants, indexes, rendering,
-marketplace lookup, installation, and CLI shortcuts. Plugins own integration
-behavior.
+marketplace lookup, installation, and manifest-driven alias dispatch. Plugins
+own integration behavior.
 
 The `core/pluginbinding` package owns plugin-facing boilerplate:
 
@@ -194,7 +221,7 @@ The `core/pluginbinding` package owns plugin-facing boilerplate:
 - common datasource record, search, lookup, and get result shapes
 - lookup candidate scoring, dedupe, sorting, limiting, and result assembly
 
-This means the same capability can be reached through a human-friendly shortcut,
+This means the same capability can be reached through a manifest-derived alias,
 a generic operation call, a datasource search, or an agent workflow.
 
 ## Secrets
@@ -222,12 +249,12 @@ replacement for the root release version.
 Plugin modules intentionally require the release root module version:
 
 ```go
-require github.com/fluxplane/fluxplane-dex v0.1.0
+require github.com/fluxplane/fluxplane-dex v0.2.0
 ```
 
 Do not add local `replace` directives to plugin modules for release. The release
-tags must include the root tag `v0.1.0` and matching plugin module tags such as
-`plugins/gitlab/v0.1.0`.
+tags must include the root tag `v0.2.0` and matching plugin module tags such as
+`plugins/gitlab/v0.2.0`.
 
 Release checks live in [Maintainer Notes](docs/maintainer.md).
 

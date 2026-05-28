@@ -175,6 +175,67 @@ func TestServiceLookupCanFilterEntity(t *testing.T) {
 	}
 }
 
+func TestServiceInfoReportsTokenIdentities(t *testing.T) {
+	factory := &capturingFactory{
+		clients: map[string]*fakeClient{
+			"user_token": {
+				authInfo: AuthInfo{URL: "https://example.slack.com/", Team: "Example", User: "timo", TeamID: "T1", UserID: "U1"},
+			},
+			"bot_token": {
+				authInfo: AuthInfo{URL: "https://example.slack.com/", Team: "Example", User: "dex", TeamID: "T1", UserID: "Ubot", BotID: "B1"},
+			},
+		},
+	}
+	plugin := testPlugin(factory, nil)
+
+	out := plugintest.RunOK[InfoResult](t, plugin, OperationInfo, map[string]any{})
+	if out.Status != "ok" || out.Count != 2 || len(out.Tokens) != 2 {
+		t.Fatalf("info result = %#v", out)
+	}
+	if out.Tokens[0].Purpose != AuthPurposeUser || !out.Tokens[0].OK || out.Tokens[0].TeamID != "T1" || out.Tokens[0].UserID != "U1" {
+		t.Fatalf("user token info = %#v", out.Tokens[0])
+	}
+	if out.Tokens[1].Purpose != AuthPurposeBot || !out.Tokens[1].OK || out.Tokens[1].BotID != "B1" {
+		t.Fatalf("bot token info = %#v", out.Tokens[1])
+	}
+	if factory.clients["user_token"].authCalls != 1 || factory.clients["bot_token"].authCalls != 1 {
+		t.Fatalf("auth calls user=%d bot=%d", factory.clients["user_token"].authCalls, factory.clients["bot_token"].authCalls)
+	}
+}
+
+func TestServiceInfoReportsPartialTokenFailure(t *testing.T) {
+	factory := &capturingFactory{
+		clients: map[string]*fakeClient{
+			"user_token": {authErr: slackapi.SlackErrorResponse{Err: "invalid_auth"}},
+			"bot_token":  {authInfo: AuthInfo{Team: "Example", TeamID: "T1", UserID: "Ubot", BotID: "B1"}},
+		},
+	}
+	plugin := testPlugin(factory, nil)
+
+	out := plugintest.RunOK[InfoResult](t, plugin, OperationInfo, map[string]any{})
+	if out.Status != "partial" || out.Count != 2 {
+		t.Fatalf("info result = %#v", out)
+	}
+	if out.Tokens[0].Purpose != AuthPurposeUser || out.Tokens[0].OK || out.Tokens[0].Error == "" {
+		t.Fatalf("user token failure = %#v", out.Tokens[0])
+	}
+	if out.Tokens[1].Purpose != AuthPurposeBot || !out.Tokens[1].OK || out.Tokens[1].TeamID != "T1" {
+		t.Fatalf("bot token info = %#v", out.Tokens[1])
+	}
+}
+
+func TestServiceInfoFailsWhenNoUserOrBotTokenConfigured(t *testing.T) {
+	factory := &capturingFactory{clients: map[string]*fakeClient{}}
+	get := func(_ pluginbinding.Context, purpose string) (pluginbinding.SecretMaterial, error) {
+		return pluginbinding.SecretMaterial{}, errors.New("missing " + purpose)
+	}
+	plugin := testPlugin(factory, get)
+
+	if err := plugintest.RunError(t, plugin, OperationInfo, map[string]any{}); err == nil || err.Code != "secret" {
+		t.Fatalf("missing token err = %#v", err)
+	}
+}
+
 func TestServiceSendSearchAndThreadUseLiveClient(t *testing.T) {
 	factory := &capturingFactory{
 		clients: map[string]*fakeClient{
@@ -207,6 +268,142 @@ func TestServiceSendSearchAndThreadUseLiveClient(t *testing.T) {
 	}
 }
 
+func TestServiceThreadLimitsTotalMessages(t *testing.T) {
+	factory := &capturingFactory{
+		clients: map[string]*fakeClient{
+			"user_token": {
+				thread: []ThreadMessage{
+					{TS: "1710000000.123456", User: "U1", Text: "root"},
+					{TS: "1710000001.123456", User: "U2", Text: "reply 1"},
+					{TS: "1710000002.123456", User: "U3", Text: "reply 2"},
+				},
+			},
+		},
+	}
+	plugin := testPlugin(factory, nil)
+
+	thread := plugintest.RunOK[ThreadResult](t, plugin, OperationThread, map[string]any{"channel": "C1", "ts": "1710000000.123456", "limit": 2})
+	if thread.Count != 2 || len(thread.Messages) != 2 {
+		t.Fatalf("thread result = %#v", thread)
+	}
+	if thread.Messages[0].TS != "1710000000.123456" || thread.Messages[1].TS != "1710000001.123456" {
+		t.Fatalf("thread messages = %#v", thread.Messages)
+	}
+}
+
+func TestServiceMessagesDatasourceReturnsRecords(t *testing.T) {
+	factory := &capturingFactory{
+		clients: map[string]*fakeClient{
+			"user_token": {
+				searchMessages: []SearchMessage{{Channel: "C1", TS: "1710000000.123456", User: "U1", Text: "incident update"}},
+				searchTotal:    1,
+			},
+		},
+	}
+	plugin := testPlugin(factory, nil)
+
+	out := plugintest.DatasourceSearchOK[MessageDatasourceResult](t, plugin, map[string]any{"datasource": DatasourceMessages, "query": "incident", "limit": 5}, plugintest.WithInstance("work"))
+	if out.Source != DatasourceMessages || out.Query != "incident" || out.Count != 1 {
+		t.Fatalf("message datasource result = %#v", out)
+	}
+	record := out.Records[0]
+	if record.Entity != EntityMessage || record.ID != "C1:1710000000.123456" || record.Source.Instance != "work" {
+		t.Fatalf("message record identity = %#v", record)
+	}
+	if record.Channel != "C1" || record.TS != "1710000000.123456" || record.User != "U1" || record.Links["self"] != "slack://channel/C1/message/1710000000.123456" {
+		t.Fatalf("message record = %#v", record)
+	}
+}
+
+func TestServiceThreadMessagesDatasourceRequiresChannelAndTS(t *testing.T) {
+	plugin := testPlugin(&capturingFactory{clients: map[string]*fakeClient{"user_token": {}}}, nil)
+
+	if err := plugintest.DatasourceSearchError(t, plugin, map[string]any{"datasource": DatasourceThreadMessages, "ts": "1710000000.123456"}); err == nil || err.Code != "bad_input" {
+		t.Fatalf("missing channel err = %#v", err)
+	}
+	if err := plugintest.DatasourceSearchError(t, plugin, map[string]any{"datasource": DatasourceThreadMessages, "channel": "C1"}); err == nil || err.Code != "bad_input" {
+		t.Fatalf("missing ts err = %#v", err)
+	}
+}
+
+func TestServiceThreadMessagesDatasourceReturnsThreadRecords(t *testing.T) {
+	factory := &capturingFactory{
+		clients: map[string]*fakeClient{
+			"user_token": {
+				thread: []ThreadMessage{
+					{TS: "1710000000.123456", User: "U1", Text: "root"},
+					{TS: "1710000001.123456", User: "U2", Text: "reply"},
+					{TS: "1710000002.123456", User: "U3", Text: "later reply"},
+				},
+			},
+		},
+	}
+	plugin := testPlugin(factory, nil)
+
+	out := plugintest.DatasourceSearchOK[ThreadMessagesDatasourceResult](t, plugin, map[string]any{"datasource": DatasourceThreadMessages, "channel": "C1", "ts": "1710000000.123456", "limit": 2})
+	if out.Source != DatasourceThreadMessages || out.Query != "1710000000.123456" || out.Count != 2 {
+		t.Fatalf("thread datasource result = %#v", out)
+	}
+	if len(out.Records) != out.Count {
+		t.Fatalf("thread datasource count mismatch = %#v", out)
+	}
+	reply := out.Records[1]
+	if reply.Entity != EntityThreadMessage || reply.ID != "C1:1710000000.123456:1710000001.123456" {
+		t.Fatalf("reply identity = %#v", reply)
+	}
+	if reply.Channel != "C1" || reply.RootTS != "1710000000.123456" || reply.ReplyTS != "1710000001.123456" || reply.Links["thread"] != "slack://channel/C1/message/1710000000.123456" {
+		t.Fatalf("reply record = %#v", reply)
+	}
+}
+
+func TestServiceChannelMembersDatasourceRequiresChannelAndFilters(t *testing.T) {
+	factory := &capturingFactory{
+		clients: map[string]*fakeClient{
+			"user_token": {
+				channelMembers: []User{
+					{ID: "U1", Name: "timo", RealName: "Timo Friedl", DisplayName: "Timo"},
+					{ID: "U2", Name: "ada", RealName: "Ada Lovelace", DisplayName: "Ada"},
+				},
+			},
+		},
+	}
+	plugin := testPlugin(factory, nil)
+
+	if err := plugintest.DatasourceSearchError(t, plugin, map[string]any{"datasource": DatasourceChannelMembers, "query": "timo"}); err == nil || err.Code != "bad_input" {
+		t.Fatalf("missing channel err = %#v", err)
+	}
+
+	out := plugintest.DatasourceSearchOK[ChannelMembersDatasourceResult](t, plugin, map[string]any{"datasource": DatasourceChannelMembers, "channel": "C1", "query": "ada"})
+	if out.Source != DatasourceChannelMembers || out.Query != "ada" || out.Count != 1 {
+		t.Fatalf("channel members result = %#v", out)
+	}
+	member := out.Records[0]
+	if member.Entity != EntityChannelMember || member.ID != "C1:U2" || member.UserID != "U2" || member.Channel != "C1" {
+		t.Fatalf("member record = %#v", member)
+	}
+	if factory.clients["user_token"].channelMembersCalls != 1 || factory.clients["user_token"].lastMembersLimit != 0 {
+		t.Fatalf("member calls = %#v", factory.clients["user_token"])
+	}
+}
+
+func TestServiceChannelMembersDatasourceFallsBackToBotToken(t *testing.T) {
+	factory := &capturingFactory{
+		clients: map[string]*fakeClient{
+			"user_token": {channelMembersErr: slackapi.SlackErrorResponse{Err: "missing_scope"}},
+			"bot_token":  {channelMembers: []User{{ID: "U1", Name: "timo"}}},
+		},
+	}
+	plugin := testPlugin(factory, nil)
+
+	out := plugintest.DatasourceSearchOK[ChannelMembersDatasourceResult](t, plugin, map[string]any{"datasource": DatasourceChannelMembers, "channel": "C1", "limit": 1})
+	if out.Count != 1 || out.Records[0].ID != "C1:U1" {
+		t.Fatalf("channel members result = %#v", out)
+	}
+	if factory.created["user_token"] == 0 || factory.created["bot_token"] == 0 {
+		t.Fatalf("expected preferred token fallback: %#v", factory.created)
+	}
+}
+
 func testPlugin(factory *capturingFactory, get pluginbinding.SecretGetter) *pluginbinding.Plugin {
 	if get == nil {
 		get = func(_ pluginbinding.Context, purpose string) (pluginbinding.SecretMaterial, error) {
@@ -234,22 +431,34 @@ func (f *capturingFactory) newClient(material pluginbinding.SecretMaterial) (Cli
 }
 
 type fakeClient struct {
-	users          []User
-	channels       []Channel
-	searchMessages []SearchMessage
-	thread         []ThreadMessage
-	sendTS         string
-	searchTotal    int
-	usersErr       error
-	channelsErr    error
-	sendErr        error
-	searchErr      error
-	threadErr      error
-	usersCalls     int
-	channelsCalls  int
-	sendCalls      int
-	searchCalls    int
-	threadCalls    int
+	authInfo            AuthInfo
+	users               []User
+	channels            []Channel
+	channelMembers      []User
+	searchMessages      []SearchMessage
+	thread              []ThreadMessage
+	sendTS              string
+	searchTotal         int
+	authErr             error
+	usersErr            error
+	channelsErr         error
+	channelMembersErr   error
+	sendErr             error
+	searchErr           error
+	threadErr           error
+	authCalls           int
+	usersCalls          int
+	channelsCalls       int
+	channelMembersCalls int
+	lastMembersLimit    int
+	sendCalls           int
+	searchCalls         int
+	threadCalls         int
+}
+
+func (c *fakeClient) AuthTest(_ context.Context) (AuthInfo, error) {
+	c.authCalls++
+	return c.authInfo, c.authErr
 }
 
 func (c *fakeClient) ListUsers(_ context.Context) ([]User, error) {
@@ -260,6 +469,12 @@ func (c *fakeClient) ListUsers(_ context.Context) ([]User, error) {
 func (c *fakeClient) ListChannels(_ context.Context) ([]Channel, error) {
 	c.channelsCalls++
 	return c.channels, c.channelsErr
+}
+
+func (c *fakeClient) ListChannelMembers(_ context.Context, _ string, limit int) ([]User, error) {
+	c.channelMembersCalls++
+	c.lastMembersLimit = limit
+	return c.channelMembers, c.channelMembersErr
 }
 
 func (c *fakeClient) SendMessage(_ context.Context, _, _ string) (string, error) {

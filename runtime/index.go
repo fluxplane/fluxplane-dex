@@ -54,16 +54,18 @@ type IndexStatusEntry struct {
 }
 
 type SearchOptions struct {
-	Query  string
-	Limit  int
-	Entity string
+	Datasource string
+	Query      string
+	Limit      int
+	Entity     string
 }
 
 type LookupOptions struct {
-	Text   string
-	Terms  []string
-	Limit  int
-	Entity string
+	Datasource string
+	Text       string
+	Terms      []string
+	Limit      int
+	Entity     string
 }
 
 type LookupMatch = pluginbinding.LookupMatch[IndexRecord]
@@ -220,6 +222,58 @@ func (s State) GetIndexRecord(plugin, instance, id string) (IndexRecord, bool, e
 		}
 	}
 	return IndexRecord{}, false, nil
+}
+
+func (s State) GetIndexRecordByEntity(plugin, instance, entity, id string) (IndexRecord, bool, error) {
+	snapshots, err := s.loadIndexSnapshots(plugin, instance)
+	if err != nil {
+		return IndexRecord{}, false, err
+	}
+	entity = strings.TrimSpace(entity)
+	id = strings.TrimSpace(id)
+	for _, snapshot := range snapshots {
+		for _, record := range snapshot.Records {
+			if record.ID != id {
+				continue
+			}
+			record = enrichIndexRecord(snapshot, record)
+			if entity != "" && record.Entity != entity {
+				continue
+			}
+			return record, true, nil
+		}
+	}
+	return IndexRecord{}, false, nil
+}
+
+func (s State) HasIndex(plugin, instance, index string) (bool, error) {
+	snapshots, err := s.loadIndexSnapshots(plugin, instance)
+	if err != nil {
+		return false, err
+	}
+	index = strings.TrimSpace(index)
+	for _, snapshot := range snapshots {
+		if snapshot.Index == index {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s State) HasIndexedEntity(plugin, instance, entity string) (bool, error) {
+	snapshots, err := s.loadIndexSnapshots(plugin, instance)
+	if err != nil {
+		return false, err
+	}
+	entity = strings.TrimSpace(entity)
+	for _, snapshot := range snapshots {
+		for _, record := range snapshot.Records {
+			if record.Entity == entity {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func (s State) HasIndexRecords(plugin, instance string) (bool, error) {

@@ -99,6 +99,13 @@ Run every plugin module suite:
 (cd plugins/system && go test ./...)
 (cd plugins/tavily && go test ./...)
 (cd plugins/duckduckgo && go test ./...)
+(cd plugins/docker && go test ./...)
+(cd plugins/kubernetes && go test ./...)
+(cd plugins/loki && go test ./...)
+(cd plugins/ollama && go test ./...)
+(cd plugins/openai && go test ./...)
+(cd plugins/prometheus && go test ./...)
+(cd plugins/sql && go test ./...)
 ```
 
 Run CLI smokes from the repository root with a temporary home:
@@ -109,8 +116,10 @@ go run ./cmd/dex --dex-home "$DEX_HOME" version
 go run ./cmd/dex --dex-home "$DEX_HOME" plugin ls -o json
 go run ./cmd/dex --dex-home "$DEX_HOME" plugin marketplace -o json
 go run ./cmd/dex --dex-home "$DEX_HOME" --dev-plugin system=plugins/system plugin show system -o json
-go run ./cmd/dex --dex-home "$DEX_HOME" --dev-plugin system=plugins/system sys info --category os --category time -o json
-go run ./cmd/dex --dex-home "$DEX_HOME" websearch providers -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --dev-plugin system=plugins/system plugin activate system -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" --dev-plugin system=plugins/system sys info --categories '["os","time"]' -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" plugin activate websearch -o json
+go run ./cmd/dex --dex-home "$DEX_HOME" web provider list -o json
 ```
 
 Search, lookup, and index build are covered by CLI tests with fake plugins. For
@@ -135,44 +144,65 @@ the root checkout while plugin module `go.mod` files stay release-ready. The
 workspace contains the only local replacement:
 
 ```go
-replace github.com/fluxplane/fluxplane-dex v0.1.0 => .
+replace github.com/fluxplane/fluxplane-dex v0.2.0 => .
 ```
 
 Plugin modules should require the root release version and must not carry local
 `replace` directives:
 
 ```go
-require github.com/fluxplane/fluxplane-dex v0.1.0
+require github.com/fluxplane/fluxplane-dex v0.2.0
 ```
 
 Release packaging should use this sequence:
 
-1. Commit the release-ready tree.
-2. Tag the root module version, for example `v0.1.0`.
-3. Tag plugin modules at matching versions so marketplace `go_install` targets
+1. Determine the previous root tag with `git describe --tags --match 'v*'`.
+2. Derive the next semantic version from the diff since that tag.
+3. Update `CHANGELOG.md` with clean, deduped notes based on `git log` and
+   `git diff --stat <previous-tag>..HEAD`.
+4. Update release version references in `go.work`, plugin module requirements,
+   plugin manifest versions, and docs.
+5. Commit the release-ready tree.
+6. Tag the root module version, for example `v0.2.0`.
+7. Tag plugin modules at matching versions so marketplace `go_install` targets
    resolve through the public module proxy.
-4. Push the branch and all release tags.
-5. Verify `go install` for the root CLI and each plugin command from outside
+8. Push the branch and all release tags.
+9. Create a GitHub release with release notes derived from the changelog.
+10. Verify `go install` for the root CLI and each plugin command from outside
    the repository.
 
 Use module-scoped tags for plugin modules:
 
 ```bash
-git tag v0.1.0
-git tag plugins/gitlab/v0.1.0
-git tag plugins/slack/v0.1.0
-git tag plugins/system/v0.1.0
-git tag plugins/tavily/v0.1.0
-git tag plugins/duckduckgo/v0.1.0
+git tag v0.2.0
+git tag plugins/gitlab/v0.2.0
+git tag plugins/slack/v0.2.0
+git tag plugins/system/v0.2.0
+git tag plugins/tavily/v0.2.0
+git tag plugins/duckduckgo/v0.2.0
+git tag plugins/docker/v0.2.0
+git tag plugins/kubernetes/v0.2.0
+git tag plugins/loki/v0.2.0
+git tag plugins/ollama/v0.2.0
+git tag plugins/openai/v0.2.0
+git tag plugins/prometheus/v0.2.0
+git tag plugins/sql/v0.2.0
 ```
 
 The corresponding install checks are:
 
 ```bash
-go install github.com/fluxplane/fluxplane-dex/cmd/dex@v0.1.0
-go install github.com/fluxplane/fluxplane-dex/plugins/gitlab/cmd/dex-plugin-gitlab@v0.1.0
-go install github.com/fluxplane/fluxplane-dex/plugins/slack/cmd/dex-plugin-slack@v0.1.0
-go install github.com/fluxplane/fluxplane-dex/plugins/system/cmd/dex-plugin-system@v0.1.0
-go install github.com/fluxplane/fluxplane-dex/plugins/tavily/cmd/dex-plugin-tavily@v0.1.0
-go install github.com/fluxplane/fluxplane-dex/plugins/duckduckgo/cmd/dex-plugin-duckduckgo@v0.1.0
+go install github.com/fluxplane/fluxplane-dex/cmd/dex@v0.2.0
+go install github.com/fluxplane/fluxplane-dex/plugins/gitlab/cmd/dex-plugin-gitlab@v0.2.0
+go install github.com/fluxplane/fluxplane-dex/plugins/slack/cmd/dex-plugin-slack@v0.2.0
+go install github.com/fluxplane/fluxplane-dex/plugins/system/cmd/dex-plugin-system@v0.2.0
+go install github.com/fluxplane/fluxplane-dex/plugins/tavily/cmd/dex-plugin-tavily@v0.2.0
+go install github.com/fluxplane/fluxplane-dex/plugins/duckduckgo/cmd/dex-plugin-duckduckgo@v0.2.0
+go install github.com/fluxplane/fluxplane-dex/plugins/docker/cmd/dex-plugin-docker@v0.2.0
+go install github.com/fluxplane/fluxplane-dex/plugins/kubernetes/cmd/dex-plugin-kubernetes@v0.2.0
+go install github.com/fluxplane/fluxplane-dex/plugins/loki/cmd/dex-plugin-loki@v0.2.0
+go install github.com/fluxplane/fluxplane-dex/plugins/ollama/cmd/dex-plugin-ollama@v0.2.0
+go install github.com/fluxplane/fluxplane-dex/plugins/openai/cmd/dex-plugin-openai@v0.2.0
+go install github.com/fluxplane/fluxplane-dex/plugins/prometheus/cmd/dex-plugin-prometheus@v0.2.0
+go install github.com/fluxplane/fluxplane-dex/plugins/sql/cmd/dex-plugin-sql@v0.2.0
 ```

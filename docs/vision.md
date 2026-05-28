@@ -86,7 +86,7 @@ directory or broad secret access.
 ### Integrations Should Not Be Rewritten For Every Surface
 
 The same GitLab or Slack behavior should work through:
-- `dex gl ...` style shortcuts
+- manifest-generated commands such as `dex gl ...`
 - generic `dex op run ...`
 - datasource search
 - batch operation calls
@@ -130,7 +130,8 @@ access should flow through host/runtime boundaries, not direct ad hoc plugin IO.
 ## Capability Model
 
 The current repo has basic manifests, operations, auth methods, datasources,
-context specs, endpoint specs, indexes, batch calls, and scoped secret grants.
+context specs, endpoint specs, indexes, batch calls, scoped secret grants, and
+manifest-driven CLI command generation.
 
 To replace the old plugin stack cleanly, the next layer is not more CLI command
 code. It is a small set of host-owned contracts that plugins can rely on:
@@ -150,7 +151,9 @@ code. It is a small set of host-owned contracts that plugins can rely on:
   metadata.
 - Runtime boundaries for network, process, browser, filesystem/artifacts,
   environment, and managed process handles.
-- Observers, derived assertions, usage/events, and shortcut bindings.
+- Observers, derived assertions, usage/events, and generated command bindings.
+- A contribution catalog that can describe the mature plugin surface to
+  `fluxplane-core` without importing its packages.
 
 These are product capabilities, not reasons to import old implementations. They
 should be added here in the smallest form that supports the roadmap.
@@ -159,7 +162,7 @@ should be added here in the smallest form that supports the roadmap.
 
 The fastest path is not to port one legacy command at a time. The fastest path
 is to stabilize the contracts that let each new plugin contribute operations,
-datasources, context, endpoint discovery, auth checks, and shortcut bindings in
+datasources, context, endpoint discovery, auth checks, and generated commands in
 the same shape.
 
 That means the near-term work should happen in this order:
@@ -179,7 +182,8 @@ That means the near-term work should happen in this order:
 ## Next Steps
 
 1. Add the P0 host contracts: operation metadata, datasource entity/view model,
-   endpoint registry/discovery, dynamic context providers, and shortcut binding.
+  endpoint registry/discovery, dynamic context providers, and manifest-driven
+  CLI generation.
 2. Stabilize the current plugin set against those contracts, especially Slack,
    GitLab, system, websearch, Tavily, and DuckDuckGo.
 3. Port the highest-value daily workflow plugins: Jira, Slack parity expansion,

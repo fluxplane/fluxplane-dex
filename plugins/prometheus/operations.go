@@ -2,11 +2,14 @@ package prometheus
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -84,6 +87,48 @@ type AlertsResult struct {
 	URL    string          `json:"url"`
 	Alerts json.RawMessage `json:"alerts"`
 }
+
+type QueryRecord struct {
+	pluginbinding.DatasourceRecord
+	Title       string         `json:"title,omitempty" datasource:"title,view=compact|lookup|table"`
+	Query       string         `json:"query,omitempty" datasource:"completion,view=compact|lookup|table"`
+	ResultType  string         `json:"result_type,omitempty" datasource:"completion,view=compact|lookup|table"`
+	Result      map[string]any `json:"result,omitempty" datasource:"view=lookup|table"`
+	EndpointURL string         `json:"endpoint_url,omitempty" datasource:"completion,view=lookup|table"`
+}
+
+type LabelRecord struct {
+	pluginbinding.DatasourceRecord
+	Name        string `json:"name" datasource:"id,completion,view=compact|lookup|table"`
+	Label       string `json:"label,omitempty" datasource:"completion,view=compact|lookup|table"`
+	EndpointURL string `json:"endpoint_url,omitempty" datasource:"completion,view=lookup|table"`
+}
+
+type TargetRecord struct {
+	pluginbinding.DatasourceRecord
+	Title       string         `json:"title,omitempty" datasource:"title,view=compact|lookup|table"`
+	State       string         `json:"state,omitempty" datasource:"completion,view=compact|lookup|table"`
+	Job         string         `json:"job,omitempty" datasource:"completion,view=compact|lookup|table"`
+	Endpoint    string         `json:"endpoint,omitempty" datasource:"completion,view=compact|lookup|table"`
+	Target      map[string]any `json:"target,omitempty" datasource:"view=lookup|table"`
+	EndpointURL string         `json:"endpoint_url,omitempty" datasource:"completion,view=lookup|table"`
+}
+
+type AlertRecord struct {
+	pluginbinding.DatasourceRecord
+	Title       string            `json:"title,omitempty" datasource:"title,view=compact|lookup|table"`
+	Name        string            `json:"name,omitempty" datasource:"completion,view=compact|lookup|table"`
+	State       string            `json:"state,omitempty" datasource:"completion,view=compact|lookup|table"`
+	Severity    string            `json:"severity,omitempty" datasource:"completion,view=compact|lookup|table"`
+	Labels      map[string]string `json:"labels,omitempty" datasource:"view=lookup|table"`
+	Annotations map[string]string `json:"annotations,omitempty" datasource:"view=lookup|table"`
+	EndpointURL string            `json:"endpoint_url,omitempty" datasource:"completion,view=lookup|table"`
+}
+
+type QueryDatasourceResult = pluginbinding.DatasourceSearchResult[QueryRecord]
+type LabelDatasourceResult = pluginbinding.DatasourceSearchResult[LabelRecord]
+type TargetDatasourceResult = pluginbinding.DatasourceSearchResult[TargetRecord]
+type AlertDatasourceResult = pluginbinding.DatasourceSearchResult[AlertRecord]
 
 func (s Service) Test(ctx pluginbinding.Context, input TestInput) (TestResult, error) {
 	target, err := s.resolveURL(input.URL)
@@ -203,6 +248,127 @@ func (s Service) Alerts(ctx pluginbinding.Context, input TestInput) (AlertsResul
 	return AlertsResult{URL: target, Alerts: data}, nil
 }
 
+func (s Service) QueryDatasource(ctx pluginbinding.Context, input QueryInput) (QueryDatasourceResult, error) {
+	out, err := s.Query(ctx, input)
+	if err != nil {
+		return QueryDatasourceResult{}, err
+	}
+	var raw []map[string]any
+	_ = json.Unmarshal(out.Results, &raw)
+	if len(raw) == 0 && len(out.Results) > 0 {
+		var one map[string]any
+		if err := json.Unmarshal(out.Results, &one); err == nil && len(one) > 0 {
+			raw = append(raw, one)
+		}
+	}
+	records := make([]QueryRecord, 0, len(raw))
+	for i, result := range raw {
+		id := stableID(out.URL, out.Query, strconv.Itoa(i), result)
+		title := firstNonEmpty(metricTitle(result), fmt.Sprintf("result %d", i+1))
+		record := QueryRecord{
+			DatasourceRecord: pluginbinding.NewDatasourceRecord(ctx.DatasourceSource(), EntityQueryResult, id, pluginbinding.RecordTitle(title), pluginbinding.RecordMetadata(map[string]any{"query": out.Query, "result_type": out.ResultType, "result": result, "endpoint_url": out.URL})),
+			Title:            title,
+			Query:            out.Query,
+			ResultType:       out.ResultType,
+			Result:           result,
+			EndpointURL:      out.URL,
+		}
+		if out.URL != "" {
+			record.Links = map[string]string{"endpoint": out.URL}
+		}
+		records = append(records, record)
+	}
+	return pluginbinding.NewDatasourceSearchResult("live", input.Query, records), nil
+}
+
+func (s Service) LabelsDatasource(ctx pluginbinding.Context, input LabelsInput) (LabelDatasourceResult, error) {
+	out, err := s.Labels(ctx, input)
+	if err != nil {
+		return LabelDatasourceResult{}, err
+	}
+	records := make([]LabelRecord, 0, len(out.Values))
+	for _, value := range out.Values {
+		id := value
+		if out.Label != "" {
+			id = out.Label + "=" + value
+		}
+		record := LabelRecord{
+			DatasourceRecord: pluginbinding.NewDatasourceRecord(ctx.DatasourceSource(), EntityLabel, id, pluginbinding.RecordTitle(id), pluginbinding.RecordMetadata(map[string]any{"name": value, "label": out.Label, "endpoint_url": out.URL})),
+			Name:             value,
+			Label:            out.Label,
+			EndpointURL:      out.URL,
+		}
+		if out.URL != "" {
+			record.Links = map[string]string{"endpoint": out.URL}
+		}
+		records = append(records, record)
+	}
+	return pluginbinding.NewDatasourceSearchResult("live", firstNonEmpty(input.Label, strings.Join(input.Match, " ")), records), nil
+}
+
+func (s Service) TargetsDatasource(ctx pluginbinding.Context, input TargetsInput) (TargetDatasourceResult, error) {
+	out, err := s.Targets(ctx, input)
+	if err != nil {
+		return TargetDatasourceResult{}, err
+	}
+	targets := targetObjects(out.Targets)
+	records := make([]TargetRecord, 0, len(targets))
+	for i, target := range targets {
+		job := stringFromNested(target, "labels", "job")
+		endpoint := firstNonEmpty(stringFromNested(target, "labels", "instance"), stringFromNested(target, "discoveredLabels", "__address__"), stringFromNested(target, "scrapePool"))
+		state := firstNonEmpty(stringFromAny(target["health"]), stringFromAny(target["state"]), out.State)
+		title := firstNonEmpty(job, endpoint, fmt.Sprintf("target %d", i+1))
+		id := stableID(out.URL, title, strconv.Itoa(i), target)
+		record := TargetRecord{
+			DatasourceRecord: pluginbinding.NewDatasourceRecord(ctx.DatasourceSource(), EntityTarget, id, pluginbinding.RecordTitle(title), pluginbinding.RecordMetadata(map[string]any{"state": state, "job": job, "endpoint": endpoint, "target": target, "endpoint_url": out.URL})),
+			Title:            title,
+			State:            state,
+			Job:              job,
+			Endpoint:         endpoint,
+			Target:           target,
+			EndpointURL:      out.URL,
+		}
+		if out.URL != "" {
+			record.Links = map[string]string{"endpoint": out.URL}
+		}
+		records = append(records, record)
+	}
+	return pluginbinding.NewDatasourceSearchResult("live", input.State, records), nil
+}
+
+func (s Service) AlertsDatasource(ctx pluginbinding.Context, input TestInput) (AlertDatasourceResult, error) {
+	out, err := s.Alerts(ctx, input)
+	if err != nil {
+		return AlertDatasourceResult{}, err
+	}
+	alerts := alertObjects(out.Alerts)
+	records := make([]AlertRecord, 0, len(alerts))
+	for i, alert := range alerts {
+		labels := stringMapFromAny(alert["labels"])
+		annotations := stringMapFromAny(alert["annotations"])
+		name := labels["alertname"]
+		state := stringFromAny(alert["state"])
+		severity := labels["severity"]
+		title := firstNonEmpty(name, annotations["summary"], fmt.Sprintf("alert %d", i+1))
+		id := stableID(out.URL, title, strconv.Itoa(i), alert)
+		record := AlertRecord{
+			DatasourceRecord: pluginbinding.NewDatasourceRecord(ctx.DatasourceSource(), EntityAlert, id, pluginbinding.RecordTitle(title), pluginbinding.RecordMetadata(map[string]any{"name": name, "state": state, "severity": severity, "labels": labels, "annotations": annotations, "endpoint_url": out.URL})),
+			Title:            title,
+			Name:             name,
+			State:            state,
+			Severity:         severity,
+			Labels:           labels,
+			Annotations:      annotations,
+			EndpointURL:      out.URL,
+		}
+		if out.URL != "" {
+			record.Links = map[string]string{"endpoint": out.URL}
+		}
+		records = append(records, record)
+	}
+	return pluginbinding.NewDatasourceSearchResult("live", "", records), nil
+}
+
 func (s Service) query(ctx context.Context, target, query, path string, values url.Values) (QueryResult, error) {
 	data, err := s.client(target).get(ctx, path, values)
 	if err != nil {
@@ -265,4 +431,93 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func targetObjects(raw json.RawMessage) []map[string]any {
+	var wrapped struct {
+		ActiveTargets  []map[string]any `json:"activeTargets"`
+		DroppedTargets []map[string]any `json:"droppedTargets"`
+	}
+	if err := json.Unmarshal(raw, &wrapped); err == nil {
+		out := append([]map[string]any{}, wrapped.ActiveTargets...)
+		out = append(out, wrapped.DroppedTargets...)
+		if len(out) > 0 {
+			return out
+		}
+	}
+	var direct []map[string]any
+	_ = json.Unmarshal(raw, &direct)
+	return direct
+}
+
+func alertObjects(raw json.RawMessage) []map[string]any {
+	var wrapped struct {
+		Alerts []map[string]any `json:"alerts"`
+	}
+	if err := json.Unmarshal(raw, &wrapped); err == nil && len(wrapped.Alerts) > 0 {
+		return wrapped.Alerts
+	}
+	var direct []map[string]any
+	_ = json.Unmarshal(raw, &direct)
+	return direct
+}
+
+func metricTitle(result map[string]any) string {
+	metric, _ := result["metric"].(map[string]any)
+	if len(metric) == 0 {
+		return ""
+	}
+	var parts []string
+	for key, value := range metric {
+		if text := stringFromAny(value); text != "" {
+			parts = append(parts, key+"="+text)
+		}
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ",")
+}
+
+func stableID(parts ...any) string {
+	data, _ := json.Marshal(parts)
+	sum := sha1.Sum(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func stringFromNested(object map[string]any, path ...string) string {
+	var current any = object
+	for _, key := range path {
+		next, ok := current.(map[string]any)
+		if !ok {
+			return ""
+		}
+		current = next[key]
+	}
+	return stringFromAny(current)
+}
+
+func stringFromAny(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	case nil:
+		return ""
+	default:
+		return strings.TrimSpace(fmt.Sprint(typed))
+	}
+}
+
+func stringMapFromAny(value any) map[string]string {
+	out := map[string]string{}
+	raw, ok := value.(map[string]any)
+	if !ok {
+		return out
+	}
+	for key, value := range raw {
+		if text := stringFromAny(value); text != "" {
+			out[key] = text
+		}
+	}
+	return out
 }

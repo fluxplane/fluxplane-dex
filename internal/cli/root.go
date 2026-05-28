@@ -9,12 +9,15 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/fluxplane/fluxplane-dex/core"
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/internal/defaults"
 	"github.com/fluxplane/fluxplane-dex/protocol"
 	"github.com/fluxplane/fluxplane-dex/runtime"
@@ -35,51 +38,141 @@ type options struct {
 }
 
 func Main(args []string) int {
-	cmd := NewRootCommand()
+	opts := newOptions()
+	if err := parseStartupFlags(args, opts); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	cmd := newRootCommand(opts)
 	cmd.SetArgs(args)
+	if err := attachGeneratedPluginCommands(context.Background(), cmd, opts); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
 	if err := cmd.Execute(); err != nil {
 		return 1
 	}
 	return 0
 }
 
-func NewRootCommand() *cobra.Command {
-	opts := &options{
-		output: "text",
-		in:     os.Stdin,
-		out:    os.Stdout,
-		errOut: os.Stderr,
-	}
+func newOptions() *options {
+	opts := &options{output: "text", instance: runtime.DefaultInstance, in: os.Stdin, out: os.Stdout, errOut: os.Stderr}
 	if cwd, err := os.Getwd(); err == nil {
 		opts.workDir = cwd
 	}
+	return opts
+}
 
+func parseStartupFlags(args []string, opts *options) error {
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		if arg == "" {
+			continue
+		}
+		switch arg {
+		case "-h", "--help":
+			continue
+		case "-o", "--output":
+			if i+1 >= len(args) {
+				return fmt.Errorf("%s requires a value", arg)
+			}
+			i++
+			opts.output = strings.TrimSpace(args[i])
+		case "--dex-home":
+			if i+1 >= len(args) {
+				return fmt.Errorf("%s requires a value", arg)
+			}
+			i++
+			opts.home = strings.TrimSpace(args[i])
+		case "--marketplace":
+			if i+1 >= len(args) {
+				return fmt.Errorf("%s requires a value", arg)
+			}
+			i++
+			opts.marketplacePath = strings.TrimSpace(args[i])
+		case "--instance":
+			if i+1 >= len(args) {
+				return fmt.Errorf("%s requires a value", arg)
+			}
+			i++
+			opts.instance = strings.TrimSpace(args[i])
+		case "--dev-plugin":
+			if i+1 >= len(args) {
+				return fmt.Errorf("%s requires a value", arg)
+			}
+			i++
+			opts.devPlugins = append(opts.devPlugins, strings.TrimSpace(args[i]))
+		default:
+			if strings.HasPrefix(arg, "--dex-home=") {
+				opts.home = strings.TrimSpace(strings.TrimPrefix(arg, "--dex-home="))
+				continue
+			}
+			if strings.HasPrefix(arg, "--marketplace=") {
+				opts.marketplacePath = strings.TrimSpace(strings.TrimPrefix(arg, "--marketplace="))
+				continue
+			}
+			if strings.HasPrefix(arg, "--instance=") {
+				opts.instance = strings.TrimSpace(strings.TrimPrefix(arg, "--instance="))
+				continue
+			}
+			if strings.HasPrefix(arg, "--dev-plugin=") {
+				opts.devPlugins = append(opts.devPlugins, strings.TrimSpace(strings.TrimPrefix(arg, "--dev-plugin=")))
+				continue
+			}
+			if strings.HasPrefix(arg, "--output=") {
+				opts.output = strings.TrimSpace(strings.TrimPrefix(arg, "--output="))
+				continue
+			}
+		}
+	}
+	return nil
+}
+
+func reservedRootCommand(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "plugin", "op", "datasource", "auth", "secret", "search", "lookup", "context", "endpoint", "index", "doctor", "version":
+		return true
+	default:
+		return false
+	}
+}
+
+func NewRootCommand() *cobra.Command {
+	return newRootCommand(newOptions())
+}
+
+func newRootCommand(opts *options) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "dex",
 		Short: "Plugin-backed engineering CLI",
 		Long:  "dex is a plugin-backed CLI for fast, token-efficient access to external engineering systems.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return cmd.Help()
+			}
+			return fmt.Errorf("unknown command %q for %q", args[0], cmd.CommandPath())
+		},
 	}
 	root.SetIn(opts.in)
 	root.SetOut(opts.out)
 	root.SetErr(opts.errOut)
-	root.PersistentFlags().StringVarP(&opts.output, "output", "o", "text", "Output format: text, compact, json, yaml")
-	root.PersistentFlags().StringVar(&opts.marketplacePath, "marketplace", "", "Marketplace index path")
-	root.PersistentFlags().StringVar(&opts.home, "dex-home", "", "Dex home directory")
-	root.PersistentFlags().StringVar(&opts.instance, "instance", "default", "Integration instance name")
-	root.PersistentFlags().StringArrayVar(&opts.devPlugins, "dev-plugin", nil, "Development plugin override NAME=PATH")
+	root.PersistentFlags().StringVarP(&opts.output, "output", "o", opts.output, "Output format: text, compact, json, yaml")
+	root.PersistentFlags().StringVar(&opts.marketplacePath, "marketplace", opts.marketplacePath, "Marketplace index path")
+	root.PersistentFlags().StringVar(&opts.home, "dex-home", opts.home, "Dex home directory")
+	root.PersistentFlags().StringVar(&opts.instance, "instance", opts.instance, "Integration instance name")
+	root.PersistentFlags().StringArrayVar(&opts.devPlugins, "dev-plugin", opts.devPlugins, "Development plugin override NAME=PATH")
 
 	root.AddCommand(newPluginCommand(opts))
 	root.AddCommand(newOpCommand(opts))
+	root.AddCommand(newDatasourceCommand(opts))
 	root.AddCommand(newAuthCommand(opts))
 	root.AddCommand(newSecretCommand(opts))
-	root.AddCommand(newShortcutCommand(opts))
 	root.AddCommand(newSearchCommand(opts))
 	root.AddCommand(newLookupCommand(opts))
 	root.AddCommand(newContextCommand(opts))
 	root.AddCommand(newEndpointCommand(opts))
 	root.AddCommand(newIndexCommand(opts))
 	root.AddCommand(newDoctorCommand(opts))
-	addShortcutPrefixCommands(root, opts)
 	root.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
@@ -89,23 +182,6 @@ func NewRootCommand() *cobra.Command {
 		},
 	})
 	return root
-}
-
-type shortcutView struct {
-	Plugin      string         `json:"plugin"`
-	Use         string         `json:"use"`
-	Description string         `json:"description,omitempty"`
-	Target      string         `json:"target"`
-	Operation   string         `json:"operation,omitempty"`
-	Datasource  string         `json:"datasource,omitempty"`
-	Capability  string         `json:"capability,omitempty"`
-	Entity      string         `json:"entity,omitempty"`
-	Defaults    map[string]any `json:"defaults,omitempty"`
-}
-
-type shortcutMatch struct {
-	Shortcut shortcutView
-	Input    map[string]any
 }
 
 type endpointCandidateView struct {
@@ -145,100 +221,6 @@ type endpointDoctorResult struct {
 	OK        int                  `json:"ok"`
 	Failed    int                  `json:"failed"`
 	Endpoints []endpointTestResult `json:"endpoints"`
-}
-
-func newShortcutCommand(opts *options) *cobra.Command {
-	cmd := &cobra.Command{Use: "shortcut", Short: "Inspect CLI shortcut bindings"}
-	cmd.AddCommand(&cobra.Command{
-		Use:   "ls [PLUGIN]",
-		Short: "List shortcut bindings",
-		Args:  cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
-			if err != nil {
-				return err
-			}
-			var plugin string
-			if len(args) == 1 {
-				entry, ok := runner.Marketplace.Resolve(args[0])
-				if !ok {
-					return fmt.Errorf("unknown plugin %q", args[0])
-				}
-				plugin = entry.Name
-			}
-			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"shortcuts": shortcutViews(runner.Marketplace, plugin)})
-		},
-	})
-	cmd.AddCommand(&cobra.Command{
-		Use:   "show USE",
-		Short: "Show one shortcut binding",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
-			if err != nil {
-				return err
-			}
-			use := strings.Join(args, " ")
-			for _, shortcut := range shortcutViews(runner.Marketplace, "") {
-				if shortcut.Use == use {
-					return renderValue(cmd.OutOrStdout(), opts.output, shortcut)
-				}
-			}
-			return fmt.Errorf("unknown shortcut %q", use)
-		},
-	})
-	return cmd
-}
-
-func addShortcutPrefixCommands(root *cobra.Command, opts *options) {
-	marketplace, err := runtime.LoadMarketplaceData([]byte(defaults.MarketplaceJSON))
-	if err != nil {
-		return
-	}
-	reserved := map[string]bool{}
-	for _, command := range root.Commands() {
-		reserved[command.Name()] = true
-		for _, alias := range command.Aliases {
-			reserved[alias] = true
-		}
-	}
-	prefixes := map[string]bool{}
-	for _, shortcut := range shortcutViews(marketplace, "") {
-		prefix := firstShortcutToken(shortcut.Use)
-		if prefix == "" || reserved[prefix] || prefixes[prefix] {
-			continue
-		}
-		prefixes[prefix] = true
-		root.AddCommand(newShortcutPrefixCommand(prefix, opts))
-	}
-}
-
-func newShortcutPrefixCommand(prefix string, opts *options) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   prefix,
-		Short: "Run shortcut binding",
-		Args:  cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			runner, err := opts.runner()
-			if err != nil {
-				return err
-			}
-			return runShortcutWithFlags(cmd.Context(), cmd.OutOrStdout(), opts, runner, append([]string{prefix}, args...), shortcutFlagsFromCommand(cmd))
-		},
-	}
-	cmd.Flags().String("endpoint", "", "Endpoint ref")
-	cmd.Flags().String("endpoint-ref", "", "Endpoint ref")
-	cmd.Flags().String("namespace", "", "Kubernetes namespace")
-	cmd.Flags().String("context", "", "Kubernetes context")
-	cmd.Flags().String("name", "", "Resource name")
-	cmd.Flags().String("query", "", "Search query")
-	cmd.Flags().String("container", "", "Container name")
-	cmd.Flags().Int("limit", 0, "Maximum records")
-	cmd.Flags().Int64("tail-lines", 0, "Log lines to return")
-	cmd.Flags().Int64("limit-bytes", 0, "Maximum log bytes to return")
-	cmd.Flags().Bool("previous", false, "Return previous container logs")
-	cmd.Flags().Bool("timestamps", false, "Include log timestamps")
-	return cmd
 }
 
 func newPluginCommand(opts *options) *cobra.Command {
@@ -481,6 +463,66 @@ func newOpCommand(opts *options) *cobra.Command {
 				return err
 			}
 			return renderValue(cmd.OutOrStdout(), opts.output, result)
+		},
+	})
+	return cmd
+}
+
+func newDatasourceCommand(opts *options) *cobra.Command {
+	cmd := &cobra.Command{Use: "datasource", Short: "List and search plugin datasources"}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "ls [PLUGIN]",
+		Short: "List datasources",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			if len(args) == 1 {
+				plugin, ok := runner.Marketplace.Resolve(args[0])
+				if !ok {
+					return fmt.Errorf("unknown plugin %q", args[0])
+				}
+				resp, err := runner.InvokeInstance(cmd.Context(), plugin.Name, opts.instanceName(), protocol.CommandDatasourcesList, nil)
+				if err != nil {
+					return err
+				}
+				return render(cmd.OutOrStdout(), opts.output, resp.Result)
+			}
+			return renderValue(cmd.OutOrStdout(), opts.output, fanout(cmd.Context(), runner, opts.instanceName(), protocol.CommandDatasourcesList, nil))
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "show DATASOURCE_NAME",
+		Short: "Show one datasource",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			datasource, err := findDatasourceSpec(cmd.Context(), runner, args[0])
+			if err != nil {
+				return err
+			}
+			return renderValue(cmd.OutOrStdout(), opts.output, datasource)
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "search DATASOURCE_NAME [JSON|-]",
+		Short: "Search one exact datasource",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			input, err := optionalJSON(cmd.InOrStdin(), args[1:])
+			if err != nil {
+				return err
+			}
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			return callDatasourceSearch(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), args[0], input)
 		},
 	})
 	return cmd
@@ -1007,290 +1049,380 @@ func parseStringMapFlags(values []string) (map[string]string, error) {
 	return out, nil
 }
 
-func runShortcut(ctx context.Context, out io.Writer, opts *options, runner runtime.Runner, args []string) error {
-	positionals, flags, err := parseShortcutArgs(args)
+type operationInputSchema struct {
+	Required   []string                       `json:"required"`
+	Properties map[string]operationInputField `json:"properties"`
+}
+
+type operationInputField struct {
+	Type        any    `json:"type"`
+	Description string `json:"description"`
+}
+
+type generatedFlag struct {
+	Field string
+	Type  string
+	Value any
+}
+
+func attachGeneratedPluginCommands(ctx context.Context, root *cobra.Command, opts *options) error {
+	runner, err := opts.runner()
 	if err != nil {
 		return err
 	}
-	return runShortcutWithFlags(ctx, out, opts, runner, positionals, flags)
-}
-
-func runShortcutWithFlags(ctx context.Context, out io.Writer, opts *options, runner runtime.Runner, positionals []string, flags map[string]any) error {
-	if value, ok := flags["output"].(string); ok && strings.TrimSpace(value) != "" {
-		opts.output = strings.TrimSpace(value)
-		delete(flags, "output")
-	}
-	match, err := matchShortcut(shortcutViews(runner.Marketplace, ""), positionals, flags)
+	manifests, err := activePluginManifests(ctx, runner)
 	if err != nil {
 		return err
 	}
-	switch match.Shortcut.Target {
-	case "operation":
-		if strings.TrimSpace(match.Shortcut.Operation) == "" {
-			return fmt.Errorf("shortcut %q has no operation", match.Shortcut.Use)
-		}
-		return callOperation(ctx, out, opts.output, runner, opts.instanceName(), match.Shortcut.Operation, match.Input)
-	case "datasource":
-		return runDatasourceShortcut(ctx, out, opts.output, runner, opts.instanceName(), match)
-	default:
-		return fmt.Errorf("shortcut %q target %q is not executable yet", match.Shortcut.Use, match.Shortcut.Target)
-	}
-}
-
-func shortcutFlagsFromCommand(cmd *cobra.Command) map[string]any {
-	flags := map[string]any{}
-	if cmd == nil {
-		return flags
-	}
-	if cmd.Flags().Changed("endpoint") {
-		value, _ := cmd.Flags().GetString("endpoint")
-		setShortcutInputValue(flags, "endpoint", value)
-	}
-	if cmd.Flags().Changed("endpoint-ref") {
-		value, _ := cmd.Flags().GetString("endpoint-ref")
-		setShortcutInputValue(flags, "endpoint", value)
-	}
-	for _, name := range []string{"namespace", "context", "name", "query", "container"} {
-		if cmd.Flags().Changed(name) {
-			value, _ := cmd.Flags().GetString(name)
-			setShortcutInputValue(flags, name, value)
-		}
-	}
-	if cmd.Flags().Changed("limit") {
-		value, _ := cmd.Flags().GetInt("limit")
-		flags["limit"] = value
-	}
-	for _, name := range []string{"tail-lines", "limit-bytes"} {
-		if cmd.Flags().Changed(name) {
-			value, _ := cmd.Flags().GetInt64(name)
-			flags[shortcutFieldName(name)] = value
-		}
-	}
-	for _, name := range []string{"previous", "timestamps"} {
-		if cmd.Flags().Changed(name) {
-			value, _ := cmd.Flags().GetBool(name)
-			flags[shortcutFieldName(name)] = value
-		}
-	}
-	return flags
-}
-
-func runDatasourceShortcut(ctx context.Context, out io.Writer, output string, runner runtime.Runner, instance string, match shortcutMatch) error {
-	plugin := strings.TrimSpace(match.Shortcut.Plugin)
-	if plugin == "" {
-		return fmt.Errorf("shortcut %q has no plugin", match.Shortcut.Use)
-	}
-	if strings.TrimSpace(match.Shortcut.Entity) != "" {
-		if _, ok := match.Input["entity"]; !ok {
-			match.Input["entity"] = match.Shortcut.Entity
-		}
-	}
-	command := protocol.CommandDatasourcesSearch
-	switch strings.TrimSpace(match.Shortcut.Capability) {
-	case "", "search":
-		command = protocol.CommandDatasourcesSearch
-	case "lookup":
-		command = protocol.CommandDatasourcesLookup
-	case "get":
-		command = protocol.CommandDatasourcesGet
-	default:
-		return fmt.Errorf("unsupported datasource shortcut capability %q", match.Shortcut.Capability)
-	}
-	resp, err := runner.InvokeInstance(ctx, plugin, instance, command, match.Input)
-	if err != nil {
-		return err
-	}
-	if !resp.OK {
-		if resp.Error != nil {
-			return fmt.Errorf("%s", resp.Error.Message)
-		}
-		return fmt.Errorf("datasource shortcut %q failed", match.Shortcut.Use)
-	}
-	return render(out, output, resp.Result)
-}
-
-func parseShortcutArgs(args []string) ([]string, map[string]any, error) {
-	flags := map[string]any{}
-	var positionals []string
-	for i := 0; i < len(args); i++ {
-		arg := strings.TrimSpace(args[i])
-		if arg == "" {
-			continue
-		}
-		if arg == "-o" {
-			if i+1 >= len(args) {
-				return nil, nil, fmt.Errorf("-o requires a value")
-			}
-			i++
-			flags["output"] = strings.TrimSpace(args[i])
-			continue
-		}
-		if strings.HasPrefix(arg, "--") {
-			nameValue := strings.TrimPrefix(arg, "--")
-			name, value, hasValue := strings.Cut(nameValue, "=")
-			name = shortcutFieldName(name)
-			if name == "" {
+	claimed := map[string]string{}
+	for _, manifest := range manifests {
+		commandNames := manifestCommandNames(manifest)
+		var usable []string
+		seen := map[string]bool{}
+		for _, name := range commandNames {
+			if seen[name] {
 				continue
 			}
-			if !hasValue {
-				if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
-					flags[name] = true
-					continue
-				}
-				i++
-				value = args[i]
+			seen[name] = true
+			if reservedRootCommand(name) {
+				continue
 			}
-			if name == "previous" || name == "timestamps" {
-				parsed, err := strconv.ParseBool(strings.TrimSpace(value))
-				if err == nil {
-					flags[name] = parsed
-					continue
-				}
+			if owner, ok := claimed[name]; ok && owner != manifest.Name {
+				return fmt.Errorf("duplicate plugin command alias %q claimed by %s and %s", name, owner, manifest.Name)
 			}
-			setShortcutInputValue(flags, name, strings.TrimSpace(value))
+			claimed[name] = manifest.Name
+			usable = append(usable, name)
+		}
+		if len(usable) == 0 {
 			continue
 		}
-		positionals = append(positionals, arg)
+		cmd, err := newGeneratedPluginCommand(opts, runner, manifest, usable)
+		if err != nil {
+			return err
+		}
+		root.AddCommand(cmd)
 	}
-	return positionals, flags, nil
+	return nil
 }
 
-func matchShortcut(shortcuts []shortcutView, args []string, flags map[string]any) (shortcutMatch, error) {
-	var candidates []string
-	for _, shortcut := range shortcuts {
-		input, ok := shortcutInput(shortcut, args, flags)
-		if ok {
-			return shortcutMatch{Shortcut: shortcut, Input: input}, nil
-		}
-		if firstShortcutToken(shortcut.Use) == firstArg(args) {
-			candidates = append(candidates, shortcut.Use)
-		}
+func activePluginManifests(ctx context.Context, runner runtime.Runner) ([]core.PluginManifest, error) {
+	installed, err := runner.State.LoadInstalledPlugins()
+	if err != nil {
+		return nil, err
 	}
-	if len(candidates) > 0 {
-		return shortcutMatch{}, fmt.Errorf("unknown shortcut %q; available: %s", strings.Join(args, " "), strings.Join(candidates, ", "))
+	var manifests []core.PluginManifest
+	for _, plugin := range installed.Plugins {
+		if !plugin.Activated {
+			continue
+		}
+		entry, ok := runner.Marketplace.Resolve(plugin.Name)
+		if !ok {
+			continue
+		}
+		manifest, err := pluginManifest(ctx, runner, entry.Name)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(manifest.Name) == "" {
+			manifest.Name = entry.Name
+		}
+		manifests = append(manifests, manifest)
 	}
-	return shortcutMatch{}, fmt.Errorf("unknown shortcut %q", strings.Join(args, " "))
+	sort.Slice(manifests, func(i, j int) bool { return manifests[i].Name < manifests[j].Name })
+	return manifests, nil
 }
 
-func shortcutInput(shortcut shortcutView, args []string, flags map[string]any) (map[string]any, bool) {
-	pattern := strings.Fields(shortcut.Use)
-	if len(pattern) == 0 || len(args) == 0 {
-		return nil, false
+func manifestCommandNames(manifest core.PluginManifest) []string {
+	var names []string
+	if name := strings.TrimSpace(manifest.Name); name != "" {
+		names = append(names, name)
 	}
-	input := cloneAnyMap(shortcut.Defaults)
-	for key, value := range flags {
+	for _, alias := range manifest.Aliases {
+		if alias = strings.TrimSpace(alias); alias != "" {
+			names = append(names, alias)
+		}
+	}
+	return names
+}
+
+func newGeneratedPluginCommand(opts *options, runner runtime.Runner, manifest core.PluginManifest, commandNames []string) (*cobra.Command, error) {
+	cmd := &cobra.Command{
+		Use:     commandNames[0],
+		Aliases: commandNames[1:],
+		Short:   manifest.Description,
+	}
+	paths := map[string]bool{}
+	for _, operation := range manifest.Operations {
+		path := generatedOperationPath(manifest, operation)
+		if len(path) == 0 {
+			continue
+		}
+		key := strings.Join(path, ".")
+		if paths[key] {
+			return nil, fmt.Errorf("duplicate generated operation path %q for plugin %s", strings.Join(path, " "), manifest.Name)
+		}
+		paths[key] = true
+		if err := addGeneratedOperationCommand(cmd, opts, runner, operation, path); err != nil {
+			return nil, err
+		}
+	}
+	return cmd, nil
+}
+
+func generatedOperationPath(manifest core.PluginManifest, operation core.OperationSpec) []string {
+	prefix := strings.TrimSpace(manifest.Name) + "."
+	name := strings.TrimSpace(operation.Name)
+	if !strings.HasPrefix(name, prefix) {
+		return nil
+	}
+	suffix := strings.TrimPrefix(name, prefix)
+	if suffix == "" {
+		return nil
+	}
+	return strings.Split(suffix, ".")
+}
+
+func addGeneratedOperationCommand(parent *cobra.Command, opts *options, runner runtime.Runner, operation core.OperationSpec, path []string) error {
+	current := parent
+	for i, segment := range path {
+		child := childCommand(current, segment)
+		if child == nil {
+			child = &cobra.Command{Use: segment}
+			current.AddCommand(child)
+		}
+		if i == len(path)-1 {
+			configureGeneratedOperationCommand(child, opts, runner, operation)
+		}
+		current = child
+	}
+	return nil
+}
+
+func childCommand(parent *cobra.Command, name string) *cobra.Command {
+	for _, child := range parent.Commands() {
+		if child.Name() == name {
+			return child
+		}
+	}
+	return nil
+}
+
+func configureGeneratedOperationCommand(cmd *cobra.Command, opts *options, runner runtime.Runner, operation core.OperationSpec) {
+	schema := parseOperationInputSchema(operation)
+	flagVars := map[string]*generatedFlag{}
+	cmd.Short = operation.Description
+	cmd.Args = cobra.ArbitraryArgs
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		input, err := generatedOperationInput(cmd, operation, schema, flagVars, args)
+		if err != nil {
+			return err
+		}
+		return callOperation(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), operation.Name, input)
+	}
+	for _, field := range sortedSchemaFields(schema.Properties) {
+		spec := schema.Properties[field]
+		flagName := fieldFlagName(field)
+		description := spec.Description
+		if description == "" {
+			description = field
+		}
+		flag := &generatedFlag{Field: field, Type: schemaFieldType(spec)}
+		switch flag.Type {
+		case "boolean":
+			var value bool
+			flag.Value = &value
+			cmd.Flags().BoolVar(&value, flagName, false, description)
+		case "integer":
+			var value int64
+			flag.Value = &value
+			cmd.Flags().Int64Var(&value, flagName, 0, description)
+		case "number":
+			var value float64
+			flag.Value = &value
+			cmd.Flags().Float64Var(&value, flagName, 0, description)
+		default:
+			var value string
+			flag.Value = &value
+			cmd.Flags().StringVar(&value, flagName, "", description)
+		}
+		flagVars[field] = flag
+	}
+}
+
+func generatedOperationInput(cmd *cobra.Command, operation core.OperationSpec, schema operationInputSchema, flagVars map[string]*generatedFlag, args []string) (map[string]any, error) {
+	input := map[string]any{}
+	if len(args) == 1 {
+		value := strings.TrimSpace(args[0])
+		if value == "-" || strings.HasPrefix(value, "{") {
+			decoded, err := generatedJSONInput(cmd.InOrStdin(), value)
+			if err != nil {
+				return nil, err
+			}
+			for key, value := range decoded {
+				input[key] = value
+			}
+			if err := applyGeneratedFlags(cmd, schema, flagVars, input); err != nil {
+				return nil, err
+			}
+			return input, validateGeneratedRequired(operation, schema, input)
+		}
+	}
+	flagInput := map[string]any{}
+	if err := applyGeneratedFlags(cmd, schema, flagVars, flagInput); err != nil {
+		return nil, err
+	}
+	if len(args) > len(schema.Required) {
+		return nil, fmt.Errorf("too many positional arguments for %s; use flags or JSON input", operation.Name)
+	}
+	fields := missingRequiredFields(schema, flagInput)
+	if len(args) > len(fields) {
+		fields = schema.Required
+	}
+	for i, value := range args {
+		input[fields[i]] = parseGeneratedPositional(schema.Properties[fields[i]], value)
+	}
+	for key, value := range flagInput {
 		input[key] = value
 	}
-	i := 0
-	for p := 0; p < len(pattern); p++ {
-		token := pattern[p]
-		if shortcutPlaceholder(token) == "" {
-			if i >= len(args) || token != args[i] {
-				return nil, false
-			}
-			i++
-			continue
-		}
-		name := shortcutPlaceholder(token)
-		if name == "query" || name == "text" || name == "prompt" {
-			if i >= len(args) {
-				return nil, false
-			}
-			setShortcutInputValue(input, name, strings.Join(args[i:], " "))
-			i = len(args)
-			continue
-		}
-		if i >= len(args) {
-			return nil, false
-		}
-		setShortcutInputValue(input, name, args[i])
-		i++
-	}
-	if i != len(args) {
-		return nil, false
-	}
-	return input, true
+	return input, validateGeneratedRequired(operation, schema, input)
 }
 
-func setShortcutInputValue(input map[string]any, name, value string) {
-	name = shortcutFieldName(name)
-	switch name {
-	case "namespace_name":
-		namespace, resourceName, ok := strings.Cut(value, "/")
-		if ok {
-			input["namespace"] = strings.TrimSpace(namespace)
-			input["name"] = strings.TrimSpace(resourceName)
-			return
+func generatedJSONInput(in io.Reader, value string) (map[string]any, error) {
+	var raw []byte
+	var err error
+	if value == "-" {
+		raw, err = io.ReadAll(bufio.NewReader(in))
+		if err != nil {
+			return nil, err
 		}
-		input["name"] = strings.TrimSpace(value)
-	case "namespace_pod_container":
-		namespace, rest, ok := strings.Cut(value, "/")
-		if ok {
-			input["namespace"] = strings.TrimSpace(namespace)
-			input["name"] = strings.TrimSpace(rest)
-			return
+	} else {
+		raw = []byte(value)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return nil, fmt.Errorf("input must be a JSON object: %w", err)
+	}
+	if decoded == nil {
+		decoded = map[string]any{}
+	}
+	return decoded, nil
+}
+
+func applyGeneratedFlags(cmd *cobra.Command, schema operationInputSchema, flagVars map[string]*generatedFlag, input map[string]any) error {
+	for field, flag := range flagVars {
+		if !cmd.Flags().Changed(fieldFlagName(field)) {
+			continue
 		}
-		input["name"] = strings.TrimSpace(value)
-	case "endpoint":
-		input["endpoint_ref"] = strings.TrimSpace(value)
-	case "limit":
-		limit, err := strconv.Atoi(strings.TrimSpace(value))
-		if err == nil {
-			input["limit"] = limit
-			return
+		value, err := generatedFlagValue(flag)
+		if err != nil {
+			return err
 		}
-		input["limit"] = strings.TrimSpace(value)
-	case "tail_lines", "limit_bytes":
-		n, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-		if err == nil {
-			input[name] = n
-			return
+		input[field] = value
+	}
+	return nil
+}
+
+func generatedFlagValue(flag *generatedFlag) (any, error) {
+	switch flag.Type {
+	case "boolean":
+		return reflect.ValueOf(flag.Value).Elem().Bool(), nil
+	case "integer":
+		return reflect.ValueOf(flag.Value).Elem().Int(), nil
+	case "number":
+		return reflect.ValueOf(flag.Value).Elem().Float(), nil
+	case "array", "object":
+		text := strings.TrimSpace(reflect.ValueOf(flag.Value).Elem().String())
+		if text == "" {
+			if flag.Type == "array" {
+				return []any{}, nil
+			}
+			return map[string]any{}, nil
 		}
-		input[name] = strings.TrimSpace(value)
+		var value any
+		if err := json.Unmarshal([]byte(text), &value); err != nil {
+			return nil, fmt.Errorf("--%s must be JSON %s: %w", fieldFlagName(flag.Field), flag.Type, err)
+		}
+		return value, nil
 	default:
-		input[name] = strings.TrimSpace(value)
+		return reflect.ValueOf(flag.Value).Elem().String(), nil
 	}
 }
 
-func shortcutFieldName(name string) string {
-	name = strings.Trim(strings.TrimSpace(name), "<>")
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return ""
+func parseGeneratedPositional(spec operationInputField, value string) any {
+	value = strings.TrimSpace(value)
+	switch schemaFieldType(spec) {
+	case "boolean":
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			return parsed
+		}
+	case "integer":
+		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return parsed
+		}
+	case "number":
+		if parsed, err := strconv.ParseFloat(value, 64); err == nil {
+			return parsed
+		}
+	case "array", "object":
+		var decoded any
+		if err := json.Unmarshal([]byte(value), &decoded); err == nil {
+			return decoded
+		}
 	}
-	name = strings.NewReplacer("-", "_", "/", "_").Replace(name)
-	return name
+	return value
 }
 
-func shortcutPlaceholder(token string) string {
-	token = strings.TrimSpace(token)
-	if strings.HasPrefix(token, "<") && strings.HasSuffix(token, ">") {
-		return strings.Trim(token, "<>")
+func validateGeneratedRequired(operation core.OperationSpec, schema operationInputSchema, input map[string]any) error {
+	if missing := missingRequiredFields(schema, input); len(missing) > 0 {
+		return fmt.Errorf("missing required input for %s: %s", operation.Name, strings.Join(missing, ", "))
 	}
-	return ""
+	return nil
 }
 
-func firstShortcutToken(use string) string {
-	fields := strings.Fields(use)
-	if len(fields) == 0 {
-		return ""
+func missingRequiredFields(schema operationInputSchema, input map[string]any) []string {
+	var missing []string
+	for _, field := range schema.Required {
+		if _, ok := input[field]; !ok {
+			missing = append(missing, field)
+		}
 	}
-	return fields[0]
+	return missing
 }
 
-func firstArg(args []string) string {
-	if len(args) == 0 {
-		return ""
+func parseOperationInputSchema(operation core.OperationSpec) operationInputSchema {
+	var schema operationInputSchema
+	_ = json.Unmarshal(operation.Input, &schema)
+	if schema.Properties == nil {
+		schema.Properties = map[string]operationInputField{}
 	}
-	return args[0]
+	return schema
 }
 
-func cloneAnyMap(input map[string]any) map[string]any {
-	out := map[string]any{}
-	for key, value := range input {
-		out[key] = value
+func sortedSchemaFields(properties map[string]operationInputField) []string {
+	fields := make([]string, 0, len(properties))
+	for field := range properties {
+		fields = append(fields, field)
 	}
-	return out
+	sort.Strings(fields)
+	return fields
+}
+
+func schemaFieldType(spec operationInputField) string {
+	switch value := spec.Type.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case []any:
+		for _, item := range value {
+			if text, ok := item.(string); ok && text != "null" {
+				return strings.TrimSpace(text)
+			}
+		}
+	}
+	return "string"
+}
+
+func fieldFlagName(field string) string {
+	return strings.ReplaceAll(strings.TrimSpace(field), "_", "-")
 }
 
 func discoverEndpoints(ctx context.Context, runner runtime.Runner, instance, product, pluginFilter string, input map[string]any) (endpointDiscoveryView, error) {
@@ -1853,40 +1985,6 @@ func parseDevPlugins(values []string) (map[string]string, error) {
 	return out, nil
 }
 
-func shortcutViews(marketplace runtime.Marketplace, pluginFilter string) []shortcutView {
-	var out []shortcutView
-	for _, plugin := range marketplace.Plugins() {
-		if pluginFilter != "" && plugin.Name != pluginFilter {
-			continue
-		}
-		for _, command := range plugin.Commands {
-			target := strings.TrimSpace(command.Target)
-			if target == "" {
-				switch {
-				case strings.TrimSpace(command.Operation) != "":
-					target = "operation"
-				case strings.TrimSpace(command.Datasource) != "":
-					target = "datasource"
-				default:
-					target = "command"
-				}
-			}
-			out = append(out, shortcutView{
-				Plugin:      plugin.Name,
-				Use:         command.Use,
-				Description: command.Description,
-				Target:      target,
-				Operation:   command.Operation,
-				Datasource:  command.Datasource,
-				Capability:  command.Capability,
-				Entity:      command.Entity,
-				Defaults:    command.Defaults,
-			})
-		}
-	}
-	return out
-}
-
 func fanout(ctx context.Context, runner runtime.Runner, instance, command string, payload any) map[string]any {
 	instance = runtime.NormalizeInstance(instance)
 	results := map[string]any{}
@@ -2059,6 +2157,41 @@ func findOperationSpec(ctx context.Context, runner runtime.Runner, name string) 
 	return core.OperationSpec{}, fmt.Errorf("unknown operation %q", name)
 }
 
+func findDatasourceSpec(ctx context.Context, runner runtime.Runner, name string) (core.DatasourceSpec, error) {
+	plugin := datasourcePluginName(name)
+	if plugin != "" {
+		manifest, err := pluginManifest(ctx, runner, plugin)
+		if err == nil {
+			for _, datasource := range manifest.Datasources {
+				if datasource.Name == name {
+					return datasource, nil
+				}
+			}
+			return core.DatasourceSpec{}, fmt.Errorf("unknown datasource %q", name)
+		}
+	}
+	for _, entry := range runner.Marketplace.Plugins() {
+		manifest, err := pluginManifest(ctx, runner, entry.Name)
+		if err != nil {
+			continue
+		}
+		for _, datasource := range manifest.Datasources {
+			if datasource.Name == name {
+				return datasource, nil
+			}
+		}
+	}
+	return core.DatasourceSpec{}, fmt.Errorf("unknown datasource %q", name)
+}
+
+func datasourcePluginName(name string) string {
+	plugin, _, ok := strings.Cut(strings.TrimSpace(name), ".")
+	if !ok || strings.TrimSpace(plugin) == "" {
+		return ""
+	}
+	return strings.TrimSpace(plugin)
+}
+
 func manifestHasDatasourceCapability(manifest core.PluginManifest, capability string) bool {
 	for _, datasource := range manifest.Datasources {
 		for _, candidate := range datasource.Capabilities {
@@ -2080,6 +2213,69 @@ func invokeAndRender(cmd *cobra.Command, opts *options, plugin, command string, 
 		return err
 	}
 	return render(cmd.OutOrStdout(), opts.output, resp.Result)
+}
+
+func callDatasourceSearch(ctx context.Context, out io.Writer, output string, runner runtime.Runner, instance, name string, input any) error {
+	plugin := datasourcePluginName(name)
+	if plugin == "" {
+		return fmt.Errorf("datasource name must start with plugin prefix, got %q", name)
+	}
+	spec, err := findDatasourceSpec(ctx, runner, name)
+	if err != nil {
+		return err
+	}
+	if !hasString(spec.Capabilities, pluginbinding.CapabilitySearch) {
+		return fmt.Errorf("datasource %q does not support search", name)
+	}
+	payload, err := datasourcePayload(input)
+	if err != nil {
+		return err
+	}
+	if entity, _ := payload["entity"].(string); strings.TrimSpace(entity) != "" && strings.TrimSpace(entity) != spec.Entity {
+		return fmt.Errorf("datasource %q exposes entity %q, not %q", name, spec.Entity, strings.TrimSpace(entity))
+	}
+	payload["datasource"] = name
+	if _, ok := payload["entity"]; !ok && strings.TrimSpace(spec.Entity) != "" {
+		payload["entity"] = spec.Entity
+	}
+	resp, err := runner.InvokeInstance(ctx, plugin, instance, protocol.CommandDatasourcesSearch, payload)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		if resp.Error != nil {
+			return fmt.Errorf("%s", resp.Error.Message)
+		}
+		return fmt.Errorf("datasource %s search failed", name)
+	}
+	return render(out, output, resp.Result)
+}
+
+func datasourcePayload(input any) (map[string]any, error) {
+	if input == nil {
+		return map[string]any{}, nil
+	}
+	data, err := json.Marshal(input)
+	if err != nil {
+		return nil, err
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, fmt.Errorf("datasource input must be a JSON object")
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	return payload, nil
+}
+
+func hasString(values []string, candidate string) bool {
+	for _, value := range values {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func callOperation(ctx context.Context, out io.Writer, output string, runner runtime.Runner, instance, name string, input any) error {

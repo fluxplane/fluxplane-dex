@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -561,10 +562,10 @@ func main() {
 	return pluginDir
 }
 
-func writeFakeKubernetesShortcutPlugin(t *testing.T) string {
+func writeFakeKubernetesAliasPlugin(t *testing.T) string {
 	t.Helper()
 	pluginDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(pluginDir, "go.mod"), []byte("module fakekubernetesshortcut\n\ngo 1.26\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(pluginDir, "go.mod"), []byte("module fakekubernetesalias\n\ngo 1.26\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cmdDir := filepath.Join(pluginDir, "cmd", "dex-plugin-kubernetes")
@@ -590,9 +591,68 @@ func main() {
 			"ok": true,
 			"result": map[string]any{
 				"name": "kubernetes",
-				"operations": []map[string]any{{"name": "kubernetes.service.show", "read_only": true}},
+				"aliases": []string{"kube", "k8s"},
+				"operations": []map[string]any{
+					{"name": "kubernetes.service.show", "read_only": true, "input_schema": map[string]any{"required": []string{"name"}, "properties": map[string]any{"name": map[string]any{"type": "string"}, "context": map[string]any{"type": "string"}}}},
+					{"name": "kubernetes.pod.logs", "read_only": true, "input_schema": map[string]any{"required": []string{"name"}, "properties": map[string]any{"name": map[string]any{"type": "string"}, "container": map[string]any{"type": "string"}, "tail_lines": map[string]any{"type": "integer"}, "timestamps": map[string]any{"type": "boolean"}, "endpoint_ref": map[string]any{"type": "string"}}}},
+				},
 			},
 		})
+		return
+	}
+	var call struct {
+		Name string
+		Input json.RawMessage
+	}
+	_ = json.Unmarshal(req.Payload, &call)
+	var input map[string]any
+	_ = json.Unmarshal(call.Input, &input)
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"protocol": "dex.plugin.v1",
+		"ok": true,
+		"result": map[string]any{"name": call.Name, "input": input},
+	})
+}
+`
+	if err := os.WriteFile(filepath.Join(cmdDir, "main.go"), []byte(mainGo), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return pluginDir
+}
+
+func writeFakeOperationPlugin(t *testing.T, name string, aliases []string, operations []map[string]any) string {
+	t.Helper()
+	pluginDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pluginDir, "go.mod"), []byte("module fake"+name+"\n\ngo 1.26\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmdDir := filepath.Join(pluginDir, "cmd", "dex-plugin-"+name)
+	if err := os.MkdirAll(cmdDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := json.Marshal(map[string]any{"name": name, "aliases": aliases, "operations": operations})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainGo := `package main
+
+import (
+	"encoding/json"
+	"os"
+)
+
+const manifestJSON = ` + strconv.Quote(string(manifest)) + `
+
+func main() {
+	var req struct {
+		Command string
+		Payload json.RawMessage
+	}
+	_ = json.NewDecoder(os.Stdin).Decode(&req)
+	if req.Command == "manifest" {
+		var manifest map[string]any
+		_ = json.Unmarshal([]byte(manifestJSON), &manifest)
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"protocol": "dex.plugin.v1", "ok": true, "result": manifest})
 		return
 	}
 	var call struct {
@@ -659,6 +719,103 @@ func main() {
 		"protocol": "dex.plugin.v1",
 		"ok": true,
 		"result": map[string]any{"source": "kubernetes", "count": 1, "records": []map[string]any{{"entity": "kubernetes.resource", "id": "latest/api"}}, "input": input},
+	})
+}
+
+`
+	if err := os.WriteFile(filepath.Join(cmdDir, "main.go"), []byte(mainGo), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return pluginDir
+}
+
+func executeGeneratedRoot(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	opts := newOptions()
+	opts.home = t.TempDir()
+	if err := parseStartupFlags(args, opts); err != nil {
+		return "", err
+	}
+	cmd := newRootCommand(opts)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs(args)
+	if err := attachGeneratedPluginCommands(context.Background(), cmd, opts); err != nil {
+		return out.String(), err
+	}
+	err := cmd.Execute()
+	return out.String(), err
+}
+
+func writeFakeSlackDatasourcePlugin(t *testing.T) string {
+	t.Helper()
+	pluginDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pluginDir, "go.mod"), []byte("module fakeslackdatasource\n\ngo 1.26\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmdDir := filepath.Join(pluginDir, "cmd", "dex-plugin-slack")
+	if err := os.MkdirAll(cmdDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mainGo := `package main
+
+import (
+	"encoding/json"
+	"os"
+)
+
+func main() {
+	var req struct {
+		Command string ` + "`json:\"command\"`" + `
+		Payload json.RawMessage ` + "`json:\"payload\"`" + `
+	}
+	_ = json.NewDecoder(os.Stdin).Decode(&req)
+	if req.Command == "manifest" {
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"protocol": "dex.plugin.v1",
+			"ok": true,
+			"result": map[string]any{
+				"name": "slack",
+				"datasources": []map[string]any{{
+					"name": "slack.messages",
+					"entity": "slack.message",
+					"capabilities": []string{"search"},
+				}, {
+					"name": "slack.thread_messages",
+					"entity": "slack.thread_message",
+					"capabilities": []string{"search"},
+				}, {
+					"name": "slack.channel_members",
+					"entity": "slack.channel_member",
+					"capabilities": []string{"search"},
+					"entity_schema": map[string]any{"fields": []map[string]any{
+						{"name": "title"},
+						{"name": "channel"},
+						{"name": "user_id"},
+						{"name": "name"},
+						{"name": "real_name"},
+						{"name": "display_name"},
+						{"name": "email"},
+					}},
+					"relations": []map[string]any{{"field": "user_id", "entity": "slack.user", "type": "reference"}},
+				}},
+			},
+		})
+		return
+	}
+	var input map[string]any
+	_ = json.Unmarshal(req.Payload, &input)
+	source := "slack.messages"
+	records := []map[string]any{{"entity": "slack.message", "id": "C1:1710000000.123456"}}
+	if input["datasource"] == "slack.channel_members" {
+		source = "slack.channel_members"
+		records = []map[string]any{{"entity": "slack.channel_member", "id": "C1:U123", "title": "U123", "channel": "C1", "user_id": "U123"}}
+	}
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"protocol": "dex.plugin.v1",
+		"ok": true,
+		"result": map[string]any{"source": source, "count": len(records), "records": records, "input": input},
 	})
 }
 `
@@ -735,160 +892,195 @@ func TestOperationShowIncludesMetadata(t *testing.T) {
 	}
 }
 
-func TestShortcutShowTracesDatasourceBinding(t *testing.T) {
-	cmd := NewRootCommand()
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "shortcut", "ls", "websearch", "-o", "json"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	var result struct {
-		Shortcuts []shortcutView `json:"shortcuts"`
-	}
-	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
-		t.Fatal(err)
-	}
-	var found shortcutView
-	for _, shortcut := range result.Shortcuts {
-		if shortcut.Target == "datasource" {
-			found = shortcut
-			break
-		}
-	}
-	if found.Plugin != "websearch" || found.Datasource != "websearch.results" || found.Capability != "search" {
-		t.Fatalf("shortcut = %#v", result)
-	}
-}
-
-func TestShortcutListIncludesKubernetesInventoryBindings(t *testing.T) {
-	cmd := NewRootCommand()
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "shortcut", "ls", "kubernetes", "-o", "json"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	var result struct {
-		Shortcuts []shortcutView `json:"shortcuts"`
-	}
-	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
-		t.Fatal(err)
-	}
-	foundPodList := false
-	foundPodLogs := false
-	foundDeployList := false
-	foundContainerList := false
-	foundSearch := false
-	for _, shortcut := range result.Shortcuts {
-		if shortcut.Use == "kube pod ls" && shortcut.Operation == "kubernetes.pod.list" {
-			foundPodList = true
-		}
-		if shortcut.Use == "kube pod logs <namespace/name>" && shortcut.Operation == "kubernetes.pod.logs" {
-			foundPodLogs = true
-		}
-		if shortcut.Use == "kube deploy ls" && shortcut.Operation == "kubernetes.deployment.list" {
-			foundDeployList = true
-		}
-		if shortcut.Use == "kube container ls" && shortcut.Operation == "kubernetes.container.list" {
-			foundContainerList = true
-		}
-		if shortcut.Use == "search --plugin kubernetes <query>" && shortcut.Datasource == "kubernetes.inventory" {
-			foundSearch = true
-		}
-	}
-	if !foundPodList || !foundPodLogs || !foundDeployList || !foundContainerList || !foundSearch {
-		t.Fatalf("shortcuts = %#v", result.Shortcuts)
-	}
-}
-
-func TestShortcutExecutesKubernetesOperationBinding(t *testing.T) {
-	pluginDir := writeFakeKubernetesShortcutPlugin(t)
-	var out bytes.Buffer
+func TestGeneratedCommandExecutesActivePluginOperation(t *testing.T) {
+	pluginDir := writeFakeKubernetesAliasPlugin(t)
 	state, err := runtime.NewState(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := runtime.Runner{
-		Marketplace: runtime.NewMarketplace(core.Marketplace{Version: "1", Plugins: []core.PluginEntry{{
-			Name: "kubernetes", Binary: "dex-plugin-kubernetes", LocalPath: pluginDir,
-			Commands: []core.CommandShortcut{{Use: "kube svc show <namespace/name>", Target: "operation", Operation: "kubernetes.service.show"}},
-		}}}),
-		State: state,
+	if err := state.ActivatePlugin(core.PluginEntry{Name: "kubernetes", Binary: "dex-plugin-kubernetes", LocalPath: pluginDir}); err != nil {
+		t.Fatal(err)
 	}
-	opts := &options{output: "json"}
-	if err := runShortcut(context.Background(), &out, opts, runner, []string{"kube", "svc", "show", "latest/api", "--context", "dev"}); err != nil {
+	home := state.Home
+	out, err := executeGeneratedRoot(t, "--dex-home", home, "--dev-plugin", "kubernetes="+pluginDir, "kube", "service", "show", "latest/api", "--context", "dev", "-o", "json")
+	if err != nil {
 		t.Fatal(err)
 	}
 	var result map[string]any
-	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
 		t.Fatal(err)
 	}
 	if result["name"] != "kubernetes.service.show" {
 		t.Fatalf("result = %#v", result)
 	}
 	input, _ := result["input"].(map[string]any)
-	if input["namespace"] != "latest" || input["name"] != "api" || input["context"] != "dev" {
+	if input["name"] != "latest/api" || input["context"] != "dev" {
 		t.Fatalf("input = %#v", input)
 	}
 }
 
-func TestShortcutPrefixCommandExecutesWithFlags(t *testing.T) {
-	pluginDir := writeFakeKubernetesShortcutPlugin(t)
-	cmd := NewRootCommand()
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "--dev-plugin", "kubernetes=" + pluginDir, "kube", "svc", "show", "latest/api", "--context", "dev", "-o", "json"})
-	if err := cmd.Execute(); err != nil {
+func TestRootDispatchesActivePluginAlias(t *testing.T) {
+	pluginDir := writeFakeKubernetesAliasPlugin(t)
+	home := t.TempDir()
+	activate := NewRootCommand()
+	var activateOut bytes.Buffer
+	activate.SetOut(&activateOut)
+	activate.SetErr(&activateOut)
+	activate.SetArgs([]string{"--dex-home", home, "--dev-plugin", "kubernetes=" + pluginDir, "plugin", "activate", "kubernetes"})
+	if err := activate.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := executeGeneratedRoot(t, "--dex-home", home, "--dev-plugin", "kubernetes="+pluginDir, "kube", "service", "show", "latest/api", "-o", "json")
+	if err != nil {
 		t.Fatal(err)
 	}
 	var result map[string]any
-	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
 		t.Fatal(err)
 	}
 	input, _ := result["input"].(map[string]any)
-	if result["name"] != "kubernetes.service.show" || input["namespace"] != "latest" || input["name"] != "api" || input["context"] != "dev" {
+	if result["name"] != "kubernetes.service.show" || input["name"] != "latest/api" {
 		t.Fatalf("result = %#v", result)
 	}
 }
 
-func TestShortcutExecutesKubernetesPodLogsBinding(t *testing.T) {
-	pluginDir := writeFakeKubernetesShortcutPlugin(t)
-	var out bytes.Buffer
+func TestGeneratedCommandExecutesOperationWithFlags(t *testing.T) {
+	pluginDir := writeFakeKubernetesAliasPlugin(t)
 	state, err := runtime.NewState(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := runtime.Runner{
-		Marketplace: runtime.NewMarketplace(core.Marketplace{Version: "1", Plugins: []core.PluginEntry{{
-			Name: "kubernetes", Binary: "dex-plugin-kubernetes", LocalPath: pluginDir,
-			Commands: []core.CommandShortcut{{Use: "kube pod logs <namespace/name>", Target: "operation", Operation: "kubernetes.pod.logs"}},
-		}}}),
-		State: state,
+	if err := state.ActivatePlugin(core.PluginEntry{Name: "kubernetes", Binary: "dex-plugin-kubernetes", LocalPath: pluginDir}); err != nil {
+		t.Fatal(err)
 	}
-	opts := &options{output: "json"}
-	if err := runShortcut(context.Background(), &out, opts, runner, []string{"kube", "pod", "logs", "latest/api-123", "--container", "api", "--tail-lines", "25", "--timestamps"}); err != nil {
+	if _, err := state.SaveEndpoint(core.EndpointRef{ID: "dev-kubernetes", URL: "kubernetes://context/dev", Product: "kubernetes"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := executeGeneratedRoot(t, "--dex-home", state.Home, "--dev-plugin", "kubernetes="+pluginDir, "kube", "pod", "logs", "latest/api-123", "--container", "api", "--tail-lines", "25", "--timestamps", "--endpoint-ref", "dev-kubernetes", "-o", "json")
+	if err != nil {
 		t.Fatal(err)
 	}
 	var result map[string]any
-	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
 		t.Fatal(err)
 	}
 	if result["name"] != "kubernetes.pod.logs" {
 		t.Fatalf("result = %#v", result)
 	}
 	input, _ := result["input"].(map[string]any)
-	if input["namespace"] != "latest" || input["name"] != "api-123" || input["container"] != "api" || input["tail_lines"] != float64(25) || input["timestamps"] != true {
+	if input["name"] != "latest/api-123" || input["container"] != "api" || input["tail_lines"] != float64(25) || input["timestamps"] != true || input["endpoint_ref"] != "dev-kubernetes" {
 		t.Fatalf("input = %#v", input)
 	}
 }
 
-func TestShortcutExecutesKubernetesContainerShowBinding(t *testing.T) {
-	pluginDir := writeFakeKubernetesShortcutPlugin(t)
-	var out bytes.Buffer
+func TestGeneratedCommandAcceptsJSONObjectInput(t *testing.T) {
+	pluginDir := writeFakeKubernetesAliasPlugin(t)
+	state, err := runtime.NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ActivatePlugin(core.PluginEntry{Name: "kubernetes", Binary: "dex-plugin-kubernetes", LocalPath: pluginDir}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := executeGeneratedRoot(t, "--dex-home", state.Home, "--dev-plugin", "kubernetes="+pluginDir, "k8s", "pod", "logs", `{"name":"latest/api-123","container":"api"}`, "--tail-lines", "10", "-o", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	input, _ := result["input"].(map[string]any)
+	if input["name"] != "latest/api-123" || input["container"] != "api" || input["tail_lines"] != float64(10) {
+		t.Fatalf("input = %#v", input)
+	}
+}
+
+func TestGeneratedCommandHelpShowsSchemaFlags(t *testing.T) {
+	pluginDir := writeFakeKubernetesAliasPlugin(t)
+	state, err := runtime.NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ActivatePlugin(core.PluginEntry{Name: "kubernetes", Binary: "dex-plugin-kubernetes", LocalPath: pluginDir}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := executeGeneratedRoot(t, "--dex-home", state.Home, "--dev-plugin", "kubernetes="+pluginDir, "kube", "pod", "logs", "-h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "--container") || !strings.Contains(out, "--tail-lines") || !strings.Contains(out, "--endpoint-ref") {
+		t.Fatalf("help missing schema flags:\n%s", out)
+	}
+	if strings.Contains(out, "--context") {
+		t.Fatalf("help includes unrelated operation flag:\n%s", out)
+	}
+}
+
+func TestGeneratedSlackInfoCommand(t *testing.T) {
+	pluginDir := writeFakeOperationPlugin(t, "slack", nil, []map[string]any{
+		{"name": "slack.info", "read_only": true, "input_schema": map[string]any{"properties": map[string]any{}}},
+	})
+	state, err := runtime.NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ActivatePlugin(core.PluginEntry{Name: "slack", Binary: "dex-plugin-slack", LocalPath: pluginDir}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := executeGeneratedRoot(t, "--dex-home", state.Home, "--dev-plugin", "slack="+pluginDir, "slack", "info", "-o", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["name"] != "slack.info" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestGeneratedDuplicateAliasesFail(t *testing.T) {
+	kubeDir := writeFakeKubernetesAliasPlugin(t)
+	otherDir := writeFakeOperationPlugin(t, "other", []string{"kube"}, []map[string]any{
+		{"name": "other.info", "read_only": true, "input_schema": map[string]any{"properties": map[string]any{}}},
+	})
+	home := t.TempDir()
+	state, err := runtime.NewState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ActivatePlugin(core.PluginEntry{Name: "kubernetes", Binary: "dex-plugin-kubernetes", LocalPath: kubeDir}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ActivatePlugin(core.PluginEntry{Name: "other", Binary: "dex-plugin-other", LocalPath: otherDir}); err != nil {
+		t.Fatal(err)
+	}
+	marketplaceData, err := json.Marshal(core.Marketplace{Version: "1", Plugins: []core.PluginEntry{
+		{Name: "kubernetes", Binary: "dex-plugin-kubernetes", LocalPath: kubeDir},
+		{Name: "other", Binary: "dex-plugin-other", LocalPath: otherDir},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	marketplacePath := filepath.Join(t.TempDir(), "marketplace.json")
+	if err := os.WriteFile(marketplacePath, marketplaceData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opts := newOptions()
+	opts.home = home
+	opts.marketplacePath = marketplacePath
+	opts.devPlugins = []string{"kubernetes=" + kubeDir, "other=" + otherDir}
+	cmd := newRootCommand(opts)
+	err = attachGeneratedPluginCommands(context.Background(), cmd, opts)
+	if err == nil || !strings.Contains(err.Error(), "duplicate plugin command alias") {
+		t.Fatalf("duplicate alias err = %#v", err)
+	}
+}
+
+func TestGeneratedCommandRequiresActivePlugin(t *testing.T) {
+	pluginDir := writeFakeKubernetesAliasPlugin(t)
 	state, err := runtime.NewState(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -896,40 +1088,9 @@ func TestShortcutExecutesKubernetesContainerShowBinding(t *testing.T) {
 	if _, err := state.SaveEndpoint(core.EndpointRef{ID: "dev-cluster", URL: "kubernetes://context/dev", Product: "kubernetes"}); err != nil {
 		t.Fatal(err)
 	}
-	runner := runtime.Runner{
-		Marketplace: runtime.NewMarketplace(core.Marketplace{Version: "1", Plugins: []core.PluginEntry{{
-			Name: "kubernetes", Binary: "dex-plugin-kubernetes", LocalPath: pluginDir,
-			Commands: []core.CommandShortcut{{Use: "kube container show <namespace/pod/container>", Target: "operation", Operation: "kubernetes.container.show"}},
-		}}}),
-		State: state,
-	}
-	opts := &options{output: "json"}
-	if err := runShortcut(context.Background(), &out, opts, runner, []string{"kube", "container", "show", "latest/api-123/api", "--endpoint", "dev-cluster"}); err != nil {
-		t.Fatal(err)
-	}
-	var result map[string]any
-	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
-		t.Fatal(err)
-	}
-	if result["name"] != "kubernetes.container.show" {
-		t.Fatalf("result = %#v", result)
-	}
-	input, _ := result["input"].(map[string]any)
-	if input["namespace"] != "latest" || input["name"] != "api-123/api" || input["endpoint_ref"] != "dev-cluster" {
-		t.Fatalf("input = %#v", input)
-	}
-}
-
-func TestShortcutArgParsingMapsEndpointFlag(t *testing.T) {
-	positionals, flags, err := parseShortcutArgs([]string{"kube", "svc", "ls", "--endpoint", "dev-cluster", "--namespace=latest", "--limit", "3", "--tail-lines", "25", "--timestamps=false"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(positionals, " ") != "kube svc ls" {
-		t.Fatalf("positionals = %#v", positionals)
-	}
-	if flags["endpoint_ref"] != "dev-cluster" || flags["namespace"] != "latest" || flags["limit"] != 3 || flags["tail_lines"] != int64(25) || flags["timestamps"] != false {
-		t.Fatalf("flags = %#v", flags)
+	_, err = executeGeneratedRoot(t, "--dex-home", state.Home, "--dev-plugin", "kubernetes="+pluginDir, "kube", "pod", "logs", "latest/api-123")
+	if err == nil || !strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("inactive alias err = %#v", err)
 	}
 }
 
@@ -962,6 +1123,166 @@ func TestSearchPassesEndpointToDatasource(t *testing.T) {
 	input := result.Results["kubernetes"].Input
 	if input["endpoint_ref"] != "dev-kubernetes" || input["url"] != "kubernetes://context/dev" || input["query"] != "api" || input["limit"] != float64(5) {
 		t.Fatalf("input = %#v", input)
+	}
+}
+
+func TestDatasourceCommandsUseExactDatasourceName(t *testing.T) {
+	pluginDir := writeFakeKubernetesDatasourcePlugin(t)
+	home := t.TempDir()
+	state, err := runtime.NewState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveEndpoint(core.EndpointRef{ID: "dev-kubernetes", URL: "kubernetes://context/dev", Product: "kubernetes", Protocol: "kubernetes"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", home, "--dev-plugin", "kubernetes=" + pluginDir, "datasource", "show", "kubernetes.inventory", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"name": "kubernetes.inventory"`)) {
+		t.Fatalf("show output = %s", out.String())
+	}
+
+	out.Reset()
+	cmd = NewRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", home, "--dev-plugin", "kubernetes=" + pluginDir, "datasource", "search", "kubernetes.inventory", `{"query":"api","endpoint_ref":"dev-kubernetes"}`, "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Input map[string]any `json:"input"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Input["datasource"] != "kubernetes.inventory" || result.Input["entity"] != "kubernetes.resource" || result.Input["url"] != "kubernetes://context/dev" {
+		t.Fatalf("input = %#v", result.Input)
+	}
+}
+
+func TestSlackDatasourceCommandsUseExactDatasourceName(t *testing.T) {
+	pluginDir := writeFakeSlackDatasourcePlugin(t)
+	home := t.TempDir()
+
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", home, "--dev-plugin", "slack=" + pluginDir, "datasource", "show", "slack.messages", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"name": "slack.messages"`)) || !bytes.Contains(out.Bytes(), []byte(`"entity": "slack.message"`)) {
+		t.Fatalf("show output = %s", out.String())
+	}
+
+	out.Reset()
+	cmd = NewRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", home, "--dev-plugin", "slack=" + pluginDir, "datasource", "search", "slack.messages", `{"query":"incident"}`, "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Input map[string]any `json:"input"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Input["datasource"] != "slack.messages" || result.Input["entity"] != "slack.message" || result.Input["query"] != "incident" {
+		t.Fatalf("input = %#v", result.Input)
+	}
+
+	cmd = NewRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", home, "--dev-plugin", "slack=" + pluginDir, "datasource", "search", "slack.messages", `{"entity":"slack.thread_message"}`})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), `datasource "slack.messages" exposes entity "slack.message"`) {
+		t.Fatalf("err = %v, output = %s", err, out.String())
+	}
+}
+
+func TestSlackChannelMembersDatasourceEnrichesFromUserIndex(t *testing.T) {
+	pluginDir := writeFakeSlackDatasourcePlugin(t)
+	home := t.TempDir()
+	state, err := runtime.NewState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = state.SaveIndexRecords("slack", "default", "slack.users", []json.RawMessage{
+		json.RawMessage(`{"entity":"slack.user","id":"U123","title":"Timo Friedl","user_id":"U123","name":"timo","real_name":"Timo Friedl","display_name":"Timo","email":"timo@example.com","web_url":"slack://user/U123"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", home, "--dev-plugin", "slack=" + pluginDir, "datasource", "search", "slack.channel_members", `{"channel":"C1","limit":1}`, "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Source  string `json:"source"`
+		Records []struct {
+			Entity      string `json:"entity"`
+			ID          string `json:"id"`
+			Title       string `json:"title"`
+			UserID      string `json:"user_id"`
+			Name        string `json:"name"`
+			RealName    string `json:"real_name"`
+			DisplayName string `json:"display_name"`
+			Email       string `json:"email"`
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Source != "slack.channel_members" || len(result.Records) != 1 {
+		t.Fatalf("result = %#v", result)
+	}
+	record := result.Records[0]
+	if record.Entity != "slack.channel_member" || record.ID != "C1:U123" || record.UserID != "U123" {
+		t.Fatalf("record identity = %#v", record)
+	}
+	if record.Title != "Timo Friedl" || record.Name != "timo" || record.RealName != "Timo Friedl" || record.DisplayName != "Timo" || record.Email != "timo@example.com" {
+		t.Fatalf("record was not enriched from slack.users index: %#v", record)
+	}
+}
+
+func TestDatasourceSearchRejectsUnknownAndConflictingEntity(t *testing.T) {
+	pluginDir := writeFakeKubernetesDatasourcePlugin(t)
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "unknown", args: []string{"--dev-plugin", "kubernetes=" + pluginDir, "datasource", "search", "kubernetes.missing", `{}`}, want: `unknown datasource "kubernetes.missing"`},
+		{name: "entity", args: []string{"--dev-plugin", "kubernetes=" + pluginDir, "datasource", "search", "kubernetes.inventory", `{"entity":"other.resource"}`}, want: `exposes entity "kubernetes.resource"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := NewRootCommand()
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs(append([]string{"--dex-home", t.TempDir()}, tc.args...))
+			err := cmd.Execute()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, output = %s", err, out.String())
+			}
+		})
 	}
 }
 

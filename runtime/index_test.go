@@ -312,3 +312,123 @@ func TestRunnerServesDatasourceSearchAndGetFromIndex(t *testing.T) {
 		t.Fatalf("lookup result = %#v", lookupResult)
 	}
 }
+
+func TestDatasourceSearchResponseEnrichesRelationFieldsFromIndex(t *testing.T) {
+	state, err := NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = state.SaveIndexRecords("slack", "work", "slack.users", []json.RawMessage{
+		json.RawMessage(`{"entity":"slack.user","id":"U123","title":"Timo Friedl","user_id":"U123","name":"timo","real_name":"Timo Friedl","display_name":"Timo","email":"timo@example.com","web_url":"slack://user/U123"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := protocol.OK(map[string]any{
+		"source": "slack.channel_members",
+		"count":  2,
+		"records": []map[string]any{
+			{"entity": "slack.channel_member", "id": "C1:U123", "title": "U123", "channel": "C1", "user_id": "U123"},
+			{"entity": "slack.channel_member", "id": "C1:U999", "title": "U999", "channel": "C1", "user_id": "U999"},
+		},
+	})
+
+	enriched, err := enrichDatasourceSearchResponse(slackMemberManifestForTest(), state, "slack", "work", map[string]any{"datasource": "slack.channel_members", "entity": "slack.channel_member"}, resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Count   int `json:"count"`
+		Records []struct {
+			ID          string `json:"id"`
+			Title       string `json:"title"`
+			UserID      string `json:"user_id"`
+			Name        string `json:"name,omitempty"`
+			RealName    string `json:"real_name,omitempty"`
+			DisplayName string `json:"display_name,omitempty"`
+			Email       string `json:"email,omitempty"`
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(enriched.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 2 || len(result.Records) != 2 {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.Records[0].Title != "Timo Friedl" || result.Records[0].Name != "timo" || result.Records[0].DisplayName != "Timo" || result.Records[0].Email != "timo@example.com" {
+		t.Fatalf("enriched record = %#v", result.Records[0])
+	}
+	if result.Records[1].Title != "U999" || result.Records[1].Name != "" {
+		t.Fatalf("missing index record should be unchanged: %#v", result.Records[1])
+	}
+}
+
+func TestDatasourceSearchResponseLeavesRecordsWhenIndexMissing(t *testing.T) {
+	state, err := NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := protocol.OK(map[string]any{
+		"source": "slack.channel_members",
+		"count":  1,
+		"records": []map[string]any{
+			{"entity": "slack.channel_member", "id": "C1:U123", "title": "U123", "channel": "C1", "user_id": "U123"},
+		},
+	})
+
+	enriched, err := enrichDatasourceSearchResponse(slackMemberManifestForTest(), state, "slack", "work", map[string]any{"datasource": "slack.channel_members", "entity": "slack.channel_member"}, resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(enriched.Result) != string(resp.Result) {
+		t.Fatalf("response changed without an index:\n%s", string(enriched.Result))
+	}
+}
+
+func TestHostIndexDatasourceSkipsUnindexedExactDatasource(t *testing.T) {
+	state, err := NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = state.SaveIndexRecords("slack", "default", "slack.users", []json.RawMessage{
+		json.RawMessage(`{"entity":"slack.user","id":"U123","name":"timo"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ds := hostIndexDatasource{state: state, plugin: "slack", instance: "default"}
+	_, ok, err := ds.Response(protocol.CommandDatasourcesSearch, map[string]any{"datasource": "slack.channel_members", "entity": "slack.channel_member"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatalf("host index should not handle an exact live datasource without a matching index")
+	}
+	resp, ok, err := ds.Response(protocol.CommandDatasourcesSearch, map[string]any{"datasource": "slack.users", "entity": "slack.user", "query": "timo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || !resp.OK {
+		t.Fatalf("host index should handle exact indexed datasource: ok=%v resp=%#v", ok, resp)
+	}
+}
+
+func slackMemberManifestForTest() core.PluginManifest {
+	return core.PluginManifest{
+		Name: "slack",
+		Datasources: []core.DatasourceSpec{{
+			Name:   "slack.channel_members",
+			Entity: "slack.channel_member",
+			EntitySchema: &core.DatasourceEntitySchema{Fields: []core.DatasourceFieldSpec{
+				{Name: "title"},
+				{Name: "channel"},
+				{Name: "user_id"},
+				{Name: "name"},
+				{Name: "real_name"},
+				{Name: "display_name"},
+				{Name: "email"},
+			}},
+			Relations: []core.DatasourceRelationSpec{{Field: "user_id", Entity: "slack.user", Type: "reference"}},
+		}},
+	}
+}

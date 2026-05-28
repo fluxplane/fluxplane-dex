@@ -7,8 +7,8 @@ concepts from `../fluxplane-core/plugins`.
 
 The guiding decision is that `fluxplane-dex` should become the replacement
 surface, not a compatibility wrapper. Parity is achieved by mapping old behavior
-into local operation, datasource, context, endpoint, auth, and shortcut
-contracts.
+into local operation, datasource, context, endpoint, auth, and manifest-driven
+CLI contracts.
 
 Sources checked:
 - `~/projects/dex/internal/cli/*.go`
@@ -35,7 +35,7 @@ explicit host CLI feature with comparable behavior.
 
 Implemented or scaffolded now:
 - `gitlab`: auth test, index build, project list/show, merge request list/show; indexed datasources for projects, users, groups, issues, merge requests.
-- `slack`: index build for users/channels; message send, search, and thread are declared but currently return not implemented pending live Slack client migration.
+- `slack`: index build for users/channels; live message send, search, thread reads, and live read datasources for messages, thread messages, and channel members with indexed user/channel enrichment.
 - `system`: local system info by category.
 - `tavily`: web search provider with API key auth and datasource search.
 - `duckduckgo`: web search provider without auth and datasource search.
@@ -57,9 +57,9 @@ work:
 2. Stabilize the plugins that already exist against those contracts.
 3. Prove endpoint discovery with a real discoverer, starting with Kubernetes.
 4. Port broad integrations by composing datasources, typed operations, context,
-   endpoint discovery, and shortcuts.
-5. Preserve legacy ergonomics through CLI shortcuts without freezing the legacy
-   command tree into the protocol.
+   endpoint discovery, and generated commands.
+5. Preserve legacy ergonomics through manifest aliases without freezing the
+   legacy command tree into the protocol.
 6. Expose the final plugin/catalog surface as a `fluxplane-core` contribution
    provider only after the local contracts are proven.
 
@@ -72,11 +72,8 @@ The immediate implementation focus should be:
   secret refs, driven by the first real endpoint discovery use case.
 - Runtime model: host-owned network/process/browser/filesystem/environment
   boundaries plus managed process handles where local plugins need them.
-- Context model: dynamic context providers first; activation/operation sets once
-  operation metadata and context providers are stable and contribution-provider
-  needs are clearer.
-- Shortcut model: structured bindings from `dex gl ...`, `dex slack ...`, and
-  similar commands to operation or datasource calls.
+- CLI model: generate `dex gl ...`, `dex slack ...`, and similar commands from
+  activated plugin manifests and operation schemas.
 
 Do not start large Jira/Kubernetes/Loki/GitHub ports before the relevant shared
 contract exists. Otherwise each plugin will invent its own version of the same
@@ -88,12 +85,13 @@ These are the next implementation slices implied by the concepts document,
 vision, and roadmap. They are intentionally smaller than the broad P0 themes.
 
 Current recommended order:
-1. Done: Shortcut Binding v1 executes marketplace operation/datasource
-   bindings.
+1. Done: manifest-driven operation CLI generates commands from activated plugin
+   manifests.
 2. Maintain the plugin install/activation model so plugin-specific surfaces are
-   driven by state and marketplace bindings, not hardcoded host commands.
-3. Stabilize current plugins, especially Slack live behavior, GitLab read
-   coverage, and provider-neutral websearch hardening.
+   driven by activation state and manifests, not hardcoded host commands.
+3. Stabilize current plugins, especially Slack auth/test/info and remaining
+   parity behavior, GitLab read coverage, and provider-neutral websearch
+   hardening.
 4. Done: validate Kubernetes endpoint discovery live against the dev cluster's
    `latest` namespace, including Crossplane-style MySQL/PostgreSQL secrets and
    SQL queries through endpoint refs.
@@ -144,45 +142,32 @@ Acceptance:
 - Generic search can filter by stable entity names.
 - Lookup results retain source, score, matched fields, and record identity.
 
-### 3. Shortcut Binding v1 - Implemented
+### 3. Manifest-Driven Operation CLI - Implemented
 
-Goal: make CLI shortcuts explicit bindings over operations and datasources,
-while keeping legacy ergonomics.
+Goal: make CLI ergonomics derive from plugin manifests instead of marketplace
+command metadata or host-side plugin special cases.
 
 Scope:
-- Extended marketplace command shortcut metadata so a shortcut can target an
-  operation or datasource capability.
-- Added generic host-side shortcut execution from marketplace bindings.
-- Kept shortcut handlers as argument normalization and rendering glue.
-- Added placeholder and flag mapping for current shortcut patterns, including
-  Kubernetes inventory shortcuts.
-- Used Kubernetes inventory shortcuts and datasource bindings as proof points.
+- Added two-pass CLI startup: parse global flags, load installed/activated
+  plugin manifests, attach generated Cobra commands, then run normal parsing.
+- Manifest names and aliases become root-level plugin commands, unless they
+  collide with built-in root commands.
+- Operation names become nested commands by stripping the plugin prefix.
+- Operation flags are generated from input JSON schema properties, with
+  kebab-case CLI flags mapped back to JSON field names.
+- Positional arguments are only a convenience for required fields; JSON input
+  remains available for complex payloads.
+- Marketplace metadata remains install/discovery-only.
 
 Acceptance:
-- Done: a shortcut can be inspected and traced to its underlying operation or
-  datasource.
-- Done: shortcut execution invokes the same operation/datasource protocol paths
-  as generic calls.
+- Done: active plugin aliases appear as generated commands; inactive plugins do
+  not.
+- Done: duplicate aliases and duplicate generated operation paths fail clearly.
+- Done: schema-derived flags call the same `operations.call` path as
+  `dex op run`.
 - Done: no plugin implementation needs Cobra command knowledge.
 
-### 4. Context Provider v1 - Implemented
-
-Goal: let plugins produce prompt-ready context dynamically instead of only
-declaring static context specs.
-
-Scope:
-- Define a dynamic context provider request/response shape.
-- Support text, data, and reference context blocks.
-- Add a host command path to build context from selected plugins/instances.
-- Use system, GitLab, and websearch as first lightweight providers.
-
-Acceptance:
-- `context.build` can return useful blocks from at least one external plugin and
-  one builtin plugin.
-- Context blocks include source identity and stable IDs.
-- Empty context is a successful empty result, not a protocol error.
-
-### 5. Kubernetes Endpoint Discovery Proof Point - Implemented
+### 4. Kubernetes Endpoint Discovery Proof Point - Implemented
 
 Goal: create the shared endpoint model through the first real endpoint
 discovery plugin instead of designing a registry without endpoints to discover.
@@ -228,13 +213,14 @@ Acceptance:
   `latest` namespace with Crossplane-managed MySQL/PostgreSQL connection
   secrets and SQL queries through registered endpoint refs.
 
-### 6. Current Plugin Stabilization
+### 5. Current Plugin Stabilization
 
 Goal: only after the first contracts exist, bring current partial plugins up to
 the new baseline.
 
 Scope:
-- Finish Slack live client migration for send/search/thread.
+- Use completed Slack live send/search/thread and read datasource behavior as
+  the quality baseline; add auth/test/info and remaining parity behavior next.
 - Expand GitLab read datasource coverage before adding more GitLab writes.
 - Add websearch bounded concurrency, multi-query behavior, and error
   aggregation while keeping provider-neutral semantics.
@@ -250,6 +236,12 @@ Do not start Jira, Loki, SQL, Homer, or GitHub as large ports before the
 relevant contract slice exists. Kubernetes is the exception because it is the
 actual endpoint discovery proof point for cluster-local products such as
 Prometheus and Loki.
+
+Backlog:
+- Generic endpoint-aware host indexing/search is deferred. It should not be
+  mixed into provider-specific datasource work until the host model answers:
+  endpoint identity metadata, stale data policy, multi-endpoint collisions,
+  refresh behavior, and cache invalidation.
 
 ## fluxplane-core Plugin Overlap Review
 
@@ -293,7 +285,8 @@ Reuse categories:
 - Skip for parity: core admin surfaces that are absent or intentionally not registered, and unrelated core plugins such as AWS, Docker, OpenAI, filesystem, shell, language, memory, task, and image.
 
 Concrete integration guidance:
-- Preserve the dex pluginbinding manifest shape, marketplace entries, CLI shortcuts, and current operation names where already established.
+- Preserve the dex pluginbinding manifest shape, marketplace entries, manifest
+  aliases, and current operation names where already established.
 - For GitLab, combine current `fluxplane-dex` read operations with the broader
   datasource model and coarse write-operation shapes from the reference
   implementation. Many items listed as missing in the legacy gap list have a
@@ -321,7 +314,7 @@ reference concepts ported or re-shaped locally before the larger integrations
 can be clean.
 
 Current local support:
-- Present: `PluginManifest`, typed operation schemas, operation safety/access metadata, auth methods/fields, datasource specs with capabilities/entities/views/relations/completion metadata, static context specs, dynamic context providers, endpoint specs, index specs, endpoint candidates, context blocks, typed pluginbinding handlers, batch calls, secret purpose metadata, executable marketplace shortcut bindings, endpoint registry, and endpoint health.
+- Present: `PluginManifest`, typed operation schemas, operation safety/access metadata, auth methods/fields, datasource specs with capabilities/entities/views/relations/completion metadata, static context specs, endpoint specs, index specs, endpoint candidates, context blocks, typed pluginbinding handlers, batch calls, secret purpose metadata, manifest-driven CLI commands, endpoint registry, and endpoint health.
 - Partial: datasource search/get/lookup, host-owned indexes, builtin plugins, live auth/secret resolution, and discovery providers.
 - Missing for local parity: structured auth-test reports, runtime system boundary, managed processes, and richer render metadata.
 - Deferred to contribution-provider phase: operation sets, activation sets,
@@ -329,7 +322,6 @@ Current local support:
   and catalog export shapes for `fluxplane-core`.
 
 Concepts to port into this repo:
-- Context providers: providers that can return text/data/reference blocks on demand, not only static manifest `ContextSpec` declarations.
 - Datasource entities and views: entity schemas, list/search/get/lookup/relation capabilities, view hints, relation includes, and provider-first/fallback search behavior.
 - Endpoint discovery: discovery providers that return endpoint candidates for products such as Loki, Prometheus, Homer, Kubernetes services, SQL databases, and maybe GitLab/Jira instances.
 - Endpoint registry: host-managed endpoint refs that plugins can consume instead of storing URLs repeatedly in plugin config.
@@ -338,15 +330,16 @@ Concepts to port into this repo:
 - Operation semantics and access metadata: read/write/network/process/browser/file effects, risk, idempotency, auth-scope requirements, and target access descriptors.
 - Runtime system boundary: local abstractions for network, process, browser, filesystem/artifacts, environment, and human clarification so plugins do not call host IO directly.
 - Managed process handles: start/ensure/list/status/stop/output/wait primitives for port-forwards, log follows, and other long-running tasks.
-- Command/shortcut binding: structured mapping from legacy CLI shortcuts to operation or datasource calls without embedding command parsing inside plugin implementations.
+- Generated command binding: structured mapping from manifest aliases and
+  operation schemas to CLI commands without embedding command parsing inside
+  plugin implementations.
 - Render metadata: compact/table/json/yaml hints owned by the host renderer, not ad hoc output formatting inside each plugin.
-- Contribution catalog: a final export surface that can present operations,
-  datasources, context providers, endpoint discovery, shortcut bindings,
-  activation bundles, identity facts, usage facts, observers/assertions, and
-  render hints to `fluxplane-core` without importing `fluxplane-core`.
+- Contribution catalog: a final export surface that can present mature dex
+  plugin capabilities to `fluxplane-core` without importing `fluxplane-core`.
 
 Immediate concept priority:
-- P0: maintain operation semantics/access metadata, datasource entity/view model, context providers, executable shortcut bindings, and endpoint health.
+- P0: maintain operation semantics/access metadata, datasource entity/view
+  model, generated command bindings, and endpoint health.
 - P1: broaden Kubernetes-driven endpoint registry/discovery, auth test reports,
   secret resolution/migration, runtime system boundary, and managed process
   handles.
@@ -438,25 +431,27 @@ Legacy support:
 - `slack bookmarks`
 
 Current status:
-- Partially scaffolded.
-- Present: index build for users/channels.
-- Declared but not implemented: send, search, thread.
+- Partially implemented.
+- Present: index build for users/channels; live `slack.message.send`,
+  `slack.search`, and `slack.thread`; live read datasources for
+  `slack.messages`, `slack.thread_messages`, and `slack.channel_members`;
+  channel member records can be enriched from indexed Slack user/channel data.
 - Core overlap: `fluxplane-core` has Slack auth/test, active channel send/thread reply/progress operations, and richer live datasources for users, channels, messages, thread messages, and channel membership views.
 
 Missing operations/features:
-- Complete live client migration for declared send/search/thread operations.
 - OAuth auth flow, auth test, and identity info operations.
 - Presence read/write.
-- Channel/user list, channel member list, and channel join.
+- Channel/user list shortcuts and channel join.
 - Message edit/delete.
 - File upload, file list/info/download/delete, and top-level download shortcut.
 - Emoji list and reaction operations.
 - Unreads, mark-read, mentions, and pending/acked/replied classification.
 - Bookmarks.
-- Mention and channel name resolution using indexes.
+- Broader mention and channel name resolution using indexes.
 - Ticket extraction from Slack search results.
 - Compact/JSON/YAML render parity and Slack URL/timestamp parsing parity.
-- Datasource coverage for messages, threads, mentions, files, bookmarks, channels, and users.
+- Datasource coverage for mentions, files, bookmarks, and any channel/user
+  live views not covered by the existing indexes.
 - Relaxation: channel/user/message/thread reads should prefer datasource/list/search/get rather than dedicated command-style operations unless there is a side effect.
 
 ### Jira
@@ -533,18 +528,16 @@ Legacy support:
 - alias: `prometheus`
 
 Current status:
-- Missing as a plugin.
+- Implemented as an endpoint-aware plugin with health, query, query range,
+  labels, targets, and alerts operations.
 - Core overlap: none found in `../fluxplane-core/plugins`.
 
 Missing operations/features:
-- URL endpoint config/auth model.
-- Kubernetes auto-discovery.
-- Instant and range PromQL query.
-- Label names and values, including match filters and completion metadata.
-- Target and alert listing.
-- Connection test.
+- Live documentation for manual and Kubernetes-discovered endpoint refs.
+- Host rendering for query, label, target, and alert result tables.
 - Time parsing parity for durations, absolute timestamps, local time, and UTC.
-- Datasources for metrics/query results, labels, targets, and alerts.
+- Datasources for metrics/query results, labels, targets, and alerts are
+  implemented; broader live validation remains.
 
 ### Loki
 
@@ -555,17 +548,16 @@ Legacy support:
 - `loki test`
 
 Current status:
-- Missing as a plugin.
+- Implemented as an endpoint-aware plugin with health, query, labels, and recent
+  log operations.
 - Core overlap: `fluxplane-core` already has test, labels, query, recent logs, datasource entities, Kubernetes discovery, endpoint refs, tenant IDs, and port-forward assisted discovery.
 
 Missing operations/features:
-- URL endpoint config/auth model.
-- Kubernetes auto-discovery.
-- LogQL query with namespace scoping.
-- Label names and values.
-- Connection test.
+- Live documentation for manual and Kubernetes-discovered endpoint refs.
+- Host rendering for log and label result tables.
 - Time parsing parity and oldest-first rendering.
-- Datasources for log entries, streams, labels, and discovered endpoints.
+- Datasources for log entries and labels are implemented. Streams and
+  discovered-endpoint datasources remain open.
 - Relaxation: port the `recent_logs` operation shape for common
   app/pod/container lookups instead of requiring legacy users to hand-write
   LogQL every time.
@@ -582,9 +574,9 @@ Legacy support:
 
 Current status:
 - Minimal plugin implemented.
-- Kubeconfig context discovery, Kubernetes cluster endpoint probes, endpoint discovery from services and Crossplane-style SQL secrets, namespace/service/pod/deployment/container inventory, bounded pod logs, datasource search, and executable shortcuts are implemented.
+- Kubeconfig context discovery, Kubernetes cluster endpoint probes, endpoint discovery from services and Crossplane-style SQL secrets, namespace/service/pod/deployment/container inventory, bounded pod logs, datasource search, and manifest-generated commands are implemented.
 - Generic `dex search` can pass endpoint refs into datasource calls; provider
-  specific scoping remains on plugin operations and shortcuts.
+  specific scoping remains on plugin operations.
 - Kubernetes inventory advertises completion fields for endpoints, contexts,
   namespaces, pods, containers, and labels.
 - Core overlap to port later: richer container inventory, port-forwarding, observers, and Kubernetes secret resolution patterns.
@@ -818,19 +810,18 @@ The current plugin protocol can express operations, auth methods, datasources, c
    `fluxplane-core`; port selected behavior and concepts into this repo.
 2. Maintain Operation Metadata v1 and require it for new write operations.
 3. Maintain Datasource Entity/View v1 and require metadata for new datasources.
-4. Done: Shortcut Binding v1 executes marketplace operation/datasource bindings.
-5. Extend Context Provider v1 beyond the system, GitLab, and websearch proof
-   points as plugins gain richer context.
-6. Update protocol/runtime tests so builtins and external plugins behave the
+4. Done: Manifest-driven operation CLI generates plugin commands from
+   activated manifests.
+5. Update protocol/runtime tests so builtins and external plugins behave the
    same for success, failure, batch calls, auth grants, datasource errors, and
    metadata exposure.
-7. Defer operation sets, activation sets, identity facts, usage events, and
+6. Defer operation sets, activation sets, identity facts, usage events, and
    contribution catalogs until the final contribution-provider phase.
 
 ### Phase 1: Stabilize Current Partial Plugins
 
-1. Finish Slack live client migration for `slack.message.send`, `slack.search`,
-   and `slack.thread`.
+1. Add Slack auth/test/info and live-test documentation now that live
+   send/search/thread plus message/thread/member datasources are implemented.
 2. Reconcile `fluxplane-dex` GitLab with the old GitLab reference: port richer
    datasource entities first, then fill CLI shortcuts over those reads.
 3. Add GitLab action operations where the typed operation model is already clear:
@@ -866,9 +857,9 @@ The current plugin protocol can express operations, auth methods, datasources, c
 1. Jira plugin: port the Atlassian auth pattern, issue search/create/comment,
    and issue/project datasource; then add view/my/lookup, transitions,
    update/delete, links, and project workflow detail.
-2. Slack parity expansion: port the reference datasource behavior for
-   users/channels/messages/thread messages and active channel operations; then
-   add mentions, unreads, mark-read, reactions, edit/delete, files, bookmarks.
+2. Slack parity expansion: build on the completed live message/thread/member
+   datasource behavior; then add mentions, unreads, mark-read, reactions,
+   edit/delete, files, bookmarks, and Slack URL/timestamp parsing.
 3. GitHub plugin: issue list/view/create/comment/edit/close, label list,
    release list/view, repo create; decide native API versus `gh` wrapper first.
 4. GitLab parity expansion: read-only CLI shortcut parity, job logs, blob
@@ -919,8 +910,13 @@ starts.
 Scope:
 - Define a local contribution catalog format that can describe plugins,
   operations, datasources, context providers, endpoint discovery providers,
-  auth methods, shortcut bindings, render hints, and secret purposes.
-- Add operation sets only where a group is needed for activation, shortcut
+  auth methods, manifest aliases, render hints, and secret purposes.
+- Keep the existing Context Provider v1 work as the local proof point:
+  dynamic request/response shape, text/data/reference blocks, host
+  `context.build`, and system/GitLab/websearch providers.
+- Expand context-provider coverage beyond the completed system, GitLab, and
+  websearch proof points as part of contribution-provider integration.
+- Add operation sets only where a group is needed for activation, command
   discovery, or agent-facing tool selection.
 - Add activation sets only where operations, datasources, context providers,
   and endpoint discovery need to be activated together.
@@ -932,10 +928,12 @@ Scope:
   `fluxplane-core` packages are imported here.
 
 Acceptance:
+- Context blocks continue to include source identity and stable IDs, and empty
+  context remains a successful empty result.
 - `fluxplane-dex` can enumerate its contribution catalog in a stable machine
   readable form.
 - Each contribution record points back to local dex plugin manifests,
-  operations, datasources, contexts, endpoints, auth, and shortcuts.
+  operations, datasources, contexts, endpoints, auth, and generated commands.
 - `fluxplane-core` integration can be built as an adapter over that catalog
   instead of a dependency inside this repo.
 
@@ -943,7 +941,7 @@ Acceptance:
 
 - Every legacy `~/projects/dex` integration is represented either as a plugin, builtin plugin, or explicit host CLI feature.
 - Every legacy command is mapped to an operation, datasource capability, or deliberate non-plugin host command.
-- `dex op call`, `dex op batch`, plugin-specific shortcuts, and datasource search paths produce consistent success/failure behavior.
+- `dex op run`, `dex op batch`, plugin-specific generated commands, and datasource search paths produce consistent success/failure behavior.
 - Each plugin has manifest quality tests, operation handler tests, and at least one live-test path gated by credentials/config.
 - For read-only list/search/show operations, compact and JSON outputs are stable enough for agent use.
 - Legacy config migration is documented before old `~/.dex/config.json` users are expected to switch.

@@ -66,7 +66,11 @@ func (r Runner) InvokeInstance(ctx context.Context, pluginName, instance, comman
 		}
 	}
 	if isBuiltinPlugin(entry) {
-		return r.invokeBuiltin(ctx, entry, req)
+		resp, err := r.invokeBuiltin(ctx, entry, req)
+		if err != nil {
+			return protocol.Response{}, err
+		}
+		return r.enrichDatasourceResponse(ctx, entry.Name, req.Instance, command, payload, resp)
 	}
 	if command == protocol.CommandOperationsCall || command == protocol.CommandOperationsBatch {
 		operations, purposes := r.operationGrantScope(ctx, entry.Name, payload)
@@ -86,7 +90,11 @@ func (r Runner) InvokeInstance(ctx context.Context, pluginName, instance, comman
 			req.Grant = grant.Token
 		}
 	}
-	return r.invokeRequest(ctx, entry, req)
+	resp, err := r.invokeRequest(ctx, entry, req)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	return r.enrichDatasourceResponse(ctx, entry.Name, req.Instance, command, payload, resp)
 }
 
 func (r Runner) resolveEndpointRefs(req *protocol.Request) error {
@@ -425,15 +433,25 @@ func (r Runner) datasourceGrantScope(ctx context.Context, plugin, command string
 	}
 	authEnv := manifestAuthEnv(manifest)
 	capability := datasourceCommandCapability(command)
+	datasourceName := ""
 	entity := ""
 	switch command {
 	case protocol.CommandDatasourcesSearch:
-		entity = searchPayload(payload).Entity
+		options := searchPayload(payload)
+		datasourceName = options.Datasource
+		entity = options.Entity
 	case protocol.CommandDatasourcesLookup:
-		entity = lookupPayload(payload).Entity
+		options := lookupPayload(payload)
+		datasourceName = options.Datasource
+		entity = options.Entity
+	case protocol.CommandDatasourcesGet:
+		datasourceName = getPayloadDatasource(payload)
 	}
 	purposeByName := map[string]SecretPurpose{}
 	for _, datasource := range manifest.Datasources {
+		if datasourceName != "" && datasource.Name != datasourceName {
+			continue
+		}
 		if entity != "" && datasource.Entity != entity {
 			continue
 		}
@@ -544,8 +562,9 @@ func searchPayload(payload any) SearchOptions {
 		limit = value
 	}
 	query, _ := input["query"].(string)
+	datasource, _ := input["datasource"].(string)
 	entity, _ := input["entity"].(string)
-	return SearchOptions{Query: strings.TrimSpace(query), Limit: limit, Entity: strings.TrimSpace(entity)}
+	return SearchOptions{Datasource: strings.TrimSpace(datasource), Query: strings.TrimSpace(query), Limit: limit, Entity: strings.TrimSpace(entity)}
 }
 
 func lookupPayload(payload any) LookupOptions {
@@ -565,6 +584,7 @@ func lookupPayload(payload any) LookupOptions {
 		limit = value
 	}
 	text := firstPayloadString(input, "text", "query", "q")
+	datasource := firstPayloadString(input, "datasource")
 	entity := firstPayloadString(input, "entity")
 	var terms []string
 	if rawTerms, ok := input["terms"].([]any); ok {
@@ -577,7 +597,19 @@ func lookupPayload(payload any) LookupOptions {
 	if term := firstPayloadString(input, "term", "id", "ref", "url"); term != "" {
 		terms = append(terms, term)
 	}
-	return LookupOptions{Text: strings.TrimSpace(text), Terms: terms, Limit: limit, Entity: strings.TrimSpace(entity)}
+	return LookupOptions{Datasource: datasource, Text: strings.TrimSpace(text), Terms: terms, Limit: limit, Entity: strings.TrimSpace(entity)}
+}
+
+func getPayloadDatasource(payload any) string {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	var input map[string]any
+	if err := json.Unmarshal(data, &input); err != nil {
+		return ""
+	}
+	return firstPayloadString(input, "datasource")
 }
 
 func getPayloadID(payload any) string {

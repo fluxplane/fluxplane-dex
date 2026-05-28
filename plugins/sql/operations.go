@@ -2,7 +2,9 @@ package sql
 
 import (
 	"context"
+	"crypto/sha1"
 	stdsql "database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -60,6 +62,19 @@ type QueryOutput struct {
 	DurationMS  int64            `json:"duration_ms,omitempty"`
 }
 
+type QueryRowRecord struct {
+	pluginbinding.DatasourceRecord
+	RowID       string         `json:"row_id" datasource:"id,completion,view=compact|lookup|table"`
+	Title       string         `json:"title,omitempty" datasource:"title,view=compact|lookup|table"`
+	Columns     []string       `json:"columns,omitempty" datasource:"view=table"`
+	Row         map[string]any `json:"row,omitempty" datasource:"view=compact|lookup|table"`
+	Driver      string         `json:"driver,omitempty" datasource:"completion,view=compact|lookup|table"`
+	Database    string         `json:"database,omitempty" datasource:"completion,view=compact|lookup|table"`
+	EndpointURL string         `json:"endpoint_url,omitempty" datasource:"completion,view=lookup|table"`
+}
+
+type QueryRowsResult = pluginbinding.DatasourceSearchResult[QueryRowRecord]
+
 func (s Service) Query(ctx pluginbinding.Context, input QueryInput) (QueryOutput, error) {
 	query := strings.TrimSpace(input.Query)
 	if query == "" {
@@ -115,6 +130,48 @@ func (s Service) Query(ctx pluginbinding.Context, input QueryInput) (QueryOutput
 		Truncated:   truncated,
 		DurationMS:  time.Since(start).Milliseconds(),
 	}, nil
+}
+
+func (s Service) QueryRows(ctx pluginbinding.Context, input QueryInput) (QueryRowsResult, error) {
+	out, err := s.Query(ctx, input)
+	if err != nil {
+		return QueryRowsResult{}, err
+	}
+	records := make([]QueryRowRecord, 0, len(out.Rows))
+	for i, row := range out.Rows {
+		rowID := sqlRowID(out, input.Query, i, row)
+		title := sqlRowTitle(i, row, out.Columns)
+		metadata := map[string]any{
+			"columns":      out.Columns,
+			"row":          row,
+			"driver":       out.Driver,
+			"database":     out.Database,
+			"endpoint_url": out.EndpointURL,
+			"endpoint_ref": out.EndpointRef,
+			"query":        input.Query,
+		}
+		record := QueryRowRecord{
+			DatasourceRecord: pluginbinding.NewDatasourceRecord(
+				ctx.DatasourceSource(),
+				EntitySQLQueryResult,
+				rowID,
+				pluginbinding.RecordTitle(title),
+				pluginbinding.RecordMetadata(metadata),
+			),
+			RowID:       rowID,
+			Title:       title,
+			Columns:     append([]string(nil), out.Columns...),
+			Row:         row,
+			Driver:      out.Driver,
+			Database:    out.Database,
+			EndpointURL: out.EndpointURL,
+		}
+		if out.EndpointURL != "" {
+			record.Links = map[string]string{"endpoint": out.EndpointURL}
+		}
+		records = append(records, record)
+	}
+	return pluginbinding.NewDatasourceSearchResult("live", input.Query, records), nil
 }
 
 type sqlTarget struct {
@@ -629,4 +686,22 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func sqlRowID(out QueryOutput, query string, index int, row map[string]any) string {
+	data, _ := json.Marshal(row)
+	sum := sha1.Sum([]byte(out.Driver + "\x00" + out.Database + "\x00" + out.EndpointURL + "\x00" + query + "\x00" + strconv.Itoa(index) + "\x00" + string(data)))
+	return hex.EncodeToString(sum[:])
+}
+
+func sqlRowTitle(index int, row map[string]any, columns []string) string {
+	for _, column := range columns {
+		if value, ok := row[column]; ok && value != nil {
+			text := strings.TrimSpace(fmt.Sprint(value))
+			if text != "" {
+				return text
+			}
+		}
+	}
+	return fmt.Sprintf("row %d", index+1)
 }

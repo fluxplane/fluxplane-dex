@@ -7,7 +7,7 @@ import (
 
 const (
 	PluginName        = "docker"
-	PluginVersion     = "0.1.0"
+	PluginVersion     = "0.2.0"
 	PluginDescription = "Local Docker Engine inspection for containers, images, networks, volumes, and daemon info."
 
 	OperationInfo                = "docker.info"

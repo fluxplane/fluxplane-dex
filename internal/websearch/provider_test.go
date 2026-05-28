@@ -54,7 +54,7 @@ func TestDefineProviderWiresManifestOperationDatasourceAndSecrets(t *testing.T) 
 }
 
 func TestProviderDiscoveryFromManifestAndSelection(t *testing.T) {
-	entry := core.PluginEntry{Name: "example", Aliases: []string{"ex"}}
+	entry := core.PluginEntry{Name: "example"}
 	manifest := ProviderManifestSpec(ProviderSpec{
 		Name:       "example-provider",
 		Aliases:    []string{"provider-alias"},

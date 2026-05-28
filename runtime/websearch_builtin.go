@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
@@ -17,6 +18,7 @@ const (
 	websearchOperationSearch   = "websearch.search"
 	websearchOperationProvider = "websearch.provider.list"
 	websearchDatasource        = "websearch.results"
+	websearchFanoutConcurrency = 4
 )
 
 type websearchNoInput struct{}
@@ -41,7 +43,7 @@ func websearchManifest() core.PluginManifest {
 func websearchManifestSpec() pluginbinding.ManifestSpec {
 	return pluginbinding.ManifestSpec{
 		Name:        websearchPluginName,
-		Version:     "0.1.0",
+		Version:     "0.2.0",
 		Description: "Generic web search aggregator over provider plugins.",
 		Aliases:     []string{"web", "websearch"},
 		Operations: []core.OperationSpec{
@@ -185,57 +187,105 @@ func (r Runner) runWebsearch(ctx context.Context, instance string, input websear
 		return output
 	}
 	max := websearch.NormalizeMax(input)
+	type job struct {
+		index    int
+		query    string
+		provider websearch.Provider
+	}
+	type jobResult struct {
+		index  int
+		set    websearch.ResultSet
+		errors []websearch.SearchError
+		err    error
+	}
+	var jobs []job
 	for _, query := range queries {
 		for _, provider := range providers {
-			set, err := r.runProviderWebsearch(ctx, instance, provider, query, max)
-			if err != nil {
-				output.Errors = append(output.Errors, websearch.SearchError{Provider: provider.Name, Query: query, Message: err.Error()})
-				continue
-			}
-			output.Results = append(output.Results, set)
+			jobs = append(jobs, job{index: len(jobs), query: query, provider: provider})
 		}
+	}
+	results := make([]jobResult, len(jobs))
+	sem := make(chan struct{}, websearchFanoutConcurrency)
+	var wg sync.WaitGroup
+	for _, current := range jobs {
+		wg.Add(1)
+		go func(current job) {
+			defer wg.Done()
+			sem <- struct{}{}
+			set, errors, err := r.runProviderWebsearch(ctx, instance, current.provider, current.query, max)
+			<-sem
+			results[current.index] = jobResult{index: current.index, set: set, errors: errors, err: err}
+		}(current)
+	}
+	wg.Wait()
+	for _, result := range results {
+		provider := jobs[result.index].provider
+		query := jobs[result.index].query
+		for _, searchErr := range result.errors {
+			if strings.TrimSpace(searchErr.Provider) == "" {
+				searchErr.Provider = provider.Name
+			}
+			if strings.TrimSpace(searchErr.Query) == "" {
+				searchErr.Query = query
+			}
+			output.Errors = append(output.Errors, searchErr)
+		}
+		if result.err != nil {
+			if len(result.errors) == 0 {
+				output.Errors = append(output.Errors, websearch.SearchError{Provider: provider.Name, Query: query, Message: result.err.Error()})
+			}
+			continue
+		}
+		if len(result.set.Results) == 0 {
+			output.Errors = append(output.Errors, websearch.SearchError{Provider: provider.Name, Query: query, Message: "provider returned no results"})
+			continue
+		}
+		output.Results = append(output.Results, result.set)
 	}
 	return output
 }
 
-func (r Runner) runProviderWebsearch(ctx context.Context, instance string, provider websearch.Provider, query string, max int) (websearch.ResultSet, error) {
+func (r Runner) runProviderWebsearch(ctx context.Context, instance string, provider websearch.Provider, query string, max int) (websearch.ResultSet, []websearch.SearchError, error) {
 	if strings.TrimSpace(provider.Operation) != "" {
 		inputRaw, err := json.Marshal(websearch.SearchInput{Query: query, Max: max})
 		if err != nil {
-			return websearch.ResultSet{}, err
+			return websearch.ResultSet{}, nil, err
 		}
 		resp, err := r.InvokeInstance(ctx, provider.Plugin, instance, protocol.CommandOperationsCall, protocol.OperationCall{Name: provider.Operation, Input: inputRaw})
 		if err != nil {
-			return websearch.ResultSet{}, err
+			return websearch.ResultSet{}, nil, err
 		}
 		if !resp.OK {
 			if resp.Error != nil {
-				return websearch.ResultSet{}, fmt.Errorf("%s", resp.Error.Message)
+				return websearch.ResultSet{}, nil, fmt.Errorf("%s", resp.Error.Message)
 			}
-			return websearch.ResultSet{}, fmt.Errorf("provider operation failed")
+			return websearch.ResultSet{}, nil, fmt.Errorf("provider operation failed")
 		}
 		var output websearch.SearchOutput
 		if err := json.Unmarshal(resp.Result, &output); err != nil {
-			return websearch.ResultSet{}, err
+			return websearch.ResultSet{}, nil, err
 		}
 		if len(output.Results) == 0 {
-			return websearch.ResultSet{}, fmt.Errorf("%s", firstWebsearchError(output, "provider returned no results"))
+			return websearch.ResultSet{}, output.Errors, fmt.Errorf("%s", firstWebsearchError(output, "provider returned no results"))
 		}
 		set := output.Results[0]
 		if strings.TrimSpace(set.Provider) == "" {
 			set.Provider = provider.Name
 		}
-		return set, nil
+		if strings.TrimSpace(set.Query) == "" {
+			set.Query = query
+		}
+		return set, output.Errors, nil
 	}
-	resp, err := r.InvokeInstance(ctx, provider.Plugin, instance, protocol.CommandDatasourcesSearch, map[string]any{"query": query, "entity": websearch.EntitySearchResult, "limit": max})
+	resp, err := r.InvokeInstance(ctx, provider.Plugin, instance, protocol.CommandDatasourcesSearch, map[string]any{"query": query, "datasource": provider.Datasource, "entity": websearch.EntitySearchResult, "limit": max})
 	if err != nil {
-		return websearch.ResultSet{}, err
+		return websearch.ResultSet{}, nil, err
 	}
 	if !resp.OK {
 		if resp.Error != nil {
-			return websearch.ResultSet{}, fmt.Errorf("%s", resp.Error.Message)
+			return websearch.ResultSet{}, nil, fmt.Errorf("%s", resp.Error.Message)
 		}
-		return websearch.ResultSet{}, fmt.Errorf("provider datasource search failed")
+		return websearch.ResultSet{}, nil, fmt.Errorf("provider datasource search failed")
 	}
 	var out struct {
 		Records []struct {
@@ -248,9 +298,10 @@ func (r Runner) runProviderWebsearch(ctx context.Context, instance string, provi
 			Provider string            `json:"provider"`
 			Score    float64           `json:"score"`
 		} `json:"records"`
+		Errors []pluginbinding.DatasourceError `json:"errors"`
 	}
 	if err := json.Unmarshal(resp.Result, &out); err != nil {
-		return websearch.ResultSet{}, err
+		return websearch.ResultSet{}, nil, err
 	}
 	set := websearch.ResultSet{Provider: provider.Name, Query: query}
 	for _, record := range out.Records {
@@ -258,10 +309,14 @@ func (r Runner) runProviderWebsearch(ctx context.Context, instance string, provi
 		source := firstNonEmptyString(record.Provider, metadataString(record.Metadata, "provider"), provider.Name)
 		set.Results = append(set.Results, websearch.Result{URL: url, Title: record.Title, Snippet: record.Snippet, Source: source, Score: record.Score})
 	}
-	if len(set.Results) == 0 {
-		return websearch.ResultSet{}, fmt.Errorf("provider returned no results")
+	var errors []websearch.SearchError
+	for _, err := range out.Errors {
+		errors = append(errors, websearch.SearchError{Provider: firstNonEmptyString(err.Source, provider.Name), Query: firstNonEmptyString(err.Query, query), Message: err.Message})
 	}
-	return set, nil
+	if len(set.Results) == 0 {
+		return websearch.ResultSet{}, errors, fmt.Errorf("provider returned no results")
+	}
+	return set, errors, nil
 }
 
 func decodeOperationInput[T any](call protocol.OperationCall) (T, error) {

@@ -7,7 +7,7 @@ import (
 
 const (
 	PluginName        = "sql"
-	PluginVersion     = "0.1.0"
+	PluginVersion     = "0.2.0"
 	PluginDescription = "Read-only SQL query operations for MySQL, PostgreSQL, SQLite, and compatible endpoints."
 
 	AuthMethodSQL        = "sql"
@@ -43,6 +43,9 @@ func manifestSpec() pluginbinding.ManifestSpec {
 			},
 		}},
 		Operations: []core.OperationSpec{querySpec()},
+		Datasources: []core.DatasourceSpec{
+			queryRowsDatasourceSpec(),
+		},
 	}
 }
 
@@ -56,5 +59,18 @@ func querySpec() core.OperationSpec {
 		pluginbinding.Access(core.OperationAccessAuth, core.OperationAccessSecret, core.OperationAccessNetwork),
 		pluginbinding.Risk(core.OperationRiskLow),
 		pluginbinding.Idempotency(core.OperationIdempotent),
+	)
+}
+
+func queryRowsDatasourceSpec() core.DatasourceSpec {
+	return pluginbinding.TypedDatasourceSpec[QueryInput, QueryRowsResult](
+		DatasourceQueryRows,
+		EntitySQLQueryResult,
+		"SQL query result rows.",
+		[]string{pluginbinding.CapabilitySearch},
+		pluginbinding.DatasourceSecretPurposes(AuthPurposeUsername, AuthPurposePassword),
+		pluginbinding.EntitySchemaFor[QueryRowRecord](),
+		pluginbinding.EntitySchema(core.DatasourceEntitySchema{IDField: "id", TitleField: "title"}),
+		pluginbinding.Completion("SQL result row fields.", "driver", "database", "endpoint_url"),
 	)
 }

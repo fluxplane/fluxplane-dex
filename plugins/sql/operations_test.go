@@ -111,6 +111,17 @@ func TestQueryRunsAgainstSQLite(t *testing.T) {
 	if out.Driver != "sqlite" || out.RowCount != 2 || out.Rows[0]["name"] != "Ada" || out.Rows[1]["name"] != "Linus" {
 		t.Fatalf("out = %#v", out)
 	}
+
+	records := plugintest.DatasourceSearchOK[QueryRowsResult](t, plugin, map[string]any{
+		"datasource": DatasourceQueryRows,
+		"driver":     "sqlite",
+		"dsn":        dbPath,
+		"query":      "select id, name from users order by id",
+		"max_rows":   10,
+	})
+	if records.Count != 2 || records.Records[0].Row["name"] != "Ada" || records.Records[0].Driver != "sqlite" {
+		t.Fatalf("records = %#v", records)
+	}
 }
 
 func TestQueryRunsAgainstMySQLContainer(t *testing.T) {

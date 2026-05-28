@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-28
+
+### Added
+- Added manifest-driven operation commands generated from activated plugin
+  manifests, including schema-derived flags, positional required-field mapping,
+  JSON object input, duplicate-alias validation, and reserved built-in command
+  protection.
+- Added plugin activation state so installed and activated plugins determine the
+  generated CLI command surface.
+- Added endpoint registry, endpoint import/show/test/doctor flows, Kubernetes
+  cluster probes, endpoint-ref resolution for operations and datasource search,
+  and stored endpoint health.
+- Added Kubernetes plugin support for kubeconfig contexts, endpoint discovery,
+  namespace/service/pod/deployment/container inventory, bounded pod logs, and
+  datasource records.
+- Added SQL plugin support for read-only MySQL, PostgreSQL, and SQLite queries
+  through URLs, DSNs, or registered endpoint refs.
+- Added Prometheus and Loki plugins with endpoint-aware health checks, query
+  operations, labels, and datasource records; Prometheus also includes range
+  queries, targets, and alerts.
+- Added Docker plugin support for local Docker Engine inspection and lifecycle
+  operations across containers, images, networks, volumes, contexts, build cache,
+  daemon events, and disk usage.
+- Added Ollama and OpenAI plugins for local model operations, OpenAI model
+  listing, and OpenAI image generation.
+- Added Slack live message send/search/thread operations, Slack message/thread
+  and channel-member datasources, and indexed Slack user/channel enrichment.
+- Added datasource entity/view/relation/completion metadata, provider fallback
+  behavior, host-owned datasource enrichment, and stricter manifest quality
+  tests.
+- Added operation effects, risk, idempotency, access, auth-scope, and render
+  metadata across plugin manifests.
+- Added dynamic context providers for system, GitLab, and websearch.
+
+### Changed
+- Kept marketplace data install/discovery-only by removing command shortcuts and
+  aliases from marketplace entries; executable command names now come from
+  plugin manifests.
+- Reworked generic search and websearch provider discovery to remain
+  provider-neutral while supporting multi-query fanout and aggregated provider
+  errors.
+- Expanded endpoint-aware datasource behavior so generic `dex search` can pass
+  endpoint refs into plugin datasource calls.
+- Updated plugin module requirements, workspace replacement, and plugin manifest
+  versions for the `v0.2.0` release.
+
+### Documentation
+- Updated README, concepts, endpoint flow, maintainer release notes, and roadmap
+  documentation for manifest-generated CLI commands, endpoint refs, current
+  plugin coverage, and release procedure.
+
 ## [0.1.0] - 2026-05-28
 
 ### Added

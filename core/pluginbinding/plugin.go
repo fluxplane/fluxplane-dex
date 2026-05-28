@@ -696,17 +696,42 @@ func selectDatasourceHandler(payload json.RawMessage, handlers []datasourceHandl
 	if len(handlers) == 0 {
 		return nil, fmt.Errorf("no datasource handler")
 	}
+	datasource, err := payloadStringField(payload, "datasource")
+	if err != nil {
+		return nil, err
+	}
 	entity, err := payloadStringField(payload, "entity")
 	if err != nil {
 		return nil, err
 	}
-	if entity == "" {
+	if datasource == "" && entity == "" {
 		return handlers[0], nil
 	}
+	var entityMatches []datasourceHandler
 	for _, handler := range handlers {
-		if handler.Spec().Entity == entity {
+		spec := handler.Spec()
+		if datasource != "" && spec.Name != datasource {
+			continue
+		}
+		if entity != "" && spec.Entity != entity {
+			continue
+		}
+		if datasource != "" {
 			return handler, nil
 		}
+		entityMatches = append(entityMatches, handler)
+	}
+	if datasource != "" {
+		if entity != "" {
+			return nil, fmt.Errorf("datasource %q does not expose entity %q", datasource, entity)
+		}
+		return nil, fmt.Errorf("unknown datasource %q", datasource)
+	}
+	if len(entityMatches) == 1 {
+		return entityMatches[0], nil
+	}
+	if len(entityMatches) > 1 {
+		return nil, fmt.Errorf("entity %q matches multiple datasources; pass datasource", entity)
 	}
 	return nil, fmt.Errorf("datasource does not expose entity %q", entity)
 }

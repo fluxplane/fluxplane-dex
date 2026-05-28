@@ -83,8 +83,8 @@ func main() {
 		State:   state,
 		WorkDir: t.TempDir(),
 		Marketplace: NewMarketplace(core.Marketplace{Version: "1", Plugins: []core.PluginEntry{
-			{Name: "fake", Aliases: []string{"generic"}, Binary: "dex-plugin-fake", LocalPath: pluginDir},
-			{Name: "websearch", Aliases: []string{"web"}, Metadata: map[string]string{"kind": "builtin"}},
+			{Name: "fake", Binary: "dex-plugin-fake", LocalPath: pluginDir},
+			{Name: "websearch", Metadata: map[string]string{"kind": "builtin"}},
 		}}),
 	}
 
@@ -135,7 +135,7 @@ func TestWebsearchBuiltinSupportsOperationBatch(t *testing.T) {
 	runner := Runner{
 		State: state,
 		Marketplace: NewMarketplace(core.Marketplace{Version: "1", Plugins: []core.PluginEntry{
-			{Name: "websearch", Aliases: []string{"web"}, Metadata: map[string]string{"kind": "builtin"}},
+			{Name: "websearch", Metadata: map[string]string{"kind": "builtin"}},
 		}}),
 	}
 
@@ -155,6 +155,138 @@ func TestWebsearchBuiltinSupportsOperationBatch(t *testing.T) {
 	if result.Results[1].OK || result.Results[1].Error == nil || result.Results[1].Error.Code != "unknown_operation" {
 		t.Fatalf("second result = %#v", result.Results[1])
 	}
+}
+
+func TestWebsearchBuiltinPreservesMultiQueryAndAggregatesProviderErrors(t *testing.T) {
+	successDir := writeFakeWebsearchProvider(t, "good", false)
+	failDir := writeFakeWebsearchProvider(t, "bad", true)
+	state, err := NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := Runner{
+		State:   state,
+		WorkDir: t.TempDir(),
+		Marketplace: NewMarketplace(core.Marketplace{Version: "1", Plugins: []core.PluginEntry{
+			{Name: "good", Binary: "dex-plugin-good", LocalPath: successDir},
+			{Name: "bad", Binary: "dex-plugin-bad", LocalPath: failDir},
+			{Name: "websearch", Metadata: map[string]string{"kind": "builtin"}},
+		}}),
+	}
+
+	resp, err := runner.InvokeInstance(nil, "websearch", "default", protocol.CommandOperationsCall, operationCall(t, "websearch.search", map[string]any{"queries": []string{"one", "two"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("response = %#v", resp.Error)
+	}
+	var out struct {
+		Results []struct {
+			Provider string `json:"provider"`
+			Query    string `json:"query"`
+		} `json:"results"`
+		Errors []struct {
+			Provider string `json:"provider"`
+			Query    string `json:"query"`
+			Message  string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(resp.Result, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Results) != 2 || out.Results[0].Query != "one" || out.Results[1].Query != "two" {
+		t.Fatalf("results = %#v", out.Results)
+	}
+	if len(out.Errors) != 2 || out.Errors[0].Provider != "bad-provider" || out.Errors[0].Query == "" {
+		t.Fatalf("errors = %#v", out.Errors)
+	}
+}
+
+func TestWebsearchBuiltinFailsWhenAllProvidersFail(t *testing.T) {
+	failDir := writeFakeWebsearchProvider(t, "bad", true)
+	state, err := NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := Runner{
+		State:   state,
+		WorkDir: t.TempDir(),
+		Marketplace: NewMarketplace(core.Marketplace{Version: "1", Plugins: []core.PluginEntry{
+			{Name: "bad", Binary: "dex-plugin-bad", LocalPath: failDir},
+			{Name: "websearch", Metadata: map[string]string{"kind": "builtin"}},
+		}}),
+	}
+
+	resp, err := runner.InvokeInstance(nil, "websearch", "default", protocol.CommandOperationsCall, operationCall(t, "websearch.search", map[string]any{"query": "one"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.OK || resp.Error == nil || resp.Error.Code != "web_search_failed" {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
+func writeFakeWebsearchProvider(t *testing.T, name string, fail bool) string {
+	t.Helper()
+	pluginDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pluginDir, "go.mod"), []byte("module fake"+name+"\n\ngo 1.26\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmdDir := filepath.Join(pluginDir, "cmd", "dex-plugin-"+name)
+	if err := os.MkdirAll(cmdDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	failLiteral := "false"
+	if fail {
+		failLiteral = "true"
+	}
+	mainGo := `package main
+
+import (
+	"encoding/json"
+	"os"
+)
+
+func main() {
+	var req struct {
+		Command string ` + "`json:\"command\"`" + `
+		Payload struct {
+			Name  string          ` + "`json:\"name\"`" + `
+			Input json.RawMessage ` + "`json:\"input\"`" + `
+		} ` + "`json:\"payload\"`" + `
+	}
+	_ = json.NewDecoder(os.Stdin).Decode(&req)
+	if req.Command == "manifest" {
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"protocol": "dex.plugin.v1",
+			"ok": true,
+			"result": map[string]any{
+				"name": "` + name + `",
+				"operations": []map[string]any{{"name": "` + name + `.search", "read_only": true}},
+				"datasources": []map[string]any{{"name": "` + name + `.web", "entity": "web.search_result", "capabilities": []string{"search"}}},
+				"metadata": map[string]string{"websearch.provider": "` + name + `-provider", "websearch.operation": "` + name + `.search"},
+			},
+		})
+		return
+	}
+	var input struct{ Query string ` + "`json:\"query\"`" + ` }
+	_ = json.Unmarshal(req.Payload.Input, &input)
+	if ` + failLiteral + ` {
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"protocol":"dex.plugin.v1","ok":true,"result":map[string]any{"errors":[]map[string]any{{"message":"boom"}}}})
+		return
+	}
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"protocol": "dex.plugin.v1",
+		"ok": true,
+		"result": map[string]any{"results": []map[string]any{{"provider":"` + name + `-provider","query":input.Query,"results":[]map[string]any{{"url":"https://example.com/"+input.Query,"title":input.Query}}}}},
+	})
+}
+`
+	if err := os.WriteFile(filepath.Join(cmdDir, "main.go"), []byte(mainGo), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return pluginDir
 }
 
 func operationCall(t *testing.T, name string, input any) protocol.OperationCall {

@@ -50,4 +50,24 @@ func TestManifestDeclaresDatasourceMetadata(t *testing.T) {
 	if channel.Completion == nil || len(channel.Completion.Fields) == 0 {
 		t.Fatalf("channel completion = %#v", channel.Completion)
 	}
+	for _, tc := range []struct {
+		entity string
+		id     string
+		title  string
+	}{
+		{EntityMessage, "message_id", "title"},
+		{EntityThreadMessage, "thread_message_id", "title"},
+		{EntityChannelMember, "channel_member_id", "title"},
+	} {
+		datasource := byEntity[tc.entity]
+		if datasource.EntitySchema == nil || datasource.EntitySchema.IDField != tc.id || datasource.EntitySchema.TitleField != tc.title {
+			t.Fatalf("%s entity schema = %#v", tc.entity, datasource.EntitySchema)
+		}
+		if datasource.Completion == nil || len(datasource.Completion.Fields) == 0 {
+			t.Fatalf("%s completion = %#v", tc.entity, datasource.Completion)
+		}
+		if datasource.Fallback != core.DatasourceFallbackNone {
+			t.Fatalf("%s fallback = %q", tc.entity, datasource.Fallback)
+		}
+	}
 }

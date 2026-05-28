@@ -2,7 +2,7 @@ module github.com/fluxplane/fluxplane-dex/plugins/openai
 
 go 1.26
 
-require github.com/fluxplane/fluxplane-dex v0.1.0
+require github.com/fluxplane/fluxplane-dex v0.2.0
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
@@ -11,5 +11,3 @@ require (
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 )
-
-replace github.com/fluxplane/fluxplane-dex v0.1.0 => ../..

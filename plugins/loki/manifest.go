@@ -7,7 +7,7 @@ import (
 
 const (
 	PluginName        = "loki"
-	PluginVersion     = "0.1.0"
+	PluginVersion     = "0.2.0"
 	PluginDescription = "Loki endpoint discovery, health checks, LogQL queries, recent logs, and labels."
 
 	EnvLokiURL      = "LOKI_URL"
@@ -17,6 +17,12 @@ const (
 	OperationQuery      = "loki.query"
 	OperationLabels     = "loki.labels"
 	OperationRecentLogs = "loki.recent_logs"
+
+	DatasourceLogEntries = "loki.log_entries"
+	DatasourceLabels     = "loki.labels"
+
+	EntityLogEntry = "loki.log_entry"
+	EntityLabel    = "loki.label"
 
 	EndpointLoki = "loki.endpoints"
 )
@@ -37,6 +43,10 @@ func manifestSpec() pluginbinding.ManifestSpec {
 			labelsSpec(),
 			recentLogsSpec(),
 		},
+		Datasources: []core.DatasourceSpec{
+			logEntriesDatasourceSpec(),
+			labelsDatasourceSpec(),
+		},
 		Auth: []core.AuthMethod{{
 			Name:        "endpoint",
 			Kind:        "config",
@@ -48,6 +58,30 @@ func manifestSpec() pluginbinding.ManifestSpec {
 			},
 		}},
 	}
+}
+
+func logEntriesDatasourceSpec() core.DatasourceSpec {
+	return pluginbinding.TypedDatasourceSpec[LogEntriesInput, LogEntriesDatasourceResult](
+		DatasourceLogEntries,
+		EntityLogEntry,
+		"Loki log entries.",
+		[]string{pluginbinding.CapabilitySearch},
+		pluginbinding.EntitySchemaFor[LogEntryRecord](),
+		pluginbinding.EntitySchema(core.DatasourceEntitySchema{IDField: "id", TitleField: "title"}),
+		pluginbinding.Completion("Loki log entry fields.", "app", "namespace", "pod", "container", "endpoint_url"),
+	)
+}
+
+func labelsDatasourceSpec() core.DatasourceSpec {
+	return pluginbinding.TypedDatasourceSpec[LabelsInput, LabelDatasourceResult](
+		DatasourceLabels,
+		EntityLabel,
+		"Loki label names or values.",
+		[]string{pluginbinding.CapabilitySearch},
+		pluginbinding.EntitySchemaFor[LabelRecord](),
+		pluginbinding.EntitySchema(core.DatasourceEntitySchema{IDField: "id", TitleField: "title"}),
+		pluginbinding.Completion("Loki label fields.", "name", "label", "endpoint_url"),
+	)
 }
 
 func testSpec() core.OperationSpec {

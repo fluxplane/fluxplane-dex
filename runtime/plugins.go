@@ -246,9 +246,5 @@ func SearchPlugins(m Marketplace, query string) []core.PluginEntry {
 
 func pluginMatches(plugin core.PluginEntry, query string) bool {
 	fields := []string{plugin.Name, plugin.Description, plugin.Binary, plugin.GoInstall}
-	fields = append(fields, plugin.Aliases...)
-	for _, command := range plugin.Commands {
-		fields = append(fields, command.Use, command.Description, command.Operation)
-	}
 	return strings.Contains(strings.ToLower(strings.Join(fields, " ")), query)
 }

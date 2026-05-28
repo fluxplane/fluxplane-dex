@@ -33,6 +33,10 @@ func (ds hostIndexDatasource) Response(command string, payload any) (protocol.Re
 
 func (ds hostIndexDatasource) search(payload any) (protocol.Response, bool, error) {
 	options := searchPayload(payload)
+	shouldHandle, err := ds.shouldHandle(options.Datasource, options.Entity)
+	if err != nil || !shouldHandle {
+		return protocol.Response{}, shouldHandle, err
+	}
 	records, err := ds.state.SearchIndexWithOptions(ds.plugin, ds.instance, options)
 	if err != nil {
 		return protocol.Response{}, false, err
@@ -42,6 +46,10 @@ func (ds hostIndexDatasource) search(payload any) (protocol.Response, bool, erro
 
 func (ds hostIndexDatasource) lookup(payload any) (protocol.Response, bool, error) {
 	options := lookupPayload(payload)
+	shouldHandle, err := ds.shouldHandle(options.Datasource, options.Entity)
+	if err != nil || !shouldHandle {
+		return protocol.Response{}, shouldHandle, err
+	}
 	matches, err := ds.state.LookupIndexWithOptions(ds.plugin, ds.instance, options)
 	if err != nil {
 		return protocol.Response{}, false, err
@@ -50,6 +58,12 @@ func (ds hostIndexDatasource) lookup(payload any) (protocol.Response, bool, erro
 }
 
 func (ds hostIndexDatasource) get(payload any) (protocol.Response, bool, error) {
+	if datasource := getPayloadDatasource(payload); datasource != "" {
+		hasIndex, err := ds.state.HasIndex(ds.plugin, ds.instance, datasource)
+		if err != nil || !hasIndex {
+			return protocol.Response{}, hasIndex, err
+		}
+	}
 	id := getPayloadID(payload)
 	if id == "" {
 		return protocol.Fail("bad_payload", "datasource get requires id"), true, nil
@@ -62,6 +76,16 @@ func (ds hostIndexDatasource) get(payload any) (protocol.Response, bool, error) 
 		return protocol.Fail("not_found", "indexed record not found"), true, nil
 	}
 	return protocol.OK(pluginbinding.NewDatasourceGetResult("host_index", record)), true, nil
+}
+
+func (ds hostIndexDatasource) shouldHandle(datasource, entity string) (bool, error) {
+	if datasource != "" {
+		return ds.state.HasIndex(ds.plugin, ds.instance, datasource)
+	}
+	if entity != "" {
+		return ds.state.HasIndexedEntity(ds.plugin, ds.instance, entity)
+	}
+	return true, nil
 }
 
 func isDatasourceCommand(command string) bool {

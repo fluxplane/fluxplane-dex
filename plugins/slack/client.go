@@ -11,8 +11,10 @@ import (
 )
 
 type Client interface {
+	AuthTest(context.Context) (AuthInfo, error)
 	ListUsers(context.Context) ([]User, error)
 	ListChannels(context.Context) ([]Channel, error)
+	ListChannelMembers(context.Context, string, int) ([]User, error)
 	SendMessage(context.Context, string, string) (string, error)
 	SearchMessages(context.Context, string, int) ([]SearchMessage, int, error)
 	GetThread(context.Context, string, string, int) ([]ThreadMessage, error)
@@ -31,6 +33,22 @@ func NewLiveClient(material pluginbinding.SecretMaterial) (Client, error) {
 type liveClient struct {
 	client  *slackapi.Client
 	purpose string
+}
+
+func (c liveClient) AuthTest(ctx context.Context) (AuthInfo, error) {
+	response, err := c.client.AuthTestContext(ctx)
+	if err != nil {
+		return AuthInfo{}, err
+	}
+	return AuthInfo{
+		URL:          strings.TrimSpace(response.URL),
+		Team:         strings.TrimSpace(response.Team),
+		User:         strings.TrimSpace(response.User),
+		TeamID:       strings.TrimSpace(response.TeamID),
+		UserID:       strings.TrimSpace(response.UserID),
+		BotID:        strings.TrimSpace(response.BotID),
+		EnterpriseID: strings.TrimSpace(response.EnterpriseID),
+	}, nil
 }
 
 func (c liveClient) ListUsers(ctx context.Context) ([]User, error) {
@@ -58,6 +76,39 @@ func (c liveClient) ListChannels(ctx context.Context) ([]Channel, error) {
 	out := make([]Channel, 0, len(channels))
 	for _, channel := range channels {
 		out = append(out, channelFromAPI(channel))
+	}
+	return out, nil
+}
+
+func (c liveClient) ListChannelMembers(ctx context.Context, channel string, limit int) ([]User, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	out := make([]User, 0, limit)
+	cursor := ""
+	for len(out) < limit {
+		pageLimit := limit - len(out)
+		if pageLimit > 1000 {
+			pageLimit = 1000
+		}
+		members, nextCursor, err := c.client.GetUsersInConversationContext(ctx, &slackapi.GetUsersInConversationParameters{
+			ChannelID: channel,
+			Cursor:    cursor,
+			Limit:     pageLimit,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, member := range members {
+			member = strings.TrimSpace(member)
+			if member != "" {
+				out = append(out, User{ID: member})
+			}
+		}
+		if strings.TrimSpace(nextCursor) == "" {
+			break
+		}
+		cursor = nextCursor
 	}
 	return out, nil
 }
@@ -110,7 +161,7 @@ func (c liveClient) GetThread(ctx context.Context, channel, ts string, limit int
 			Text: strings.TrimSpace(reply.Text),
 		})
 	}
-	return out, nil
+	return limitThreadMessages(out, limit), nil
 }
 
 func userFromAPI(user slackapi.User) User {

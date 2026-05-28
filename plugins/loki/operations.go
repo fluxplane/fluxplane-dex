@@ -88,6 +88,44 @@ type RecentLogsInput struct {
 	Limit     int    `json:"limit,omitempty"`
 }
 
+type LogEntriesInput struct {
+	URL       string `json:"url,omitempty"`
+	TenantID  string `json:"tenant_id,omitempty"`
+	Query     string `json:"query,omitempty" jsonschema:"description=LogQL query. Plain text is used as a contains filter for recent logs."`
+	App       string `json:"app,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Pod       string `json:"pod,omitempty"`
+	Container string `json:"container,omitempty"`
+	Contains  string `json:"contains,omitempty"`
+	Since     string `json:"since,omitempty"`
+	Until     string `json:"until,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+	Direction string `json:"direction,omitempty"`
+}
+
+type LogEntryRecord struct {
+	pluginbinding.DatasourceRecord
+	Title       string            `json:"title,omitempty" datasource:"title,view=compact|lookup|table"`
+	Timestamp   string            `json:"timestamp" datasource:"view=compact|lookup|table"`
+	Labels      map[string]string `json:"labels,omitempty" datasource:"view=lookup|table"`
+	Line        string            `json:"line" datasource:"completion,view=compact|lookup|table"`
+	App         string            `json:"app,omitempty" datasource:"completion,view=compact|lookup|table"`
+	Namespace   string            `json:"namespace,omitempty" datasource:"completion,view=compact|lookup|table"`
+	Pod         string            `json:"pod,omitempty" datasource:"completion,view=compact|lookup|table"`
+	Container   string            `json:"container,omitempty" datasource:"completion,view=compact|lookup|table"`
+	EndpointURL string            `json:"endpoint_url,omitempty" datasource:"completion,view=lookup|table"`
+}
+
+type LabelRecord struct {
+	pluginbinding.DatasourceRecord
+	Name        string `json:"name" datasource:"id,completion,view=compact|lookup|table"`
+	Label       string `json:"label,omitempty" datasource:"completion,view=compact|lookup|table"`
+	EndpointURL string `json:"endpoint_url,omitempty" datasource:"completion,view=lookup|table"`
+}
+
+type LogEntriesDatasourceResult = pluginbinding.DatasourceSearchResult[LogEntryRecord]
+type LabelDatasourceResult = pluginbinding.DatasourceSearchResult[LabelRecord]
+
 func (s Service) Test(ctx pluginbinding.Context, input TestInput) (TestResult, error) {
 	target, err := s.resolveURL(input.URL)
 	if err != nil {
@@ -146,6 +184,67 @@ func (s Service) Labels(ctx pluginbinding.Context, input LabelsInput) (LabelsRes
 	}
 	sort.Strings(response.Data)
 	return LabelsResult{URL: target, Label: label, Values: response.Data}, nil
+}
+
+func (s Service) LogEntriesDatasource(ctx pluginbinding.Context, input LogEntriesInput) (LogEntriesDatasourceResult, error) {
+	query := strings.TrimSpace(input.Query)
+	var out QueryResult
+	var err error
+	if strings.HasPrefix(query, "{") || strings.HasPrefix(query, "(") {
+		out, err = s.Query(ctx, QueryInput{URL: input.URL, TenantID: input.TenantID, Query: query, Since: input.Since, Until: input.Until, Limit: input.Limit, Direction: input.Direction})
+	} else {
+		contains := firstNonEmpty(input.Contains, query)
+		out, err = s.RecentLogs(ctx, RecentLogsInput{URL: input.URL, TenantID: input.TenantID, App: input.App, Namespace: input.Namespace, Pod: input.Pod, Container: input.Container, Contains: contains, Since: input.Since, Limit: input.Limit})
+	}
+	if err != nil {
+		return LogEntriesDatasourceResult{}, err
+	}
+	records := make([]LogEntryRecord, 0, len(out.Entries))
+	for _, entry := range out.Entries {
+		title := firstNonEmpty(entry.Labels["pod"], entry.Labels["app"], entry.Line)
+		record := LogEntryRecord{
+			DatasourceRecord: pluginbinding.NewDatasourceRecord(ctx.DatasourceSource(), EntityLogEntry, entry.ID, pluginbinding.RecordTitle(title), pluginbinding.RecordMetadata(map[string]any{"timestamp": entry.Timestamp, "labels": entry.Labels, "line": entry.Line, "query": out.NormalizedQuery, "endpoint_url": out.URL})),
+			Title:            title,
+			Timestamp:        entry.Timestamp,
+			Labels:           entry.Labels,
+			Line:             entry.Line,
+			App:              entry.Labels["app"],
+			Namespace:        entry.Labels["namespace"],
+			Pod:              entry.Labels["pod"],
+			Container:        entry.Labels["container"],
+			EndpointURL:      out.URL,
+		}
+		if out.URL != "" {
+			record.Links = map[string]string{"endpoint": out.URL}
+		}
+		records = append(records, record)
+	}
+	return pluginbinding.NewDatasourceSearchResult("live", firstNonEmpty(input.Query, input.Contains), records), nil
+}
+
+func (s Service) LabelsDatasource(ctx pluginbinding.Context, input LabelsInput) (LabelDatasourceResult, error) {
+	out, err := s.Labels(ctx, input)
+	if err != nil {
+		return LabelDatasourceResult{}, err
+	}
+	records := make([]LabelRecord, 0, len(out.Values))
+	for _, value := range out.Values {
+		id := value
+		if out.Label != "" {
+			id = out.Label + "=" + value
+		}
+		record := LabelRecord{
+			DatasourceRecord: pluginbinding.NewDatasourceRecord(ctx.DatasourceSource(), EntityLabel, id, pluginbinding.RecordTitle(id), pluginbinding.RecordMetadata(map[string]any{"name": value, "label": out.Label, "endpoint_url": out.URL})),
+			Name:             value,
+			Label:            out.Label,
+			EndpointURL:      out.URL,
+		}
+		if out.URL != "" {
+			record.Links = map[string]string{"endpoint": out.URL}
+		}
+		records = append(records, record)
+	}
+	return pluginbinding.NewDatasourceSearchResult("live", firstNonEmpty(input.Label, input.Query), records), nil
 }
 
 func (s Service) query(ctx context.Context, target, tenantID, query, since, until string, limit int, direction string) (QueryResult, error) {

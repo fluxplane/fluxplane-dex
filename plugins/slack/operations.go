@@ -18,8 +18,27 @@ func NewService() Service {
 
 type IndexBuildInput = pluginbinding.IndexBuildInput
 
+type NoInput struct{}
+
 type LookupInput = pluginbinding.DatasourceLookupInput
 type LookupResult = pluginbinding.DatasourceLookupResult[pluginbinding.LookupMatch[any]]
+type MessageDatasourceResult = pluginbinding.DatasourceSearchResult[MessageRecord]
+type ThreadMessagesDatasourceResult = pluginbinding.DatasourceSearchResult[ThreadMessageRecord]
+type ChannelMembersDatasourceResult = pluginbinding.DatasourceSearchResult[ChannelMemberRecord]
+
+type InfoResult struct {
+	Status string            `json:"status"`
+	Count  int               `json:"count"`
+	Tokens []TokenInfoResult `json:"tokens,omitempty"`
+}
+
+type TokenInfoResult struct {
+	Purpose string `json:"purpose"`
+	Source  string `json:"source,omitempty"`
+	OK      bool   `json:"ok"`
+	Error   string `json:"error,omitempty"`
+	AuthInfo
+}
 
 type MessageSendInput struct {
 	Channel string `json:"channel,omitempty" jsonschema:"required,description=Slack channel ID or name"`
@@ -37,6 +56,13 @@ type SearchInput struct {
 	Limit int    `json:"limit,omitempty" jsonschema:"description=Maximum messages to return"`
 }
 
+type MessageSearchInput struct {
+	Datasource string `json:"datasource,omitempty" jsonschema:"description=Exact datasource name."`
+	Query      string `json:"query,omitempty" jsonschema:"required,description=Slack search query"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"description=Maximum messages to return"`
+	Entity     string `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
+}
+
 type SearchResult struct {
 	Count    int             `json:"count"`
 	Messages []SearchMessage `json:"messages,omitempty"`
@@ -52,7 +78,15 @@ type SearchMessage struct {
 type ThreadInput struct {
 	Channel string `json:"channel,omitempty" jsonschema:"required,description=Slack channel ID"`
 	TS      string `json:"ts,omitempty" jsonschema:"required,description=Slack message timestamp"`
-	Limit   int    `json:"limit,omitempty" jsonschema:"description=Maximum replies to return"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"description=Maximum thread messages to return"`
+}
+
+type ThreadMessagesInput struct {
+	Datasource string `json:"datasource,omitempty" jsonschema:"description=Exact datasource name."`
+	Channel    string `json:"channel,omitempty" jsonschema:"required,description=Slack channel ID"`
+	TS         string `json:"ts,omitempty" jsonschema:"required,description=Slack root message timestamp"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"description=Maximum thread messages to return"`
+	Entity     string `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
 }
 
 type ThreadResult struct {
@@ -66,6 +100,14 @@ type ThreadMessage struct {
 	TS   string `json:"ts,omitempty"`
 	User string `json:"user,omitempty"`
 	Text string `json:"text,omitempty"`
+}
+
+type ChannelMembersInput struct {
+	Datasource string `json:"datasource,omitempty" jsonschema:"description=Exact datasource name."`
+	Channel    string `json:"channel,omitempty" jsonschema:"required,description=Slack channel ID"`
+	Query      string `json:"query,omitempty" jsonschema:"description=Optional member text filter"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"description=Maximum members to return"`
+	Entity     string `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
 }
 
 func (s Service) IndexBuild(ctx pluginbinding.Context, input IndexBuildInput) (pluginbinding.IndexBuildResult, error) {
@@ -102,6 +144,49 @@ func (s Service) Lookup(ctx pluginbinding.Context, input LookupInput) (LookupRes
 		}
 	}
 	return pluginbinding.NewDatasourceLookupResultFromCandidates(PluginName, input, candidates), nil
+}
+
+func (s Service) Info(ctx pluginbinding.Context, _ NoInput) (InfoResult, error) {
+	results := make([]TokenInfoResult, 0, 2)
+	for _, purpose := range []string{AuthPurposeUser, AuthPurposeBot} {
+		material, ok := ctx.OptionalSecret(purpose)
+		if !ok {
+			continue
+		}
+		material.Purpose = purpose
+		result := TokenInfoResult{Purpose: purpose, Source: material.Source}
+		client, err := s.client(material)
+		if err != nil {
+			result.Error = err.Error()
+			results = append(results, result)
+			continue
+		}
+		info, err := client.AuthTest(context.Background())
+		if err != nil {
+			result.Error = err.Error()
+			results = append(results, result)
+			continue
+		}
+		result.OK = true
+		result.AuthInfo = info
+		results = append(results, result)
+	}
+	if len(results) == 0 {
+		return InfoResult{}, pluginbinding.Fail("secret", "no Slack user_token or bot_token configured")
+	}
+	okCount := 0
+	for _, result := range results {
+		if result.OK {
+			okCount++
+		}
+	}
+	status := "error"
+	if okCount == len(results) {
+		status = "ok"
+	} else if okCount > 0 {
+		status = "partial"
+	}
+	return InfoResult{Status: status, Count: len(results), Tokens: results}, nil
 }
 
 func (s Service) SendMessage(ctx pluginbinding.Context, input MessageSendInput) (MessageSendResult, error) {
@@ -143,6 +228,28 @@ func (s Service) Search(ctx pluginbinding.Context, input SearchInput) (SearchRes
 	return SearchResult{Count: messages.Total, Messages: messages.Messages}, nil
 }
 
+func (s Service) SearchMessagesDatasource(ctx pluginbinding.Context, input MessageSearchInput) (MessageDatasourceResult, error) {
+	query := strings.TrimSpace(input.Query)
+	if query == "" {
+		return MessageDatasourceResult{}, pluginbinding.Fail("bad_input", "query is required")
+	}
+	messages, _, err := pluginbinding.ReadWithPreferredSecrets[Client, searchMessagesOutput](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) (searchMessagesOutput, error) {
+		messages, total, err := client.SearchMessages(context.Background(), query, input.Limit)
+		return searchMessagesOutput{Messages: messages, Total: total}, err
+	}, fallbackableSlackError)
+	if err != nil {
+		return MessageDatasourceResult{}, pluginbinding.Errorf("slack", "%s", err)
+	}
+	records := make([]MessageRecord, 0, len(messages.Messages))
+	for _, message := range messages.Messages {
+		record, ok := normalizeMessageRecord(ctx.DatasourceSource(), message)
+		if ok {
+			records = append(records, record)
+		}
+	}
+	return pluginbinding.NewDatasourceSearchResult(DatasourceMessages, query, records), nil
+}
+
 func (s Service) Thread(ctx pluginbinding.Context, input ThreadInput) (ThreadResult, error) {
 	channel := strings.TrimSpace(input.Channel)
 	ts := strings.TrimSpace(input.TS)
@@ -158,7 +265,61 @@ func (s Service) Thread(ctx pluginbinding.Context, input ThreadInput) (ThreadRes
 	if err != nil {
 		return ThreadResult{}, pluginbinding.Errorf("slack", "%s", err)
 	}
+	messages = limitThreadMessages(messages, input.Limit)
 	return ThreadResult{Channel: channel, TS: ts, Count: len(messages), Messages: messages}, nil
+}
+
+func (s Service) ThreadMessagesDatasource(ctx pluginbinding.Context, input ThreadMessagesInput) (ThreadMessagesDatasourceResult, error) {
+	channel := strings.TrimSpace(input.Channel)
+	ts := strings.TrimSpace(input.TS)
+	if channel == "" {
+		return ThreadMessagesDatasourceResult{}, pluginbinding.Fail("bad_input", "channel is required")
+	}
+	if ts == "" {
+		return ThreadMessagesDatasourceResult{}, pluginbinding.Fail("bad_input", "ts is required")
+	}
+	messages, _, err := pluginbinding.ReadWithPreferredSecrets[Client, []ThreadMessage](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) ([]ThreadMessage, error) {
+		return client.GetThread(context.Background(), channel, ts, input.Limit)
+	}, fallbackableSlackError)
+	if err != nil {
+		return ThreadMessagesDatasourceResult{}, pluginbinding.Errorf("slack", "%s", err)
+	}
+	messages = limitThreadMessages(messages, input.Limit)
+	records := make([]ThreadMessageRecord, 0, len(messages))
+	for _, message := range messages {
+		record, ok := normalizeThreadMessageRecord(ctx.DatasourceSource(), channel, ts, message)
+		if ok {
+			records = append(records, record)
+		}
+	}
+	return pluginbinding.NewDatasourceSearchResult(DatasourceThreadMessages, ts, records), nil
+}
+
+func (s Service) ChannelMembersDatasource(ctx pluginbinding.Context, input ChannelMembersInput) (ChannelMembersDatasourceResult, error) {
+	channel := strings.TrimSpace(input.Channel)
+	if channel == "" {
+		return ChannelMembersDatasourceResult{}, pluginbinding.Fail("bad_input", "channel is required")
+	}
+	query := strings.TrimSpace(input.Query)
+	readLimit := input.Limit
+	if query != "" {
+		readLimit = 0
+	}
+	members, _, err := pluginbinding.ReadWithPreferredSecrets[Client, []User](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) ([]User, error) {
+		return client.ListChannelMembers(context.Background(), channel, readLimit)
+	}, fallbackableSlackError)
+	if err != nil {
+		return ChannelMembersDatasourceResult{}, pluginbinding.Errorf("slack", "%s", err)
+	}
+	members = filterChannelMembers(members, query)
+	records := make([]ChannelMemberRecord, 0, len(members))
+	for _, member := range members {
+		record, ok := normalizeChannelMemberRecord(ctx.DatasourceSource(), channel, member)
+		if ok {
+			records = append(records, record)
+		}
+	}
+	return pluginbinding.NewDatasourceSearchResult(DatasourceChannelMembers, query, limitChannelMemberRecords(records, input.Limit)), nil
 }
 
 type searchMessagesOutput struct {
@@ -259,4 +420,36 @@ func channelLookupValues(record ChannelRecord) map[string]string {
 		"record.purpose":    record.Purpose,
 		"record.web_url":    record.WebURL,
 	}
+}
+
+func filterChannelMembers(members []User, query string) []User {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return members
+	}
+	out := make([]User, 0, len(members))
+	for _, member := range members {
+		values := []string{member.ID, member.Name, member.RealName, member.DisplayName, member.Email}
+		for _, value := range values {
+			if strings.Contains(strings.ToLower(strings.TrimSpace(value)), query) {
+				out = append(out, member)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func limitChannelMemberRecords(records []ChannelMemberRecord, limit int) []ChannelMemberRecord {
+	if limit <= 0 || len(records) <= limit {
+		return records
+	}
+	return records[:limit]
+}
+
+func limitThreadMessages(messages []ThreadMessage, limit int) []ThreadMessage {
+	if limit <= 0 || len(messages) <= limit {
+		return messages
+	}
+	return messages[:limit]
 }

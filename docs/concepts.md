@@ -4,14 +4,15 @@ This document defines the core domain terms used by `fluxplane-dex`.
 
 The short version: `dex` is a host that discovers plugins, grants scoped access
 to credentials and runtime capabilities, and exposes plugin behavior through
-operations, datasources, context, endpoints, indexes, and CLI shortcuts.
+operations, datasources, context, endpoints, indexes, and manifest-driven CLI
+commands.
 
 ## Host
 
 The host is the `dex` runtime and CLI.
 
 It owns plugin discovery, marketplace resolution, auth state, secret grants,
-index storage, rendering, shortcut routing, and protocol invocation. Plugins
+index storage, rendering, generated command routing, and protocol invocation. Plugins
 should not read dex state files directly or assume they are being called from a
 terminal.
 
@@ -47,8 +48,9 @@ agent tools without hardcoding each plugin.
 A marketplace is a host-side catalog of plugins.
 
 It tells the host how to find and run a plugin: name, binary, local path,
-install path, aliases, metadata, and command shortcuts. The marketplace is not
-the plugin implementation; it is the host's registry of available plugin entries.
+install path, and metadata. The marketplace is not the plugin implementation and
+does not define executable commands; it is the host's registry of available
+plugin entries.
 
 ## Instance
 
@@ -124,7 +126,7 @@ Examples:
 - `jira.issue`
 - `kubernetes.pod`
 
-Entity names should be stable enough for agents and shortcuts to use. They are
+Entity names should be stable enough for agents and generated commands to use. They are
 not just display labels; they are part of the shared data model.
 
 ## Datasource Record
@@ -207,20 +209,26 @@ It scopes access by plugin, instance, purpose, and expiry. External plugins use
 the host command to fetch granted material. This prevents plugins from needing
 direct access to dex home directories, auth files, or unrelated credentials.
 
-## Command Shortcut
+## Manifest-Driven CLI Command
 
-A command shortcut is CLI sugar over an operation or datasource.
+Manifest-driven CLI commands are generated Cobra commands over plugin
+operations.
 
-Examples are `dex gl mr ls`, `dex gl proj show`, or `dex websearch search`.
-Shortcuts should normalize arguments and render useful output, but the underlying
-capability should remain available through generic operation or datasource
-interfaces.
+Examples are `dex gl mr list`, `dex gl project show`, `dex web search`, and
+`dex kube pod logs`. A plugin's manifest name and aliases become root-level
+command names after the plugin is activated. Operation names become nested
+commands by removing the plugin prefix: `kubernetes.pod.logs` becomes
+`dex kube pod logs`.
 
-Shortcut bindings are declared in marketplace command metadata. The host resolves
-the shortcut pattern, maps placeholders and common flags into operation or
-datasource input, then invokes the same generic protocol path as `dex op run`,
-`dex search`, or `dex lookup`. Plugin implementations should not embed Cobra
-command parsing.
+Operation flags are generated from the operation input JSON schema. CLI flag
+names are kebab-case, while operation payloads keep the manifest's JSON field
+names, so `--endpoint-ref` becomes `endpoint_ref`. Positional arguments are only
+a convenience for required input fields; complex or ambiguous input should use
+flags or a JSON object.
+
+The same capability remains available through generic protocol paths such as
+`dex op run`, `dex datasource search`, `dex search`, and `dex lookup`. Plugin
+implementations should not embed Cobra command parsing.
 
 ## Builtin Plugin
 
@@ -248,7 +256,7 @@ An activation set is a planned contract for enabling related capabilities
 together.
 
 For example, a `gitlab` activation set might include GitLab operations,
-datasources, indexes, context providers, and shortcuts. A `channel` activation
+datasources, indexes, context providers, and generated commands. A `channel` activation
 set might include Slack channel context, message search, thread reads, and send
 operations.
 
@@ -314,10 +322,9 @@ Implemented today:
 - endpoint specs
 - index specs and host-owned indexes
 - builtin plugins
-- command shortcuts
+- manifest-driven CLI commands
 
 Planned or partial:
-- endpoint registry and endpoint refs
 - operation sets and activation sets
 - structured auth test reports
 - plugin-contributed secret resolvers

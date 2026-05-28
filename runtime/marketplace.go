@@ -10,9 +10,8 @@ import (
 )
 
 type Marketplace struct {
-	data    core.Marketplace
-	byName  map[string]core.PluginEntry
-	aliases map[string]string
+	data   core.Marketplace
+	byName map[string]core.PluginEntry
 }
 
 func LoadMarketplace(path string) (Marketplace, error) {
@@ -35,20 +34,13 @@ func LoadMarketplaceData(data []byte) (Marketplace, error) {
 }
 
 func NewMarketplace(raw core.Marketplace) Marketplace {
-	m := Marketplace{data: raw, byName: map[string]core.PluginEntry{}, aliases: map[string]string{}}
+	m := Marketplace{data: raw, byName: map[string]core.PluginEntry{}}
 	for _, plugin := range raw.Plugins {
 		name := strings.TrimSpace(plugin.Name)
 		if name == "" {
 			continue
 		}
 		m.byName[name] = plugin
-		m.aliases[name] = name
-		for _, alias := range plugin.Aliases {
-			alias = strings.TrimSpace(alias)
-			if alias != "" {
-				m.aliases[alias] = name
-			}
-		}
 	}
 	return m
 }
@@ -58,10 +50,7 @@ func (m Marketplace) Data() core.Marketplace {
 }
 
 func (m Marketplace) Resolve(nameOrAlias string) (core.PluginEntry, bool) {
-	name := m.aliases[strings.TrimSpace(nameOrAlias)]
-	if name == "" {
-		name = strings.TrimSpace(nameOrAlias)
-	}
+	name := strings.TrimSpace(nameOrAlias)
 	plugin, ok := m.byName[name]
 	return plugin, ok
 }

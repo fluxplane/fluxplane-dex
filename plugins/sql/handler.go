@@ -13,6 +13,7 @@ func NewPluginWithService(service Service) *pluginbinding.Plugin {
 	return pluginbinding.Define(manifestSpec(),
 		pluginbinding.WithSecretGetter(service.SecretGetter),
 		pluginbinding.RegisterOperation(querySpec(), service.Query),
+		pluginbinding.RegisterDatasourceSearch(queryRowsDatasourceSpec(), service.QueryRows),
 	)
 }
 

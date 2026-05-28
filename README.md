@@ -100,7 +100,7 @@ dex kube pod logs latest/api-123 --endpoint dev-kubernetes --tail-lines 50
 dex kube container ls --endpoint dev-kubernetes --namespace latest --query api
 dex kube container show latest/api-123/api --endpoint dev-kubernetes
 dex kube deploy ls --endpoint dev-kubernetes --namespace latest
-dex search --plugin kubernetes --endpoint dev-kubernetes --namespace latest api
+dex search --plugin kubernetes --endpoint dev-kubernetes api
 ```
 
 ## Current Status

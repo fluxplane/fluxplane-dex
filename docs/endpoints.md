@@ -90,13 +90,12 @@ Datasource search exposes namespaces, services, pods, deployments, and
 containers as common datasource records:
 
 ```bash
-dex search --plugin kubernetes --endpoint dev-kubernetes --namespace latest api
+dex search --plugin kubernetes --endpoint dev-kubernetes api
 ```
 
-The generic search command passes `endpoint_ref`, provider context, and
-namespace into datasource calls. The host resolves the endpoint ref before the
-plugin sees the payload, so datasource search and direct operations use the same
-registered cluster endpoint.
+The generic search command can pass a DEX endpoint ref into datasource calls.
+Provider-specific scoping, such as Kubernetes namespaces, stays on Kubernetes
+operations and shortcuts.
 
 ## In-Cluster Product Discovery
 

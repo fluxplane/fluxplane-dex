@@ -636,8 +636,6 @@ func newSearchCommand(opts *options) *cobra.Command {
 		plugin      string
 		entity      string
 		endpointRef string
-		context     string
-		namespace   string
 		limit       int
 	}{limit: 20}
 	cmd := &cobra.Command{
@@ -654,12 +652,6 @@ func newSearchCommand(opts *options) *cobra.Command {
 			if strings.TrimSpace(searchOpts.endpointRef) != "" {
 				payload["endpoint_ref"] = strings.TrimSpace(searchOpts.endpointRef)
 			}
-			if strings.TrimSpace(searchOpts.context) != "" {
-				payload["context"] = strings.TrimSpace(searchOpts.context)
-			}
-			if strings.TrimSpace(searchOpts.namespace) != "" {
-				payload["namespace"] = strings.TrimSpace(searchOpts.namespace)
-			}
 			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{
 				"query":   query,
 				"results": fanoutSearch(cmd.Context(), runner, opts.instanceName(), payload, searchOpts.plugin),
@@ -670,8 +662,6 @@ func newSearchCommand(opts *options) *cobra.Command {
 	cmd.Flags().StringVar(&searchOpts.entity, "entity", "", "Filter by entity type")
 	cmd.Flags().StringVar(&searchOpts.endpointRef, "endpoint", "", "Endpoint ref")
 	cmd.Flags().StringVar(&searchOpts.endpointRef, "endpoint-ref", "", "Endpoint ref")
-	cmd.Flags().StringVar(&searchOpts.context, "context", "", "Provider context")
-	cmd.Flags().StringVar(&searchOpts.namespace, "namespace", "", "Provider namespace")
 	cmd.Flags().IntVar(&searchOpts.limit, "limit", 20, "Maximum records per plugin")
 	return cmd
 }

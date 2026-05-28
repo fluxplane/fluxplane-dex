@@ -352,8 +352,6 @@ func (s Service) InventorySearch(ctx pluginbinding.Context, input pluginbinding.
 	inventoryInput := InventoryInput{
 		EndpointRef: input.EndpointRef,
 		URL:         input.URL,
-		Context:     input.Context,
-		Namespace:   input.Namespace,
 		Query:       input.Query,
 		Limit:       input.Limit,
 	}

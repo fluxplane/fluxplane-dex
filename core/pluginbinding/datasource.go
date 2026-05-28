@@ -51,8 +51,6 @@ type DatasourceSearchInput struct {
 	Entity      string `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
 	EndpointRef string `json:"endpoint_ref,omitempty" jsonschema:"description=Registered endpoint ref resolved by the host."`
 	URL         string `json:"url,omitempty" jsonschema:"description=Resolved endpoint URL."`
-	Context     string `json:"context,omitempty" jsonschema:"description=Provider-specific context, for example a Kubernetes kubeconfig context."`
-	Namespace   string `json:"namespace,omitempty" jsonschema:"description=Provider-specific namespace filter, for example a Kubernetes namespace."`
 }
 
 type DatasourceLookupInput struct {

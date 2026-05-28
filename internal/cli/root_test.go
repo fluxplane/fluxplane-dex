@@ -933,7 +933,7 @@ func TestShortcutArgParsingMapsEndpointFlag(t *testing.T) {
 	}
 }
 
-func TestSearchPassesEndpointContextAndNamespaceToDatasource(t *testing.T) {
+func TestSearchPassesEndpointToDatasource(t *testing.T) {
 	pluginDir := writeFakeKubernetesDatasourcePlugin(t)
 	home := t.TempDir()
 	state, err := runtime.NewState(home)
@@ -947,7 +947,7 @@ func TestSearchPassesEndpointContextAndNamespaceToDatasource(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--dex-home", home, "--dev-plugin", "kubernetes=" + pluginDir, "search", "--plugin", "kubernetes", "api", "--endpoint", "dev-kubernetes", "--namespace", "latest", "--limit", "5", "-o", "json"})
+	cmd.SetArgs([]string{"--dex-home", home, "--dev-plugin", "kubernetes=" + pluginDir, "search", "--plugin", "kubernetes", "api", "--endpoint", "dev-kubernetes", "--limit", "5", "-o", "json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -960,8 +960,23 @@ func TestSearchPassesEndpointContextAndNamespaceToDatasource(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := result.Results["kubernetes"].Input
-	if input["endpoint_ref"] != "dev-kubernetes" || input["url"] != "kubernetes://context/dev" || input["namespace"] != "latest" || input["query"] != "api" || input["limit"] != float64(5) {
+	if input["endpoint_ref"] != "dev-kubernetes" || input["url"] != "kubernetes://context/dev" || input["query"] != "api" || input["limit"] != float64(5) {
 		t.Fatalf("input = %#v", input)
+	}
+}
+
+func TestSearchRejectsProviderSpecificScopeFlags(t *testing.T) {
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "search", "--plugin", "kubernetes", "api", "--namespace", "latest", "-o", "json"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected provider-specific search flag to fail")
+	}
+	if !strings.Contains(err.Error(), "unknown flag: --namespace") {
+		t.Fatalf("error = %q", err.Error())
 	}
 }
 

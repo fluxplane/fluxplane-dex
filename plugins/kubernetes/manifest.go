@@ -13,8 +13,19 @@ const (
 	OperationClusterList      = "kubernetes.cluster.list"
 	OperationClusterTest      = "kubernetes.cluster.test"
 	OperationEndpointDiscover = "kubernetes.endpoint.discover"
+	OperationNamespaceList    = "kubernetes.namespace.list"
+	OperationServiceList      = "kubernetes.service.list"
+	OperationServiceShow      = "kubernetes.service.show"
+	OperationPodList          = "kubernetes.pod.list"
+	OperationPodShow          = "kubernetes.pod.show"
 
 	EndpointClusterDiscovered = "kubernetes.discovered_endpoints"
+	DatasourceInventory       = "kubernetes.inventory"
+
+	EntityResource  = "kubernetes.resource"
+	EntityNamespace = "kubernetes.namespace"
+	EntityService   = "kubernetes.service"
+	EntityPod       = "kubernetes.pod"
 )
 
 func Manifest() core.PluginManifest {
@@ -31,6 +42,14 @@ func manifestSpec() pluginbinding.ManifestSpec {
 			clusterListSpec(),
 			clusterTestSpec(),
 			endpointDiscoverSpec(),
+			namespaceListSpec(),
+			serviceListSpec(),
+			serviceShowSpec(),
+			podListSpec(),
+			podShowSpec(),
+		},
+		Datasources: []core.DatasourceSpec{
+			inventoryDatasourceSpec(),
 		},
 		Endpoints: []core.EndpointSpec{
 			pluginbinding.Endpoint(EndpointClusterDiscovered, "Product endpoints discovered inside Kubernetes clusters.", "kubernetes", "prometheus", "loki", "homer", "mysql", "postgres"),
@@ -59,6 +78,55 @@ func endpointDiscoverSpec() core.OperationSpec {
 		OperationEndpointDiscover,
 		"Discover product endpoints from Kubernetes services.",
 		kubernetesReadOptions(core.OperationIdempotent)...,
+	)
+}
+
+func namespaceListSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[InventoryInput, NamespaceListResult](
+		OperationNamespaceList,
+		"List Kubernetes namespaces.",
+		kubernetesReadOptions(core.OperationIdempotent)...,
+	)
+}
+
+func serviceListSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[InventoryInput, ServiceListResult](
+		OperationServiceList,
+		"List Kubernetes services.",
+		kubernetesReadOptions(core.OperationIdempotent)...,
+	)
+}
+
+func serviceShowSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[InventoryInput, ServiceShowResult](
+		OperationServiceShow,
+		"Show one Kubernetes service.",
+		kubernetesReadOptions(core.OperationIdempotent)...,
+	)
+}
+
+func podListSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[InventoryInput, PodListResult](
+		OperationPodList,
+		"List Kubernetes pods.",
+		kubernetesReadOptions(core.OperationIdempotent)...,
+	)
+}
+
+func podShowSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[InventoryInput, PodShowResult](
+		OperationPodShow,
+		"Show one Kubernetes pod.",
+		kubernetesReadOptions(core.OperationIdempotent)...,
+	)
+}
+
+func inventoryDatasourceSpec() core.DatasourceSpec {
+	return pluginbinding.TypedDatasourceSpec[pluginbinding.DatasourceSearchInput, InventorySearchResult](
+		DatasourceInventory,
+		EntityResource,
+		"Kubernetes namespaces, services, and pods.",
+		[]string{pluginbinding.CapabilitySearch},
 	)
 }
 

@@ -15,8 +15,18 @@ import (
 
 type EndpointRecord struct {
 	core.EndpointRef
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	LastHealth *EndpointHealth `json:"last_health,omitempty"`
+	CreatedAt  time.Time       `json:"created_at"`
+	UpdatedAt  time.Time       `json:"updated_at"`
+}
+
+type EndpointHealth struct {
+	OK         bool            `json:"ok"`
+	CheckedAt  time.Time       `json:"checked_at"`
+	Method     string          `json:"method,omitempty"`
+	DurationMS int64           `json:"duration_ms,omitempty"`
+	Error      string          `json:"error,omitempty"`
+	Details    json.RawMessage `json:"details,omitempty"`
 }
 
 type EndpointRegistry struct {
@@ -63,6 +73,7 @@ func (s State) SaveEndpoint(ref core.EndpointRef) (EndpointRecord, error) {
 	for i := range registry.Endpoints {
 		if registry.Endpoints[i].ID == ref.ID {
 			record.CreatedAt = registry.Endpoints[i].CreatedAt
+			record.LastHealth = registry.Endpoints[i].LastHealth
 			registry.Endpoints[i] = record
 			if err := s.writeEndpoints(registry); err != nil {
 				return EndpointRecord{}, err
@@ -75,6 +86,34 @@ func (s State) SaveEndpoint(ref core.EndpointRef) (EndpointRecord, error) {
 		return EndpointRecord{}, err
 	}
 	return record, nil
+}
+
+func (s State) SaveEndpointHealth(id string, health EndpointHealth) (EndpointRecord, error) {
+	registry, err := s.LoadEndpoints()
+	if err != nil {
+		return EndpointRecord{}, err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return EndpointRecord{}, fmt.Errorf("endpoint id is required")
+	}
+	if health.CheckedAt.IsZero() {
+		health.CheckedAt = time.Now().UTC()
+	} else {
+		health.CheckedAt = health.CheckedAt.UTC()
+	}
+	now := time.Now().UTC()
+	for i := range registry.Endpoints {
+		if registry.Endpoints[i].ID == id {
+			registry.Endpoints[i].LastHealth = &health
+			registry.Endpoints[i].UpdatedAt = now
+			if err := s.writeEndpoints(registry); err != nil {
+				return EndpointRecord{}, err
+			}
+			return registry.Endpoints[i], nil
+		}
+	}
+	return EndpointRecord{}, fmt.Errorf("unknown endpoint %q", id)
 }
 
 func (s State) SaveEndpointCandidate(candidate core.EndpointCandidate) (EndpointRecord, error) {

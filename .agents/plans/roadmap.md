@@ -200,6 +200,10 @@ Scope:
 - Added Kubernetes cluster endpoints from kubeconfig contexts and a
   `kubernetes.cluster.test` probe so cluster reachability is represented as
   endpoint health, not only as product discovery inside a cluster.
+- Persisted last endpoint health on endpoint registry records and surfaced it
+  through endpoint list/show.
+- Added Kubernetes namespace, service, and pod read operations plus inventory
+  datasource search records.
 - Added Kubernetes-discovered MySQL connection-secret candidates so SQL can
   consume cluster-intrinsic credentials without copying secret material into
   the host.
@@ -214,6 +218,8 @@ Acceptance:
 - Done: endpoint refs can be tested with a structured health report.
 - Done: Kubernetes cluster endpoint refs can be discovered and probed through
   kubeconfig/client-go.
+- Done: Kubernetes cluster inventory can be read through operations and
+  datasource search.
 - Done: credential-gated live validation against the dev Kubernetes cluster's
   `latest` namespace with Crossplane-managed MySQL/PostgreSQL connection
   secrets and SQL queries through registered endpoint refs.
@@ -843,7 +849,9 @@ The current plugin protocol can express operations, auth methods, datasources, c
    TCP-reachable network endpoints.
 6. Done: Kubernetes cluster endpoints can be discovered from kubeconfig and
    probed via `kubernetes.cluster.test`.
-7. Next: add a documented live-test matrix for Kubernetes service discovery and
+7. Done: Kubernetes namespace, service, and pod inventory is exposed through
+   operations and datasource search.
+8. Next: add a documented live-test matrix for Kubernetes service discovery and
    Crossplane-style SQL secret discovery.
 
 ### Phase 3: Port High-Value Daily Workflow Integrations

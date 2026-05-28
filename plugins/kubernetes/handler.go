@@ -14,6 +14,12 @@ func NewPluginWithService(service Service) *pluginbinding.Plugin {
 		pluginbinding.RegisterOperation(clusterListSpec(), service.ClusterList),
 		pluginbinding.RegisterOperation(clusterTestSpec(), service.ClusterTest),
 		pluginbinding.RegisterOperation(endpointDiscoverSpec(), service.EndpointDiscover),
+		pluginbinding.RegisterOperation(namespaceListSpec(), service.NamespaceList),
+		pluginbinding.RegisterOperation(serviceListSpec(), service.ServiceList),
+		pluginbinding.RegisterOperation(serviceShowSpec(), service.ServiceShow),
+		pluginbinding.RegisterOperation(podListSpec(), service.PodList),
+		pluginbinding.RegisterOperation(podShowSpec(), service.PodShow),
+		pluginbinding.RegisterDatasourceSearch(inventoryDatasourceSpec(), service.InventorySearch),
 	)
 	plugin.Command(protocol.CommandEndpointsDiscover, service.DiscoverEndpointsCommand)
 	return plugin

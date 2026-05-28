@@ -8,24 +8,18 @@ SQL databases, Confluence, GitHub, web search, and local system context.
 
 ## Getting Started
 
-From a checkout, run `dex` directly:
+Install `dex`:
 
 ```bash
-go run ./cmd/dex version
-go run ./cmd/dex plugin ls
+go install github.com/fluxplane/fluxplane-dex@latest
 ```
 
-After the first release is cut, install `dex` with:
+Then inspect the available plugin surface:
 
 ```bash
-go install github.com/fluxplane/fluxplane-dex/cmd/dex@latest
-```
-
-During development, plugins can be run from local module paths:
-
-```bash
-go run ./cmd/dex --dev-plugin gitlab=plugins/gitlab plugin show gitlab -o json
-go run ./cmd/dex --dev-plugin slack=plugins/slack plugin show slack -o json
+dex version
+dex plugin ls
+dex plugin show gitlab
 ```
 
 Connect configured integrations from environment variables:
@@ -97,8 +91,13 @@ This project is actively being built. The current surface includes:
 - `tavily`: authenticated web search provider.
 - `duckduckgo`: web search provider without auth.
 - `websearch`: builtin generic search aggregator over web search providers.
+- `kubernetes`: kubeconfig context discovery, cluster endpoint health probes,
+  namespace/service/pod inventory, and in-cluster endpoint discovery.
+- `sql`: read-only MySQL, PostgreSQL, and SQLite queries through URLs, DSNs, or
+  registered endpoint refs.
 
 The broader roadmap is tracked in [.agents/plans/roadmap.md](.agents/plans/roadmap.md).
+The endpoint workflow is documented in [docs/endpoints.md](docs/endpoints.md).
 
 ## Datasource Records, Search, and Lookup
 

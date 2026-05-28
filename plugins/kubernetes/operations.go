@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/url"
 	"sort"
 	"strconv"
@@ -23,7 +24,9 @@ import (
 type Service struct {
 	Contexts     func() (ClusterListResult, error)
 	ClusterProbe func(context.Context, ClusterTestInput) (ClusterTestResult, error)
+	Namespaces   func(context.Context, InventoryInput) ([]corev1.Namespace, error)
 	Services     func(context.Context, EndpointDiscoverInput) ([]corev1.Service, error)
+	Pods         func(context.Context, InventoryInput) ([]corev1.Pod, error)
 	Secrets      func(context.Context, EndpointDiscoverInput) ([]corev1.Secret, error)
 }
 
@@ -69,6 +72,71 @@ type EndpointDiscoverResult struct {
 	Candidates []core.EndpointCandidate `json:"candidates"`
 }
 
+type InventoryInput struct {
+	EndpointRef string `json:"endpoint_ref,omitempty" jsonschema:"description=Registered Kubernetes cluster endpoint ref resolved by the host."`
+	URL         string `json:"url,omitempty" jsonschema:"description=Kubernetes endpoint URL."`
+	Context     string `json:"context,omitempty" jsonschema:"description=Kubeconfig context override."`
+	Namespace   string `json:"namespace,omitempty" jsonschema:"description=Namespace filter. Empty means all namespaces where supported."`
+	Name        string `json:"name,omitempty" jsonschema:"description=Resource name for show operations."`
+	Query       string `json:"query,omitempty" jsonschema:"description=Search query."`
+	Limit       int    `json:"limit,omitempty" jsonschema:"description=Maximum records."`
+}
+
+type NamespaceRecord struct {
+	pluginbinding.DatasourceRecord
+	Name      string            `json:"name"`
+	Status    string            `json:"status,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty"`
+	CreatedAt string            `json:"created_at,omitempty"`
+}
+
+type ServiceRecord struct {
+	pluginbinding.DatasourceRecord
+	Name      string            `json:"name"`
+	Namespace string            `json:"namespace"`
+	Type      string            `json:"type,omitempty"`
+	ClusterIP string            `json:"cluster_ip,omitempty"`
+	Ports     []string          `json:"ports,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty"`
+	CreatedAt string            `json:"created_at,omitempty"`
+}
+
+type PodRecord struct {
+	pluginbinding.DatasourceRecord
+	Name       string            `json:"name"`
+	Namespace  string            `json:"namespace"`
+	Phase      string            `json:"phase,omitempty"`
+	Node       string            `json:"node,omitempty"`
+	Containers []string          `json:"containers,omitempty"`
+	Labels     map[string]string `json:"labels,omitempty"`
+	CreatedAt  string            `json:"created_at,omitempty"`
+}
+
+type NamespaceListResult struct {
+	Count      int               `json:"count"`
+	Namespaces []NamespaceRecord `json:"namespaces"`
+}
+
+type ServiceListResult struct {
+	Count    int             `json:"count"`
+	Services []ServiceRecord `json:"services"`
+}
+
+type ServiceShowResult struct {
+	Service ServiceRecord `json:"service"`
+}
+
+type PodListResult struct {
+	Count int         `json:"count"`
+	Pods  []PodRecord `json:"pods"`
+}
+
+type PodShowResult struct {
+	Pod PodRecord `json:"pod"`
+}
+
+type InventorySearchResult = pluginbinding.DatasourceSearchResult[pluginbinding.DatasourceRecord]
+
 func (s Service) ClusterList(ctx pluginbinding.Context, input ClusterListInput) (ClusterListResult, error) {
 	result, err := s.contexts()()
 	if err != nil {
@@ -83,6 +151,87 @@ func (s Service) ClusterTest(ctx pluginbinding.Context, input ClusterTestInput) 
 		return ClusterTestResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
 	return result, nil
+}
+
+func (s Service) NamespaceList(ctx pluginbinding.Context, input InventoryInput) (NamespaceListResult, error) {
+	items, err := s.namespaces()(context.Background(), input)
+	if err != nil {
+		return NamespaceListResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
+	}
+	records := namespaceRecords(ctx.DatasourceSource(), items)
+	records = filterNamespaceRecords(records, input.Query)
+	records = limitSlice(records, input.Limit)
+	return NamespaceListResult{Count: len(records), Namespaces: records}, nil
+}
+
+func (s Service) ServiceList(ctx pluginbinding.Context, input InventoryInput) (ServiceListResult, error) {
+	items, err := s.services()(context.Background(), endpointInputFromInventory(input))
+	if err != nil {
+		return ServiceListResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
+	}
+	records := serviceRecords(ctx.DatasourceSource(), items)
+	records = filterServiceRecords(records, input.Query)
+	records = limitSlice(records, input.Limit)
+	return ServiceListResult{Count: len(records), Services: records}, nil
+}
+
+func (s Service) ServiceShow(ctx pluginbinding.Context, input InventoryInput) (ServiceShowResult, error) {
+	items, err := s.services()(context.Background(), endpointInputFromInventory(input))
+	if err != nil {
+		return ServiceShowResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
+	}
+	records := serviceRecords(ctx.DatasourceSource(), items)
+	for _, record := range records {
+		if record.Name == strings.TrimSpace(input.Name) && (input.Namespace == "" || record.Namespace == strings.TrimSpace(input.Namespace)) {
+			return ServiceShowResult{Service: record}, nil
+		}
+	}
+	return ServiceShowResult{}, pluginbinding.Errorf("not_found", "service %q not found", input.Name)
+}
+
+func (s Service) PodList(ctx pluginbinding.Context, input InventoryInput) (PodListResult, error) {
+	items, err := s.pods()(context.Background(), input)
+	if err != nil {
+		return PodListResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
+	}
+	records := podRecords(ctx.DatasourceSource(), items)
+	records = filterPodRecords(records, input.Query)
+	records = limitSlice(records, input.Limit)
+	return PodListResult{Count: len(records), Pods: records}, nil
+}
+
+func (s Service) PodShow(ctx pluginbinding.Context, input InventoryInput) (PodShowResult, error) {
+	items, err := s.pods()(context.Background(), input)
+	if err != nil {
+		return PodShowResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
+	}
+	records := podRecords(ctx.DatasourceSource(), items)
+	for _, record := range records {
+		if record.Name == strings.TrimSpace(input.Name) && (input.Namespace == "" || record.Namespace == strings.TrimSpace(input.Namespace)) {
+			return PodShowResult{Pod: record}, nil
+		}
+	}
+	return PodShowResult{}, pluginbinding.Errorf("not_found", "pod %q not found", input.Name)
+}
+
+func (s Service) InventorySearch(ctx pluginbinding.Context, input pluginbinding.DatasourceSearchInput) (InventorySearchResult, error) {
+	inventoryInput := InventoryInput{Query: input.Query, Limit: input.Limit}
+	namespaces, nsErr := s.namespaces()(context.Background(), inventoryInput)
+	services, svcErr := s.services()(context.Background(), endpointInputFromInventory(inventoryInput))
+	pods, podErr := s.pods()(context.Background(), inventoryInput)
+	var firstErr error
+	for _, err := range []error{nsErr, svcErr, podErr} {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr != nil && len(namespaces) == 0 && len(services) == 0 && len(pods) == 0 {
+		return InventorySearchResult{}, pluginbinding.Errorf("kubernetes", "%s", firstErr)
+	}
+	records := inventoryRecords(ctx.DatasourceSource(), namespaces, services, pods)
+	records = filterDatasourceRecords(records, input.Query)
+	records = limitSlice(records, input.Limit)
+	return pluginbinding.NewDatasourceSearchResult(PluginName, input.Query, records), nil
 }
 
 func (s Service) EndpointDiscover(ctx pluginbinding.Context, input EndpointDiscoverInput) (EndpointDiscoverResult, error) {
@@ -138,11 +287,25 @@ func (s Service) clusterProbe() func(context.Context, ClusterTestInput) (Cluster
 	return probeKubernetesCluster
 }
 
+func (s Service) namespaces() func(context.Context, InventoryInput) ([]corev1.Namespace, error) {
+	if s.Namespaces != nil {
+		return s.Namespaces
+	}
+	return listKubernetesNamespaces
+}
+
 func (s Service) services() func(context.Context, EndpointDiscoverInput) ([]corev1.Service, error) {
 	if s.Services != nil {
 		return s.Services
 	}
 	return listKubernetesServices
+}
+
+func (s Service) pods() func(context.Context, InventoryInput) ([]corev1.Pod, error) {
+	if s.Pods != nil {
+		return s.Pods
+	}
+	return listKubernetesPods
 }
 
 func (s Service) secrets() func(context.Context, EndpointDiscoverInput) ([]corev1.Secret, error) {
@@ -185,12 +348,36 @@ func probeKubernetesCluster(ctx context.Context, input ClusterTestInput) (Cluste
 	return out, nil
 }
 
+func listKubernetesNamespaces(ctx context.Context, input InventoryInput) ([]corev1.Namespace, error) {
+	clientset, _, err := kubernetesClient(endpointInputFromInventory(input))
+	if err != nil {
+		return nil, err
+	}
+	list, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
 func listKubernetesServices(ctx context.Context, input EndpointDiscoverInput) ([]corev1.Service, error) {
 	clientset, namespace, err := kubernetesClient(input)
 	if err != nil {
 		return nil, err
 	}
 	list, err := clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
+func listKubernetesPods(ctx context.Context, input InventoryInput) ([]corev1.Pod, error) {
+	clientset, namespace, err := kubernetesClient(endpointInputFromInventory(input))
+	if err != nil {
+		return nil, err
+	}
+	list, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -269,6 +456,18 @@ func clusterContextFromTestInput(input ClusterTestInput) string {
 		return path
 	}
 	return parsed.Host
+}
+
+func endpointInputFromInventory(input InventoryInput) EndpointDiscoverInput {
+	return EndpointDiscoverInput{
+		Context:   firstNonEmpty(input.Context, clusterContextFromEndpointURL(input.URL)),
+		Namespace: input.Namespace,
+		Limit:     input.Limit,
+	}
+}
+
+func clusterContextFromEndpointURL(rawURL string) string {
+	return clusterContextFromTestInput(ClusterTestInput{URL: rawURL})
 }
 
 func clusterEndpointCandidates(contexts []ClusterContext, input EndpointDiscoverInput) []core.EndpointCandidate {
@@ -535,6 +734,186 @@ func serviceURLs(item corev1.Service, product string) []string {
 func endpointCandidateID(product, endpoint, namespace, service string) string {
 	sum := sha1.Sum([]byte(product + "\x00" + endpoint + "\x00" + namespace + "\x00" + service))
 	return product + ":" + hex.EncodeToString(sum[:8])
+}
+
+func namespaceRecords(source pluginbinding.DatasourceSource, items []corev1.Namespace) []NamespaceRecord {
+	records := make([]NamespaceRecord, 0, len(items))
+	for _, item := range items {
+		record := NamespaceRecord{
+			DatasourceRecord: pluginbinding.NewDatasourceRecord(source, EntityNamespace, item.Name, pluginbinding.RecordTitle(item.Name), pluginbinding.RecordLink("self", "kubernetes://namespace/"+url.PathEscape(item.Name))),
+			Name:             item.Name,
+			Status:           string(item.Status.Phase),
+			Labels:           cloneStringMap(item.Labels),
+			CreatedAt:        timestampText(item.CreationTimestamp),
+		}
+		record.Metadata = map[string]any{"name": record.Name, "status": record.Status, "labels": record.Labels}
+		records = append(records, record)
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].Name < records[j].Name })
+	return records
+}
+
+func serviceRecords(source pluginbinding.DatasourceSource, items []corev1.Service) []ServiceRecord {
+	records := make([]ServiceRecord, 0, len(items))
+	for _, item := range items {
+		id := item.Namespace + "/" + item.Name
+		record := ServiceRecord{
+			DatasourceRecord: pluginbinding.NewDatasourceRecord(source, EntityService, id, pluginbinding.RecordTitle(id), pluginbinding.RecordLink("self", "kubernetes://service/"+url.PathEscape(id))),
+			Name:             item.Name,
+			Namespace:        item.Namespace,
+			Type:             string(item.Spec.Type),
+			ClusterIP:        item.Spec.ClusterIP,
+			Ports:            servicePortTexts(item),
+			Labels:           cloneStringMap(item.Labels),
+			CreatedAt:        timestampText(item.CreationTimestamp),
+		}
+		record.Metadata = map[string]any{"name": record.Name, "namespace": record.Namespace, "type": record.Type, "cluster_ip": record.ClusterIP, "ports": record.Ports, "labels": record.Labels}
+		records = append(records, record)
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
+	return records
+}
+
+func podRecords(source pluginbinding.DatasourceSource, items []corev1.Pod) []PodRecord {
+	records := make([]PodRecord, 0, len(items))
+	for _, item := range items {
+		id := item.Namespace + "/" + item.Name
+		record := PodRecord{
+			DatasourceRecord: pluginbinding.NewDatasourceRecord(source, EntityPod, id, pluginbinding.RecordTitle(id), pluginbinding.RecordLink("self", "kubernetes://pod/"+url.PathEscape(id))),
+			Name:             item.Name,
+			Namespace:        item.Namespace,
+			Phase:            string(item.Status.Phase),
+			Node:             item.Spec.NodeName,
+			Containers:       podContainerNames(item),
+			Labels:           cloneStringMap(item.Labels),
+			CreatedAt:        timestampText(item.CreationTimestamp),
+		}
+		record.Metadata = map[string]any{"name": record.Name, "namespace": record.Namespace, "phase": record.Phase, "node": record.Node, "containers": record.Containers, "labels": record.Labels}
+		records = append(records, record)
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
+	return records
+}
+
+func inventoryRecords(source pluginbinding.DatasourceSource, namespaces []corev1.Namespace, services []corev1.Service, pods []corev1.Pod) []pluginbinding.DatasourceRecord {
+	var records []pluginbinding.DatasourceRecord
+	for _, record := range namespaceRecords(source, namespaces) {
+		records = append(records, record.DatasourceRecord)
+	}
+	for _, record := range serviceRecords(source, services) {
+		records = append(records, record.DatasourceRecord)
+	}
+	for _, record := range podRecords(source, pods) {
+		records = append(records, record.DatasourceRecord)
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].Entity != records[j].Entity {
+			return records[i].Entity < records[j].Entity
+		}
+		return records[i].ID < records[j].ID
+	})
+	return records
+}
+
+func servicePortTexts(item corev1.Service) []string {
+	var out []string
+	for _, port := range item.Spec.Ports {
+		text := firstNonEmpty(port.Name, string(port.Protocol)) + ":" + strconv.Itoa(int(port.Port))
+		if port.TargetPort.String() != "" && port.TargetPort.String() != "0" {
+			text += "->" + port.TargetPort.String()
+		}
+		out = append(out, text)
+	}
+	return out
+}
+
+func podContainerNames(item corev1.Pod) []string {
+	var out []string
+	for _, container := range item.Spec.Containers {
+		if container.Name != "" {
+			out = append(out, container.Name)
+		}
+	}
+	return out
+}
+
+func timestampText(value metav1.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.Time.Format(time.RFC3339)
+}
+
+func filterNamespaceRecords(records []NamespaceRecord, query string) []NamespaceRecord {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return records
+	}
+	var out []NamespaceRecord
+	for _, record := range records {
+		if strings.Contains(strings.ToLower(record.Name+" "+record.Status+" "+joinMap(record.Labels)), query) {
+			out = append(out, record)
+		}
+	}
+	return out
+}
+
+func filterServiceRecords(records []ServiceRecord, query string) []ServiceRecord {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return records
+	}
+	var out []ServiceRecord
+	for _, record := range records {
+		if strings.Contains(strings.ToLower(record.ID+" "+record.Name+" "+record.Namespace+" "+record.Type+" "+strings.Join(record.Ports, " ")+" "+joinMap(record.Labels)), query) {
+			out = append(out, record)
+		}
+	}
+	return out
+}
+
+func filterPodRecords(records []PodRecord, query string) []PodRecord {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return records
+	}
+	var out []PodRecord
+	for _, record := range records {
+		if strings.Contains(strings.ToLower(record.ID+" "+record.Name+" "+record.Namespace+" "+record.Phase+" "+record.Node+" "+strings.Join(record.Containers, " ")+" "+joinMap(record.Labels)), query) {
+			out = append(out, record)
+		}
+	}
+	return out
+}
+
+func filterDatasourceRecords(records []pluginbinding.DatasourceRecord, query string) []pluginbinding.DatasourceRecord {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return records
+	}
+	var out []pluginbinding.DatasourceRecord
+	for _, record := range records {
+		if strings.Contains(strings.ToLower(record.Entity+" "+record.ID+" "+record.Title+" "+metadataText(record.Metadata)), query) {
+			out = append(out, record)
+		}
+	}
+	return out
+}
+
+func metadataText(metadata map[string]any) string {
+	var parts []string
+	for key, value := range metadata {
+		parts = append(parts, key+"="+strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(strings.Trim(fmt.Sprint(value), "[]"), "\n", " "), "  ", " ")))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, " ")
+}
+
+func limitSlice[T any](items []T, limit int) []T {
+	if limit <= 0 || len(items) <= limit {
+		return items
+	}
+	return items[:limit]
 }
 
 func joinMap(values map[string]string) string {

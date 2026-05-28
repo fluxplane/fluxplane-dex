@@ -125,6 +125,7 @@ type endpointTestResult struct {
 	Product    string         `json:"product,omitempty"`
 	Protocol   string         `json:"protocol,omitempty"`
 	OK         bool           `json:"ok"`
+	CheckedAt  time.Time      `json:"checked_at"`
 	Method     string         `json:"method"`
 	DurationMS int64          `json:"duration_ms,omitempty"`
 	Error      string         `json:"error,omitempty"`
@@ -697,6 +698,9 @@ func newEndpointCommand(opts *options) *cobra.Command {
 				return fmt.Errorf("unknown endpoint %q", args[0])
 			}
 			result := testEndpoint(cmd.Context(), runner, opts.instanceName(), endpoint)
+			if _, err := runner.State.SaveEndpointHealth(endpoint.ID, endpointHealthFromTestResult(result)); err != nil {
+				return err
+			}
 			if err := renderValue(cmd.OutOrStdout(), opts.output, result); err != nil {
 				return err
 			}
@@ -1137,11 +1141,12 @@ func testEndpoint(ctx context.Context, runner runtime.Runner, instance string, e
 func testKubernetesEndpoint(ctx context.Context, runner runtime.Runner, instance string, endpoint runtime.EndpointRecord) endpointTestResult {
 	start := time.Now()
 	result := endpointTestResult{
-		ID:       endpoint.ID,
-		URL:      redactEndpointURL(endpoint.URL),
-		Product:  endpoint.Product,
-		Protocol: endpoint.Protocol,
-		Method:   "kubernetes.cluster.test",
+		ID:        endpoint.ID,
+		URL:       redactEndpointURL(endpoint.URL),
+		Product:   endpoint.Product,
+		Protocol:  endpoint.Protocol,
+		CheckedAt: time.Now().UTC(),
+		Method:    "kubernetes.cluster.test",
 	}
 	inputRaw, err := json.Marshal(map[string]any{"endpoint_ref": endpoint.ID})
 	if err != nil {
@@ -1174,11 +1179,12 @@ func testKubernetesEndpoint(ctx context.Context, runner runtime.Runner, instance
 func testSQLEndpoint(ctx context.Context, runner runtime.Runner, instance string, endpoint runtime.EndpointRecord) endpointTestResult {
 	start := time.Now()
 	result := endpointTestResult{
-		ID:       endpoint.ID,
-		URL:      redactEndpointURL(endpoint.URL),
-		Product:  endpoint.Product,
-		Protocol: endpoint.Protocol,
-		Method:   "sql.query",
+		ID:        endpoint.ID,
+		URL:       redactEndpointURL(endpoint.URL),
+		Product:   endpoint.Product,
+		Protocol:  endpoint.Protocol,
+		CheckedAt: time.Now().UTC(),
+		Method:    "sql.query",
 	}
 	inputRaw, err := json.Marshal(map[string]any{
 		"endpoint_ref": endpoint.ID,
@@ -1219,11 +1225,12 @@ func testSQLEndpoint(ctx context.Context, runner runtime.Runner, instance string
 func testTCPEndpoint(ctx context.Context, endpoint runtime.EndpointRecord) endpointTestResult {
 	start := time.Now()
 	result := endpointTestResult{
-		ID:       endpoint.ID,
-		URL:      redactEndpointURL(endpoint.URL),
-		Product:  endpoint.Product,
-		Protocol: endpoint.Protocol,
-		Method:   "tcp_connect",
+		ID:        endpoint.ID,
+		URL:       redactEndpointURL(endpoint.URL),
+		Product:   endpoint.Product,
+		Protocol:  endpoint.Protocol,
+		CheckedAt: time.Now().UTC(),
+		Method:    "tcp_connect",
 	}
 	hostPort, err := endpointHostPort(endpoint.URL)
 	if err != nil {
@@ -1242,6 +1249,23 @@ func testTCPEndpoint(ctx context.Context, endpoint runtime.EndpointRecord) endpo
 	result.OK = true
 	result.Details = map[string]any{"address": hostPort}
 	return result
+}
+
+func endpointHealthFromTestResult(result endpointTestResult) runtime.EndpointHealth {
+	var details json.RawMessage
+	if len(result.Details) > 0 {
+		if raw, err := json.Marshal(result.Details); err == nil {
+			details = raw
+		}
+	}
+	return runtime.EndpointHealth{
+		OK:         result.OK,
+		CheckedAt:  result.CheckedAt,
+		Method:     result.Method,
+		DurationMS: result.DurationMS,
+		Error:      result.Error,
+		Details:    details,
+	}
 }
 
 func isKubernetesEndpoint(endpoint runtime.EndpointRecord) bool {

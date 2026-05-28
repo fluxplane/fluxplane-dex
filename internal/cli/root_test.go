@@ -220,6 +220,13 @@ func TestEndpointTestUsesTCPFallback(t *testing.T) {
 	if !result.OK || result.Method != "tcp_connect" {
 		t.Fatalf("result = %#v", result)
 	}
+	record, ok, err := state.GetEndpoint("local-tcp")
+	if err != nil || !ok {
+		t.Fatalf("get endpoint ok=%v err=%v", ok, err)
+	}
+	if record.LastHealth == nil || !record.LastHealth.OK || record.LastHealth.Method != "tcp_connect" {
+		t.Fatalf("last health = %#v", record.LastHealth)
+	}
 }
 
 func TestEndpointTestUsesKubernetesPlugin(t *testing.T) {

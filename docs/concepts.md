@@ -170,9 +170,16 @@ Examples include a GitLab base URL, Jira tenant URL, Loki API URL, Prometheus
 API URL, MySQL connection target, Kubernetes service, or Homer web endpoint.
 
 Endpoint candidates can include id, URL, product, protocol, source, score,
-labels, and annotations. The roadmap adds a host-owned endpoint registry so
-plugins can consume endpoint refs instead of each storing URLs and discovery
-state independently.
+labels, and annotations. Registered endpoints are host-owned records that
+plugins can consume through endpoint refs instead of each storing URLs and
+discovery state independently.
+
+Endpoint health is the last known reachability result for a registered endpoint.
+It records whether the endpoint was reachable, when it was checked, which probe
+method was used, how long it took, any error, and compact method-specific
+details. A probe can be protocol-specific, such as `sql.query` for SQL endpoints
+or `kubernetes.cluster.test` for Kubernetes cluster endpoints, or a generic TCP
+connect fallback.
 
 ## Auth Method
 

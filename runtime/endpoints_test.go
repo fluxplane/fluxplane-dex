@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/protocol"
@@ -34,6 +35,38 @@ func TestEndpointRegistryStoresAndFiltersEndpoints(t *testing.T) {
 	removed, err := state.RemoveEndpoint(record.ID)
 	if err != nil || !removed {
 		t.Fatalf("remove=%v err=%v", removed, err)
+	}
+}
+
+func TestEndpointRegistryStoresHealthAndPreservesOnUpdate(t *testing.T) {
+	state, err := NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveEndpoint(core.EndpointRef{ID: "dev", URL: "kubernetes://context/dev", Product: "kubernetes"}); err != nil {
+		t.Fatal(err)
+	}
+	checkedAt := time.Date(2026, 5, 28, 1, 2, 3, 0, time.UTC)
+	updated, err := state.SaveEndpointHealth("dev", EndpointHealth{OK: true, CheckedAt: checkedAt, Method: "kubernetes.cluster.test", DurationMS: 42, Details: json.RawMessage(`{"server_version":"v1.30.0"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.LastHealth == nil || !updated.LastHealth.OK || updated.LastHealth.Method != "kubernetes.cluster.test" {
+		t.Fatalf("updated = %#v", updated)
+	}
+	if _, err := state.SaveEndpoint(core.EndpointRef{ID: "dev", URL: "kubernetes://context/dev", Product: "kubernetes", Source: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	record, ok, err := state.GetEndpoint("dev")
+	if err != nil || !ok {
+		t.Fatalf("get ok=%v err=%v", ok, err)
+	}
+	var details map[string]string
+	if record.LastHealth != nil {
+		_ = json.Unmarshal(record.LastHealth.Details, &details)
+	}
+	if record.LastHealth == nil || record.LastHealth.DurationMS != 42 || details["server_version"] != "v1.30.0" {
+		t.Fatalf("record = %#v", record)
 	}
 }
 

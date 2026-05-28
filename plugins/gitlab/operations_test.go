@@ -91,6 +91,100 @@ func TestServiceMRListDefaultsAndNumericProject(t *testing.T) {
 	}
 }
 
+func TestServiceMRCreateUsesClient(t *testing.T) {
+	client := &fakeClient{mergeRequest: MergeRequest{IID: 12, ProjectID: 42, Title: "Ship"}}
+	plugin := testPlugin(client, nil)
+
+	out := plugintest.RunOK[MergeRequest](t, plugin, OperationMRCreate, map[string]any{
+		"project":              "group/dex",
+		"title":                "Ship",
+		"source_branch":        "feature",
+		"target_branch":        "main",
+		"description":          "Ready",
+		"labels":               []any{"team", "release"},
+		"reviewer_ids":         []any{float64(9), float64(10)},
+		"remove_source_branch": true,
+		"squash":               true,
+	})
+	if client.mrCreateProject != "group/dex" {
+		t.Fatalf("mr create project = %#v", client.mrCreateProject)
+	}
+	if client.mrCreateOptions.Title != "Ship" || client.mrCreateOptions.SourceBranch != "feature" || client.mrCreateOptions.TargetBranch != "main" {
+		t.Fatalf("mr create options = %#v", client.mrCreateOptions)
+	}
+	if len(client.mrCreateOptions.Labels) != 2 || client.mrCreateOptions.Labels[0] != "team" || len(client.mrCreateOptions.ReviewerIDs) != 2 {
+		t.Fatalf("mr create options = %#v", client.mrCreateOptions)
+	}
+	if client.mrCreateOptions.RemoveSourceBranch == nil || !*client.mrCreateOptions.RemoveSourceBranch || client.mrCreateOptions.Squash == nil || !*client.mrCreateOptions.Squash {
+		t.Fatalf("mr create bool options = %#v", client.mrCreateOptions)
+	}
+	if out.IID != 12 || out.Title != "Ship" {
+		t.Fatalf("unexpected output: %#v", out)
+	}
+}
+
+func TestServiceMRApproveUsesRefAndSHA(t *testing.T) {
+	client := &fakeClient{approval: MergeRequestApproval{IID: 12, ProjectID: 42, Approved: true}}
+	plugin := testPlugin(client, nil)
+
+	out := plugintest.RunOK[MergeRequestApproval](t, plugin, OperationMRApprove, map[string]any{"ref": "group/dex!12", "sha": "abc"})
+	if client.mrApproveProject != "group/dex" || client.mrApproveIID != 12 || client.mrApproveOptions.SHA != "abc" {
+		t.Fatalf("mr approve = %#v ! %d %#v", client.mrApproveProject, client.mrApproveIID, client.mrApproveOptions)
+	}
+	if !out.Approved || out.IID != 12 {
+		t.Fatalf("unexpected output: %#v", out)
+	}
+}
+
+func TestServiceMRMergeUsesProjectIIDAndOptions(t *testing.T) {
+	client := &fakeClient{mergeRequest: MergeRequest{IID: 12, ProjectID: 42, State: "merged"}}
+	plugin := testPlugin(client, nil)
+
+	out := plugintest.RunOK[MergeRequest](t, plugin, OperationMRMerge, map[string]any{
+		"project":               "group/dex",
+		"iid":                   12,
+		"auto_merge":            true,
+		"squash":                true,
+		"remove_source_branch":  true,
+		"merge_commit_message":  "Merge it",
+		"squash_commit_message": "Squash it",
+		"sha":                   "abc",
+	})
+	if client.mrMergeProject != "group/dex" || client.mrMergeIID != 12 {
+		t.Fatalf("mr merge address = %#v ! %d", client.mrMergeProject, client.mrMergeIID)
+	}
+	if client.mrMergeOptions.AutoMerge == nil || !*client.mrMergeOptions.AutoMerge || client.mrMergeOptions.Squash == nil || !*client.mrMergeOptions.Squash {
+		t.Fatalf("mr merge bool options = %#v", client.mrMergeOptions)
+	}
+	if client.mrMergeOptions.ShouldRemoveSourceBranch == nil || !*client.mrMergeOptions.ShouldRemoveSourceBranch || client.mrMergeOptions.SHA != "abc" {
+		t.Fatalf("mr merge options = %#v", client.mrMergeOptions)
+	}
+	if out.State != "merged" {
+		t.Fatalf("unexpected output: %#v", out)
+	}
+}
+
+func TestServiceRepositoryTagCreateUsesClient(t *testing.T) {
+	client := &fakeClient{repositoryTag: RepositoryTag{Name: "v1.2.3", Target: "abc"}}
+	plugin := testPlugin(client, nil)
+
+	out := plugintest.RunOK[RepositoryTag](t, plugin, OperationTagCreate, map[string]any{
+		"project":  "group/dex",
+		"tag_name": "v1.2.3",
+		"ref":      "main",
+		"message":  "release",
+	})
+	if client.repositoryTagProject != "group/dex" {
+		t.Fatalf("tag create project = %#v", client.repositoryTagProject)
+	}
+	if client.repositoryTagOptions.TagName != "v1.2.3" || client.repositoryTagOptions.Ref != "main" || client.repositoryTagOptions.Message != "release" {
+		t.Fatalf("tag create options = %#v", client.repositoryTagOptions)
+	}
+	if out.Name != "v1.2.3" || out.Target != "abc" {
+		t.Fatalf("unexpected output: %#v", out)
+	}
+}
+
 func TestServiceIndexBuildReturnsNormalizedRecords(t *testing.T) {
 	client := &fakeClient{
 		projects: []Project{{ID: 1, Name: "dex", PathWithNamespace: "group/dex", WebURL: "https://gitlab.example.com/group/dex"}},
@@ -236,22 +330,34 @@ func testPlugin(client Client, get pluginbinding.SecretGetter) *pluginbinding.Pl
 }
 
 type fakeClient struct {
-	user             User
-	projects         []Project
-	users            []User
-	groups           []Group
-	issues           []Issue
-	project          Project
-	mergeRequest     MergeRequest
-	mergeRequests    []MergeRequest
-	listOptions      ProjectListOptions
-	userListOptions  UserListOptions
-	groupListOptions GroupListOptions
-	issueListOptions IssueListOptions
-	mrListOptions    MergeRequestListOptions
-	projectID        any
-	mrProject        any
-	mrIID            int64
+	user                 User
+	projects             []Project
+	users                []User
+	groups               []Group
+	issues               []Issue
+	project              Project
+	mergeRequest         MergeRequest
+	mergeRequests        []MergeRequest
+	approval             MergeRequestApproval
+	repositoryTag        RepositoryTag
+	listOptions          ProjectListOptions
+	userListOptions      UserListOptions
+	groupListOptions     GroupListOptions
+	issueListOptions     IssueListOptions
+	mrListOptions        MergeRequestListOptions
+	mrCreateOptions      MergeRequestCreateOptions
+	mrApproveOptions     MergeRequestApproveOptions
+	mrMergeOptions       MergeRequestMergeOptions
+	repositoryTagOptions RepositoryTagCreateOptions
+	projectID            any
+	mrProject            any
+	mrIID                int64
+	mrCreateProject      any
+	mrApproveProject     any
+	mrApproveIID         int64
+	mrMergeProject       any
+	mrMergeIID           int64
+	repositoryTagProject any
 }
 
 func (c *fakeClient) CurrentUser() (User, error) {
@@ -292,4 +398,30 @@ func (c *fakeClient) GetMergeRequest(project any, iid int64) (MergeRequest, erro
 	c.mrProject = project
 	c.mrIID = iid
 	return c.mergeRequest, nil
+}
+
+func (c *fakeClient) CreateMergeRequest(project any, options MergeRequestCreateOptions) (MergeRequest, error) {
+	c.mrCreateProject = project
+	c.mrCreateOptions = options
+	return c.mergeRequest, nil
+}
+
+func (c *fakeClient) ApproveMergeRequest(project any, iid int64, options MergeRequestApproveOptions) (MergeRequestApproval, error) {
+	c.mrApproveProject = project
+	c.mrApproveIID = iid
+	c.mrApproveOptions = options
+	return c.approval, nil
+}
+
+func (c *fakeClient) MergeMergeRequest(project any, iid int64, options MergeRequestMergeOptions) (MergeRequest, error) {
+	c.mrMergeProject = project
+	c.mrMergeIID = iid
+	c.mrMergeOptions = options
+	return c.mergeRequest, nil
+}
+
+func (c *fakeClient) CreateRepositoryTag(project any, options RepositoryTagCreateOptions) (RepositoryTag, error) {
+	c.repositoryTagProject = project
+	c.repositoryTagOptions = options
+	return c.repositoryTag, nil
 }

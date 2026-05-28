@@ -3,6 +3,7 @@ package gitlab
 import (
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
+	"github.com/fluxplane/fluxplane-dex/protocol"
 )
 
 const (
@@ -25,6 +26,10 @@ const (
 	OperationProjectShow = "gitlab.project.show"
 	OperationMRList      = "gitlab.mr.list"
 	OperationMRShow      = "gitlab.mr.show"
+	OperationMRCreate    = "gitlab.mr.create"
+	OperationMRApprove   = "gitlab.mr.approve"
+	OperationMRMerge     = "gitlab.mr.merge"
+	OperationTagCreate   = "gitlab.repository.tag.create"
 
 	DatasourceProjects      = "gitlab.projects"
 	DatasourceUsers         = "gitlab.users"
@@ -90,6 +95,7 @@ func manifestSpec() pluginbinding.ManifestSpec {
 		Endpoints: []core.EndpointSpec{
 			pluginbinding.Endpoint(EndpointName, "Configured GitLab API endpoint.", PluginName),
 		},
+		Metadata: map[string]string{pluginbinding.ManifestProtocolKey: protocol.Version},
 	}
 }
 
@@ -101,6 +107,10 @@ func operationSpecs() []core.OperationSpec {
 		projectShowSpec(),
 		mergeRequestListSpec(),
 		mergeRequestShowSpec(),
+		mergeRequestCreateSpec(),
+		mergeRequestApproveSpec(),
+		mergeRequestMergeSpec(),
+		repositoryTagCreateSpec(),
 	}
 }
 
@@ -132,6 +142,22 @@ func mergeRequestShowSpec() core.OperationSpec {
 	return gitlabReadOperation[MergeRequestShowInput, pluginbinding.ShowResult[MergeRequest]](OperationMRShow, "Show one GitLab merge request.")
 }
 
+func mergeRequestCreateSpec() core.OperationSpec {
+	return gitlabWriteOperation[MergeRequestCreateInput, MergeRequest](OperationMRCreate, "Create a GitLab merge request.", core.OperationNonIdempotent)
+}
+
+func mergeRequestApproveSpec() core.OperationSpec {
+	return gitlabWriteOperation[MergeRequestApproveInput, MergeRequestApproval](OperationMRApprove, "Approve a GitLab merge request.", core.OperationConditional)
+}
+
+func mergeRequestMergeSpec() core.OperationSpec {
+	return gitlabWriteOperation[MergeRequestMergeInput, MergeRequest](OperationMRMerge, "Merge a GitLab merge request.", core.OperationNonIdempotent)
+}
+
+func repositoryTagCreateSpec() core.OperationSpec {
+	return gitlabWriteOperation[RepositoryTagCreateInput, RepositoryTag](OperationTagCreate, "Create a GitLab repository tag.", core.OperationNonIdempotent)
+}
+
 func gitlabReadOperation[I any, O any](name, description string) core.OperationSpec {
 	return pluginbinding.TypedOperationSpec[I, O](name, description, gitlabReadOptions(core.OperationIdempotent)...)
 }
@@ -148,6 +174,20 @@ func gitlabReadOptions(idempotency core.OperationIdempotency) []pluginbinding.Op
 		pluginbinding.Effects(core.OperationEffectRead, core.OperationEffectNetwork),
 		pluginbinding.Access(core.OperationAccessAuth, core.OperationAccessSecret, core.OperationAccessNetwork),
 		pluginbinding.Risk(core.OperationRiskLow),
+		pluginbinding.Idempotency(idempotency),
+	}
+}
+
+func gitlabWriteOperation[I any, O any](name, description string, idempotency core.OperationIdempotency) core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[I, O](name, description, gitlabWriteOptions(idempotency)...)
+}
+
+func gitlabWriteOptions(idempotency core.OperationIdempotency) []pluginbinding.OperationSpecOption {
+	return []pluginbinding.OperationSpecOption{
+		pluginbinding.SecretPurposes(AuthPurposeAccessToken, AuthPurposeGitLabURL),
+		pluginbinding.Effects(core.OperationEffectWrite, core.OperationEffectNetwork),
+		pluginbinding.Access(core.OperationAccessAuth, core.OperationAccessSecret, core.OperationAccessNetwork),
+		pluginbinding.Risk(core.OperationRiskMedium),
 		pluginbinding.Idempotency(idempotency),
 	}
 }

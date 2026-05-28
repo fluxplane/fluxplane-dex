@@ -114,6 +114,7 @@ type MergeRequest struct {
 	IID            int64    `json:"iid"`
 	ProjectID      int64    `json:"project_id"`
 	Title          string   `json:"title,omitempty"`
+	Description    string   `json:"description,omitempty"`
 	State          string   `json:"state,omitempty"`
 	SourceBranch   string   `json:"source_branch,omitempty"`
 	TargetBranch   string   `json:"target_branch,omitempty"`
@@ -121,6 +122,7 @@ type MergeRequest struct {
 	AuthorUsername string   `json:"author_username,omitempty"`
 	Labels         []string `json:"labels,omitempty"`
 	Reference      string   `json:"reference,omitempty"`
+	SHA            string   `json:"sha,omitempty"`
 	Draft          bool     `json:"draft,omitempty"`
 	CreatedAt      string   `json:"created_at,omitempty"`
 	UpdatedAt      string   `json:"updated_at,omitempty"`
@@ -152,6 +154,78 @@ type MergeRequestListOptions struct {
 	Search  string `json:"search,omitempty"`
 	OrderBy string `json:"order_by,omitempty"`
 	Sort    string `json:"sort,omitempty"`
+}
+
+type MergeRequestCreateOptions struct {
+	Project            string   `json:"project,omitempty"`
+	Title              string   `json:"title,omitempty"`
+	SourceBranch       string   `json:"source_branch,omitempty"`
+	TargetBranch       string   `json:"target_branch,omitempty"`
+	Description        string   `json:"description,omitempty"`
+	Labels             []string `json:"labels,omitempty"`
+	AssigneeID         int64    `json:"assignee_id,omitempty"`
+	AssigneeIDs        []int64  `json:"assignee_ids,omitempty"`
+	ReviewerIDs        []int64  `json:"reviewer_ids,omitempty"`
+	TargetProjectID    int64    `json:"target_project_id,omitempty"`
+	MilestoneID        int64    `json:"milestone_id,omitempty"`
+	RemoveSourceBranch *bool    `json:"remove_source_branch,omitempty"`
+	Squash             *bool    `json:"squash,omitempty"`
+	AllowCollaboration *bool    `json:"allow_collaboration,omitempty"`
+}
+
+type MergeRequestApproveOptions struct {
+	SHA string `json:"sha,omitempty"`
+}
+
+type MergeRequestMergeOptions struct {
+	AutoMerge                *bool  `json:"auto_merge,omitempty"`
+	MergeCommitMessage       string `json:"merge_commit_message,omitempty"`
+	SquashCommitMessage      string `json:"squash_commit_message,omitempty"`
+	Squash                   *bool  `json:"squash,omitempty"`
+	ShouldRemoveSourceBranch *bool  `json:"should_remove_source_branch,omitempty"`
+	SHA                      string `json:"sha,omitempty"`
+}
+
+type MergeRequestApproval struct {
+	ID                int64  `json:"id"`
+	IID               int64  `json:"iid"`
+	ProjectID         int64  `json:"project_id"`
+	Title             string `json:"title,omitempty"`
+	State             string `json:"state,omitempty"`
+	MergeStatus       string `json:"merge_status,omitempty"`
+	Approved          bool   `json:"approved"`
+	ApprovalsRequired int64  `json:"approvals_required,omitempty"`
+	ApprovalsLeft     int64  `json:"approvals_left,omitempty"`
+	UserHasApproved   bool   `json:"user_has_approved,omitempty"`
+	UserCanApprove    bool   `json:"user_can_approve,omitempty"`
+	HasApprovalRules  bool   `json:"has_approval_rules,omitempty"`
+	CreatedAt         string `json:"created_at,omitempty"`
+	UpdatedAt         string `json:"updated_at,omitempty"`
+}
+
+type RepositoryTagCreateOptions struct {
+	Project string `json:"project,omitempty"`
+	TagName string `json:"tag_name,omitempty"`
+	Ref     string `json:"ref,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+type RepositoryTag struct {
+	Name      string              `json:"name"`
+	Message   string              `json:"message,omitempty"`
+	Target    string              `json:"target,omitempty"`
+	Protected bool                `json:"protected"`
+	CreatedAt string              `json:"created_at,omitempty"`
+	Commit    RepositoryTagCommit `json:"commit,omitempty"`
+}
+
+type RepositoryTagCommit struct {
+	ID            string `json:"id,omitempty"`
+	ShortID       string `json:"short_id,omitempty"`
+	Title         string `json:"title,omitempty"`
+	CreatedAt     string `json:"created_at,omitempty"`
+	CommittedDate string `json:"committed_date,omitempty"`
+	WebURL        string `json:"web_url,omitempty"`
 }
 
 type ProjectListOptions struct {

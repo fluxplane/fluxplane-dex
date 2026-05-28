@@ -5,6 +5,7 @@ import (
 
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding/plugintest"
+	"github.com/fluxplane/fluxplane-dex/protocol"
 )
 
 func TestManifestQuality(t *testing.T) {
@@ -30,5 +31,25 @@ func TestManifestDeclaresDatasourceMetadata(t *testing.T) {
 	}
 	if mr.Completion == nil || len(mr.Completion.Fields) == 0 {
 		t.Fatalf("merge request completion = %#v", mr.Completion)
+	}
+}
+
+func TestManifestDeclaresGitLabWriteOperations(t *testing.T) {
+	manifest := Manifest()
+	if manifest.Metadata["dex.protocol"] != protocol.Version {
+		t.Fatalf("protocol metadata = %#v", manifest.Metadata)
+	}
+	operations := map[string]core.OperationSpec{}
+	for _, operation := range manifest.Operations {
+		operations[operation.Name] = operation
+	}
+	for _, name := range []string{OperationMRCreate, OperationMRApprove, OperationMRMerge, OperationTagCreate} {
+		operation, ok := operations[name]
+		if !ok {
+			t.Fatalf("missing operation %s", name)
+		}
+		if operation.ReadOnly || operation.Risk != core.OperationRiskMedium || operation.Idempotency == "" {
+			t.Fatalf("operation %s metadata = %#v", name, operation)
+		}
 	}
 }

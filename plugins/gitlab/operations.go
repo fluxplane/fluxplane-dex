@@ -80,6 +80,63 @@ type MergeRequestShowInput struct {
 	ID  string `json:"id,omitempty" jsonschema:"description=Alias for ref"`
 }
 
+type MergeRequestCreateInput struct {
+	Project            string   `json:"project,omitempty" jsonschema:"description=Project path or numeric ID"`
+	ProjectID          string   `json:"project_id,omitempty" jsonschema:"description=Alias for project"`
+	Path               string   `json:"path,omitempty" jsonschema:"description=Alias for project"`
+	Title              string   `json:"title,omitempty" jsonschema:"description=Merge request title"`
+	SourceBranch       string   `json:"source_branch,omitempty" jsonschema:"description=Source branch name"`
+	TargetBranch       string   `json:"target_branch,omitempty" jsonschema:"description=Target branch name"`
+	Description        string   `json:"description,omitempty" jsonschema:"description=Merge request description"`
+	Labels             []string `json:"labels,omitempty" jsonschema:"description=Labels to set"`
+	AssigneeID         int64    `json:"assignee_id,omitempty" jsonschema:"description=Single assignee user ID"`
+	AssigneeIDs        []int64  `json:"assignee_ids,omitempty" jsonschema:"description=Assignee user IDs"`
+	ReviewerIDs        []int64  `json:"reviewer_ids,omitempty" jsonschema:"description=Reviewer user IDs"`
+	TargetProjectID    int64    `json:"target_project_id,omitempty" jsonschema:"description=Target project ID for fork merge requests"`
+	MilestoneID        int64    `json:"milestone_id,omitempty" jsonschema:"description=Milestone ID"`
+	RemoveSourceBranch *bool    `json:"remove_source_branch,omitempty" jsonschema:"description=Remove source branch after merge"`
+	Squash             *bool    `json:"squash,omitempty" jsonschema:"description=Squash commits when merging"`
+	AllowCollaboration *bool    `json:"allow_collaboration,omitempty" jsonschema:"description=Allow upstream members to collaborate"`
+}
+
+type MergeRequestApproveInput struct {
+	Ref             string `json:"ref,omitempty" jsonschema:"description=Merge request reference as PROJECT!IID"`
+	ID              string `json:"id,omitempty" jsonschema:"description=Alias for ref"`
+	Project         string `json:"project,omitempty" jsonschema:"description=Project path or numeric ID"`
+	ProjectID       string `json:"project_id,omitempty" jsonschema:"description=Alias for project"`
+	Path            string `json:"path,omitempty" jsonschema:"description=Alias for project"`
+	IID             int64  `json:"iid,omitempty" jsonschema:"description=Merge request IID"`
+	MergeRequestIID int64  `json:"merge_request_iid,omitempty" jsonschema:"description=Alias for iid"`
+	SHA             string `json:"sha,omitempty" jsonschema:"description=Expected merge request HEAD SHA"`
+}
+
+type MergeRequestMergeInput struct {
+	Ref                      string `json:"ref,omitempty" jsonschema:"description=Merge request reference as PROJECT!IID"`
+	ID                       string `json:"id,omitempty" jsonschema:"description=Alias for ref"`
+	Project                  string `json:"project,omitempty" jsonschema:"description=Project path or numeric ID"`
+	ProjectID                string `json:"project_id,omitempty" jsonschema:"description=Alias for project"`
+	Path                     string `json:"path,omitempty" jsonschema:"description=Alias for project"`
+	IID                      int64  `json:"iid,omitempty" jsonschema:"description=Merge request IID"`
+	MergeRequestIID          int64  `json:"merge_request_iid,omitempty" jsonschema:"description=Alias for iid"`
+	AutoMerge                *bool  `json:"auto_merge,omitempty" jsonschema:"description=Merge automatically when checks allow it"`
+	MergeCommitMessage       string `json:"merge_commit_message,omitempty" jsonschema:"description=Custom merge commit message"`
+	SquashCommitMessage      string `json:"squash_commit_message,omitempty" jsonschema:"description=Custom squash commit message"`
+	Squash                   *bool  `json:"squash,omitempty" jsonschema:"description=Squash commits"`
+	ShouldRemoveSourceBranch *bool  `json:"should_remove_source_branch,omitempty" jsonschema:"description=Remove source branch after merge"`
+	RemoveSourceBranch       *bool  `json:"remove_source_branch,omitempty" jsonschema:"description=Alias for should_remove_source_branch"`
+	SHA                      string `json:"sha,omitempty" jsonschema:"description=Expected merge request HEAD SHA"`
+}
+
+type RepositoryTagCreateInput struct {
+	Project   string `json:"project,omitempty" jsonschema:"description=Project path or numeric ID"`
+	ProjectID string `json:"project_id,omitempty" jsonschema:"description=Alias for project"`
+	Path      string `json:"path,omitempty" jsonschema:"description=Alias for project"`
+	TagName   string `json:"tag_name,omitempty" jsonschema:"description=Tag name to create"`
+	Name      string `json:"name,omitempty" jsonschema:"description=Alias for tag_name"`
+	Ref       string `json:"ref,omitempty" jsonschema:"description=Commit SHA, branch name, or existing tag name"`
+	Message   string `json:"message,omitempty" jsonschema:"description=Optional annotated tag message"`
+}
+
 type IndexBuildInput struct {
 	pluginbinding.IndexBuildInput
 	Limit            int    `json:"limit,omitempty" jsonschema:"description=Project fetch limit"`
@@ -185,6 +242,72 @@ func (s Service) MergeRequestShow(ctx pluginbinding.Context, input MergeRequestS
 		return pluginbinding.ShowResult[MergeRequest]{}, pluginbinding.Errorf("gitlab", "%s", err)
 	}
 	return pluginbinding.NewShowResult(mr, map[string]any{"ref": ref}), nil
+}
+
+func (s Service) MergeRequestCreate(ctx pluginbinding.Context, input MergeRequestCreateInput) (MergeRequest, error) {
+	client, err := s.client(ctx)
+	if err != nil {
+		return MergeRequest{}, pluginbinding.Errorf("secret", "%s", err)
+	}
+	options, err := mergeRequestCreateOptionsFromInput(pluginbinding.InputMap(input))
+	if err != nil {
+		return MergeRequest{}, pluginbinding.Errorf("bad_input", "%s", err)
+	}
+	mr, err := client.CreateMergeRequest(projectID(options.Project), options)
+	if err != nil {
+		return MergeRequest{}, pluginbinding.Errorf("gitlab", "%s", err)
+	}
+	return mr, nil
+}
+
+func (s Service) MergeRequestApprove(ctx pluginbinding.Context, input MergeRequestApproveInput) (MergeRequestApproval, error) {
+	client, err := s.client(ctx)
+	if err != nil {
+		return MergeRequestApproval{}, pluginbinding.Errorf("secret", "%s", err)
+	}
+	project, iid, err := mergeRequestAddressFromInput(pluginbinding.InputMap(input))
+	if err != nil {
+		return MergeRequestApproval{}, pluginbinding.Errorf("bad_input", "%s", err)
+	}
+	approval, err := client.ApproveMergeRequest(projectID(project), iid, MergeRequestApproveOptions{SHA: strings.TrimSpace(input.SHA)})
+	if err != nil {
+		return MergeRequestApproval{}, pluginbinding.Errorf("gitlab", "%s", err)
+	}
+	return approval, nil
+}
+
+func (s Service) MergeRequestMerge(ctx pluginbinding.Context, input MergeRequestMergeInput) (MergeRequest, error) {
+	client, err := s.client(ctx)
+	if err != nil {
+		return MergeRequest{}, pluginbinding.Errorf("secret", "%s", err)
+	}
+	values := pluginbinding.InputMap(input)
+	project, iid, err := mergeRequestAddressFromInput(values)
+	if err != nil {
+		return MergeRequest{}, pluginbinding.Errorf("bad_input", "%s", err)
+	}
+	options := mergeRequestMergeOptionsFromInput(values)
+	mr, err := client.MergeMergeRequest(projectID(project), iid, options)
+	if err != nil {
+		return MergeRequest{}, pluginbinding.Errorf("gitlab", "%s", err)
+	}
+	return mr, nil
+}
+
+func (s Service) RepositoryTagCreate(ctx pluginbinding.Context, input RepositoryTagCreateInput) (RepositoryTag, error) {
+	client, err := s.client(ctx)
+	if err != nil {
+		return RepositoryTag{}, pluginbinding.Errorf("secret", "%s", err)
+	}
+	options, err := repositoryTagCreateOptionsFromInput(pluginbinding.InputMap(input))
+	if err != nil {
+		return RepositoryTag{}, pluginbinding.Errorf("bad_input", "%s", err)
+	}
+	tag, err := client.CreateRepositoryTag(projectID(options.Project), options)
+	if err != nil {
+		return RepositoryTag{}, pluginbinding.Errorf("gitlab", "%s", err)
+	}
+	return tag, nil
 }
 
 func (s Service) Lookup(ctx pluginbinding.Context, input LookupInput) (LookupResult, error) {
@@ -420,6 +543,88 @@ func mergeRequestListOptionsFromInput(input map[string]any) MergeRequestListOpti
 	}
 }
 
+func mergeRequestCreateOptionsFromInput(input map[string]any) (MergeRequestCreateOptions, error) {
+	options := MergeRequestCreateOptions{
+		Project:            pluginbinding.StringFromInput(input, "project", "project_id", "path"),
+		Title:              pluginbinding.StringFromInput(input, "title"),
+		SourceBranch:       pluginbinding.StringFromInput(input, "source_branch"),
+		TargetBranch:       pluginbinding.StringFromInput(input, "target_branch"),
+		Description:        pluginbinding.StringFromInput(input, "description"),
+		Labels:             stringSliceFromInput(input, "labels"),
+		AssigneeID:         int64FromInput(input, "assignee_id"),
+		AssigneeIDs:        int64SliceFromInput(input, "assignee_ids"),
+		ReviewerIDs:        int64SliceFromInput(input, "reviewer_ids"),
+		TargetProjectID:    int64FromInput(input, "target_project_id"),
+		MilestoneID:        int64FromInput(input, "milestone_id"),
+		RemoveSourceBranch: boolPtrFromInput(input, "remove_source_branch"),
+		Squash:             boolPtrFromInput(input, "squash"),
+		AllowCollaboration: boolPtrFromInput(input, "allow_collaboration"),
+	}
+	if strings.TrimSpace(options.Project) == "" {
+		return MergeRequestCreateOptions{}, fmt.Errorf("project is required")
+	}
+	if strings.TrimSpace(options.Title) == "" {
+		return MergeRequestCreateOptions{}, fmt.Errorf("title is required")
+	}
+	if strings.TrimSpace(options.SourceBranch) == "" {
+		return MergeRequestCreateOptions{}, fmt.Errorf("source_branch is required")
+	}
+	if strings.TrimSpace(options.TargetBranch) == "" {
+		return MergeRequestCreateOptions{}, fmt.Errorf("target_branch is required")
+	}
+	return options, nil
+}
+
+func mergeRequestAddressFromInput(input map[string]any) (string, int64, error) {
+	ref := strings.TrimSpace(pluginbinding.FirstString(input, "ref", "id"))
+	if ref != "" {
+		return parseMergeRequestRef(ref)
+	}
+	project := strings.TrimSpace(pluginbinding.FirstString(input, "project", "project_id", "path"))
+	if project == "" {
+		return "", 0, fmt.Errorf("ref or project is required")
+	}
+	iid := int64FromInput(input, "iid", "merge_request_iid")
+	if iid <= 0 {
+		return "", 0, fmt.Errorf("iid must be a positive integer")
+	}
+	return project, iid, nil
+}
+
+func mergeRequestMergeOptionsFromInput(input map[string]any) MergeRequestMergeOptions {
+	removeSourceBranch := boolPtrFromInput(input, "should_remove_source_branch")
+	if removeSourceBranch == nil {
+		removeSourceBranch = boolPtrFromInput(input, "remove_source_branch")
+	}
+	return MergeRequestMergeOptions{
+		AutoMerge:                boolPtrFromInput(input, "auto_merge"),
+		MergeCommitMessage:       pluginbinding.StringFromInput(input, "merge_commit_message"),
+		SquashCommitMessage:      pluginbinding.StringFromInput(input, "squash_commit_message"),
+		Squash:                   boolPtrFromInput(input, "squash"),
+		ShouldRemoveSourceBranch: removeSourceBranch,
+		SHA:                      pluginbinding.StringFromInput(input, "sha"),
+	}
+}
+
+func repositoryTagCreateOptionsFromInput(input map[string]any) (RepositoryTagCreateOptions, error) {
+	options := RepositoryTagCreateOptions{
+		Project: pluginbinding.StringFromInput(input, "project", "project_id", "path"),
+		TagName: pluginbinding.StringFromInput(input, "tag_name", "name"),
+		Ref:     pluginbinding.StringFromInput(input, "ref"),
+		Message: pluginbinding.StringFromInput(input, "message"),
+	}
+	if strings.TrimSpace(options.Project) == "" {
+		return RepositoryTagCreateOptions{}, fmt.Errorf("project is required")
+	}
+	if strings.TrimSpace(options.TagName) == "" {
+		return RepositoryTagCreateOptions{}, fmt.Errorf("tag_name is required")
+	}
+	if strings.TrimSpace(options.Ref) == "" {
+		return RepositoryTagCreateOptions{}, fmt.Errorf("ref is required")
+	}
+	return options, nil
+}
+
 func mergeRequestIndexOptions(input map[string]any, defaultLimit int) MergeRequestListOptions {
 	return MergeRequestListOptions{
 		Project: pluginbinding.StringFromInput(input, "mr_project", "project", "project_id", "path"),
@@ -528,6 +733,14 @@ func mergeRequestIndexMetadata(options MergeRequestListOptions) map[string]any {
 }
 
 func boolPtr(value bool) *bool {
+	return &value
+}
+
+func boolPtrFromInput(input map[string]any, key string) *bool {
+	value, ok := input[key].(bool)
+	if !ok {
+		return nil
+	}
 	return &value
 }
 
@@ -720,5 +933,92 @@ func flexibleJSONString(value any) string {
 		return strconv.Itoa(typed)
 	default:
 		return ""
+	}
+}
+
+func int64FromInput(input map[string]any, keys ...string) int64 {
+	for _, key := range keys {
+		switch value := input[key].(type) {
+		case json.Number:
+			if parsed, err := strconv.ParseInt(strings.TrimSpace(value.String()), 10, 64); err == nil {
+				return parsed
+			}
+		case float64:
+			return int64(value)
+		case int:
+			return int64(value)
+		case int64:
+			return value
+		case string:
+			if parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil {
+				return parsed
+			}
+		}
+	}
+	return 0
+}
+
+func int64SliceFromInput(input map[string]any, key string) []int64 {
+	switch value := input[key].(type) {
+	case []int64:
+		return append([]int64(nil), value...)
+	case []int:
+		out := make([]int64, 0, len(value))
+		for _, item := range value {
+			out = append(out, int64(item))
+		}
+		return out
+	case []float64:
+		out := make([]int64, 0, len(value))
+		for _, item := range value {
+			out = append(out, int64(item))
+		}
+		return out
+	case []any:
+		out := make([]int64, 0, len(value))
+		for _, item := range value {
+			parsed := int64FromInput(map[string]any{"value": item}, "value")
+			if parsed > 0 {
+				out = append(out, parsed)
+			}
+		}
+		return out
+	case string:
+		parts := strings.Split(value, ",")
+		out := make([]int64, 0, len(parts))
+		for _, part := range parts {
+			if parsed, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64); err == nil && parsed > 0 {
+				out = append(out, parsed)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func stringSliceFromInput(input map[string]any, key string) []string {
+	switch value := input[key].(type) {
+	case []string:
+		return append([]string(nil), value...)
+	case []any:
+		out := make([]string, 0, len(value))
+		for _, item := range value {
+			if text := flexibleJSONString(item); text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	case string:
+		parts := strings.Split(value, ",")
+		out := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if text := strings.TrimSpace(part); text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return nil
 	}
 }

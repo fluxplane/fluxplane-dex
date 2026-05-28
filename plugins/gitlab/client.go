@@ -17,6 +17,10 @@ type Client interface {
 	ListIssues(IssueListOptions) ([]Issue, error)
 	ListMergeRequests(MergeRequestListOptions) ([]MergeRequest, error)
 	GetMergeRequest(any, int64) (MergeRequest, error)
+	CreateMergeRequest(any, MergeRequestCreateOptions) (MergeRequest, error)
+	ApproveMergeRequest(any, int64, MergeRequestApproveOptions) (MergeRequestApproval, error)
+	MergeMergeRequest(any, int64, MergeRequestMergeOptions) (MergeRequest, error)
+	CreateRepositoryTag(any, RepositoryTagCreateOptions) (RepositoryTag, error)
 }
 
 type ClientFactory func(reqSecretSet SecretSet) (Client, error)
@@ -285,6 +289,54 @@ func (c liveClient) GetMergeRequest(project any, iid int64) (MergeRequest, error
 	return mergeRequestFromAPI(mr), nil
 }
 
+func (c liveClient) CreateMergeRequest(project any, input MergeRequestCreateOptions) (MergeRequest, error) {
+	opt := createMergeRequestOptions(input)
+	mr, _, err := c.client.MergeRequests.CreateMergeRequest(project, opt)
+	if err != nil {
+		return MergeRequest{}, err
+	}
+	return mergeRequestFromAPI(mr), nil
+}
+
+func (c liveClient) ApproveMergeRequest(project any, iid int64, input MergeRequestApproveOptions) (MergeRequestApproval, error) {
+	opt := &gitlabapi.ApproveMergeRequestOptions{}
+	if strings.TrimSpace(input.SHA) != "" {
+		sha := strings.TrimSpace(input.SHA)
+		opt.SHA = &sha
+	}
+	approval, _, err := c.client.MergeRequestApprovals.ApproveMergeRequest(project, iid, opt)
+	if err != nil {
+		return MergeRequestApproval{}, err
+	}
+	return mergeRequestApprovalFromAPI(approval), nil
+}
+
+func (c liveClient) MergeMergeRequest(project any, iid int64, input MergeRequestMergeOptions) (MergeRequest, error) {
+	opt := acceptMergeRequestOptions(input)
+	mr, _, err := c.client.MergeRequests.AcceptMergeRequest(project, iid, opt)
+	if err != nil {
+		return MergeRequest{}, err
+	}
+	return mergeRequestFromAPI(mr), nil
+}
+
+func (c liveClient) CreateRepositoryTag(project any, input RepositoryTagCreateOptions) (RepositoryTag, error) {
+	opt := &gitlabapi.CreateTagOptions{}
+	tagName := strings.TrimSpace(input.TagName)
+	ref := strings.TrimSpace(input.Ref)
+	message := strings.TrimSpace(input.Message)
+	opt.TagName = &tagName
+	opt.Ref = &ref
+	if message != "" {
+		opt.Message = &message
+	}
+	tag, _, err := c.client.Tags.CreateTag(project, opt)
+	if err != nil {
+		return RepositoryTag{}, err
+	}
+	return repositoryTagFromAPI(tag), nil
+}
+
 func mergeRequestListOptions(input MergeRequestListOptions) *gitlabapi.ListMergeRequestsOptions {
 	opt := &gitlabapi.ListMergeRequestsOptions{}
 	applyMergeRequestListOptions(&opt.ListOptions, &opt.State, &opt.Search, &opt.OrderBy, &opt.Sort, input)
@@ -323,6 +375,75 @@ func applyMergeRequestListOptions(list *gitlabapi.ListOptions, stateField, searc
 		sort := strings.TrimSpace(input.Sort)
 		*sortField = &sort
 	}
+}
+
+func createMergeRequestOptions(input MergeRequestCreateOptions) *gitlabapi.CreateMergeRequestOptions {
+	opt := &gitlabapi.CreateMergeRequestOptions{}
+	title := strings.TrimSpace(input.Title)
+	sourceBranch := strings.TrimSpace(input.SourceBranch)
+	targetBranch := strings.TrimSpace(input.TargetBranch)
+	opt.Title = &title
+	opt.SourceBranch = &sourceBranch
+	opt.TargetBranch = &targetBranch
+	if strings.TrimSpace(input.Description) != "" {
+		description := strings.TrimSpace(input.Description)
+		opt.Description = &description
+	}
+	if len(input.Labels) > 0 {
+		labels := gitlabapi.LabelOptions(input.Labels)
+		opt.Labels = &labels
+	}
+	if input.AssigneeID > 0 {
+		opt.AssigneeID = &input.AssigneeID
+	}
+	if len(input.AssigneeIDs) > 0 {
+		opt.AssigneeIDs = &input.AssigneeIDs
+	}
+	if len(input.ReviewerIDs) > 0 {
+		opt.ReviewerIDs = &input.ReviewerIDs
+	}
+	if input.TargetProjectID > 0 {
+		opt.TargetProjectID = &input.TargetProjectID
+	}
+	if input.MilestoneID > 0 {
+		opt.MilestoneID = &input.MilestoneID
+	}
+	if input.RemoveSourceBranch != nil {
+		opt.RemoveSourceBranch = input.RemoveSourceBranch
+	}
+	if input.Squash != nil {
+		opt.Squash = input.Squash
+	}
+	if input.AllowCollaboration != nil {
+		opt.AllowCollaboration = input.AllowCollaboration
+	}
+	return opt
+}
+
+func acceptMergeRequestOptions(input MergeRequestMergeOptions) *gitlabapi.AcceptMergeRequestOptions {
+	opt := &gitlabapi.AcceptMergeRequestOptions{}
+	if input.AutoMerge != nil {
+		opt.AutoMerge = input.AutoMerge
+	}
+	if strings.TrimSpace(input.MergeCommitMessage) != "" {
+		message := strings.TrimSpace(input.MergeCommitMessage)
+		opt.MergeCommitMessage = &message
+	}
+	if strings.TrimSpace(input.SquashCommitMessage) != "" {
+		message := strings.TrimSpace(input.SquashCommitMessage)
+		opt.SquashCommitMessage = &message
+	}
+	if input.Squash != nil {
+		opt.Squash = input.Squash
+	}
+	if input.ShouldRemoveSourceBranch != nil {
+		opt.ShouldRemoveSourceBranch = input.ShouldRemoveSourceBranch
+	}
+	if strings.TrimSpace(input.SHA) != "" {
+		sha := strings.TrimSpace(input.SHA)
+		opt.SHA = &sha
+	}
+	return opt
 }
 
 func userFromAPI(user *gitlabapi.User) User {
@@ -421,6 +542,7 @@ func mergeRequestFromAPI(mr *gitlabapi.MergeRequest) MergeRequest {
 		IID:            mr.IID,
 		ProjectID:      mr.ProjectID,
 		Title:          mr.Title,
+		Description:    mr.Description,
 		State:          mr.State,
 		SourceBranch:   mr.SourceBranch,
 		TargetBranch:   mr.TargetBranch,
@@ -428,6 +550,7 @@ func mergeRequestFromAPI(mr *gitlabapi.MergeRequest) MergeRequest {
 		AuthorUsername: author,
 		Labels:         []string(mr.Labels),
 		Reference:      reference,
+		SHA:            mr.SHA,
 		Draft:          mr.Draft,
 		CreatedAt:      formatTime(mr.CreatedAt),
 		UpdatedAt:      formatTime(mr.UpdatedAt),
@@ -456,6 +579,7 @@ func basicMergeRequestFromAPI(mr *gitlabapi.BasicMergeRequest) MergeRequest {
 		IID:            mr.IID,
 		ProjectID:      mr.ProjectID,
 		Title:          mr.Title,
+		Description:    mr.Description,
 		State:          mr.State,
 		SourceBranch:   mr.SourceBranch,
 		TargetBranch:   mr.TargetBranch,
@@ -463,9 +587,60 @@ func basicMergeRequestFromAPI(mr *gitlabapi.BasicMergeRequest) MergeRequest {
 		AuthorUsername: author,
 		Labels:         []string(mr.Labels),
 		Reference:      reference,
+		SHA:            mr.SHA,
 		Draft:          mr.Draft,
 		CreatedAt:      formatTime(mr.CreatedAt),
 		UpdatedAt:      formatTime(mr.UpdatedAt),
+	}
+}
+
+func mergeRequestApprovalFromAPI(approval *gitlabapi.MergeRequestApprovals) MergeRequestApproval {
+	if approval == nil {
+		return MergeRequestApproval{}
+	}
+	return MergeRequestApproval{
+		ID:                approval.ID,
+		IID:               approval.IID,
+		ProjectID:         approval.ProjectID,
+		Title:             approval.Title,
+		State:             approval.State,
+		MergeStatus:       approval.MergeStatus,
+		Approved:          approval.Approved,
+		ApprovalsRequired: approval.ApprovalsRequired,
+		ApprovalsLeft:     approval.ApprovalsLeft,
+		UserHasApproved:   approval.UserHasApproved,
+		UserCanApprove:    approval.UserCanApprove,
+		HasApprovalRules:  approval.HasApprovalRules,
+		CreatedAt:         formatTime(approval.CreatedAt),
+		UpdatedAt:         formatTime(approval.UpdatedAt),
+	}
+}
+
+func repositoryTagFromAPI(tag *gitlabapi.Tag) RepositoryTag {
+	if tag == nil {
+		return RepositoryTag{}
+	}
+	return RepositoryTag{
+		Name:      tag.Name,
+		Message:   tag.Message,
+		Target:    tag.Target,
+		Protected: tag.Protected,
+		CreatedAt: formatTime(tag.CreatedAt),
+		Commit:    repositoryTagCommitFromAPI(tag.Commit),
+	}
+}
+
+func repositoryTagCommitFromAPI(commit *gitlabapi.Commit) RepositoryTagCommit {
+	if commit == nil {
+		return RepositoryTagCommit{}
+	}
+	return RepositoryTagCommit{
+		ID:            commit.ID,
+		ShortID:       commit.ShortID,
+		Title:         commit.Title,
+		CreatedAt:     formatTime(commit.CreatedAt),
+		CommittedDate: formatTime(commit.CommittedDate),
+		WebURL:        commit.WebURL,
 	}
 }
 

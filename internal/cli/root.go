@@ -1281,7 +1281,7 @@ Run ` + "`dex <cmd> --help`" + ` for current flags and see plugin references for
 ## Installed and Active Integration References
 {{- if .ActivePlugins }}
 {{- range .ActivePlugins }}
-- [{{ .Name }}]({{ .Reference }}){{ if .Description }} - {{ .Description }}{{ end }}
+- [{{ .Name }}]({{ .Reference }}) - installed, activated{{ if .Description }}; {{ .Description }}{{ end }}
 {{- end }}
 {{- else }}
 No installed plugin currently exposes activated integration commands for this instance.
@@ -1465,7 +1465,7 @@ func skillPluginFromManifest(runner runtime.Runner, instance string, manifest co
 	if requireReadyAuth && !authReady {
 		return skillPlugin{}, false
 	}
-	commandNames := manifestCommandNames(manifest)
+	commandNames := uniqueCommandNames(manifestCommandNames(manifest))
 	if len(commandNames) == 0 {
 		return skillPlugin{}, false
 	}
@@ -1479,7 +1479,7 @@ func skillPluginFromManifest(runner runtime.Runner, instance string, manifest co
 		Auth:        auth,
 	}
 	for _, name := range commandNames {
-		if name != commandName {
+		if name != commandName && !hasString(plugin.Aliases, name) {
 			plugin.Aliases = append(plugin.Aliases, name)
 		}
 	}
@@ -1501,6 +1501,20 @@ func skillPluginFromManifest(runner runtime.Runner, instance string, manifest co
 	sort.Slice(plugin.Operations, func(i, j int) bool { return plugin.Operations[i].Name < plugin.Operations[j].Name })
 	sort.Slice(plugin.Datasources, func(i, j int) bool { return plugin.Datasources[i].Name < plugin.Datasources[j].Name })
 	return plugin, true
+}
+
+func uniqueCommandNames(names []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
 }
 
 func preferredSkillCommandName(names []string) string {

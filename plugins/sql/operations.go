@@ -75,13 +75,15 @@ type QueryRowRecord struct {
 
 type QueryRowsResult = pluginbinding.DatasourceSearchResult[QueryRowRecord]
 
+const readOnlySQLQueryMessage = "SQL query must be read-only; allowed statements are SELECT, SHOW, DESCRIBE, EXPLAIN, and WITH"
+
 func (s Service) Query(ctx pluginbinding.Context, input QueryInput) (QueryOutput, error) {
 	query := strings.TrimSpace(input.Query)
 	if query == "" {
 		return QueryOutput{}, pluginbinding.Fail("bad_input", "query is required")
 	}
 	if !readOnlyQuery(query) {
-		return QueryOutput{}, pluginbinding.Fail("bad_input", "only read-only SELECT/SHOW/DESCRIBE/EXPLAIN/WITH queries are allowed")
+		return QueryOutput{}, pluginbinding.Fail("bad_input", readOnlySQLQueryMessage)
 	}
 	timeout, err := parseDurationDefault(input.Timeout, 10*time.Second)
 	if err != nil {
@@ -134,7 +136,7 @@ func (s Service) Query(ctx pluginbinding.Context, input QueryInput) (QueryOutput
 
 func (s Service) QueryRows(ctx pluginbinding.Context, input QueryInput) (QueryRowsResult, error) {
 	if strings.TrimSpace(input.Query) != "" && !readOnlyQuery(input.Query) {
-		return QueryRowsResult{}, pluginbinding.Fail("bad_input", "SQL datasource search requires a read-only SQL query; use dex datasource search sql.query_rows --query \"SELECT ...\"")
+		return QueryRowsResult{}, pluginbinding.Fail("bad_input", "SQL datasource search requires a read-only SQL query; pass SELECT, SHOW, DESCRIBE, EXPLAIN, or WITH SQL with --query")
 	}
 	out, err := s.Query(ctx, input)
 	if err != nil {

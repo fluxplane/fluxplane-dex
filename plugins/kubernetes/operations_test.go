@@ -76,6 +76,19 @@ func TestManifestIncludesInventoryCompletionMetadata(t *testing.T) {
 	}
 }
 
+func TestManifestExposesPortForwardAndLogWindowOperations(t *testing.T) {
+	manifest := Manifest()
+	operations := map[string]bool{}
+	for _, operation := range manifest.Operations {
+		operations[operation.Name] = true
+	}
+	for _, name := range []string{OperationPortForwardStart, OperationPortForwardStop, OperationPodLogs} {
+		if !operations[name] {
+			t.Fatalf("manifest missing operation %s", name)
+		}
+	}
+}
+
 func TestManifestAdvertisesHostEndpointRefForOperations(t *testing.T) {
 	manifest := Manifest()
 	for _, operation := range manifest.Operations {
@@ -183,6 +196,13 @@ func TestPodLogBoundsDoNotDefaultTailWhenByteOrTimeBounded(t *testing.T) {
 	if bounds.TailLines != nil || bounds.LimitBytes == nil || *bounds.LimitBytes != 2048 {
 		t.Fatalf("limit-only bounds = %#v", bounds)
 	}
+	bounds, err = podLogBounds(PodLogsInput{TailLines: 5000, LimitBytes: 3 * 1024 * 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bounds.TailLines == nil || *bounds.TailLines != 5000 || bounds.LimitBytes == nil || *bounds.LimitBytes != 3*1024*1024 {
+		t.Fatalf("explicit bounds should not be capped = %#v", bounds)
+	}
 	bounds, err = podLogBounds(PodLogsInput{Since: "2h"})
 	if err != nil {
 		t.Fatal(err)
@@ -284,6 +304,9 @@ func TestInventoryDatasourceSearchFindsServicesPodsAndDeployments(t *testing.T) 
 	for _, record := range out.Records {
 		if len(record.Metadata) == 0 {
 			t.Fatalf("inventory datasource record missing metadata: %#v", record)
+		}
+		if _, ok := record.Metadata["name"]; ok {
+			t.Fatalf("inventory datasource record duplicates name in metadata: %#v", record)
 		}
 	}
 }

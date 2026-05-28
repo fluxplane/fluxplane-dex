@@ -52,21 +52,21 @@ func TestTextOutputDoesNotEchoEmptyLookupInput(t *testing.T) {
 	}
 }
 
-func TestJSONOutputAddsGenericRecordsAlias(t *testing.T) {
+func TestJSONOutputPreservesCollectionShape(t *testing.T) {
 	var out bytes.Buffer
 	if err := renderValue(&out, "json", map[string]any{"pods": []map[string]any{{"name": "api"}}}); err != nil {
 		t.Fatal(err)
 	}
 	var result struct {
-		RecordsSource string           `json:"records_source"`
+		RecordsSource *string          `json:"records_source"`
 		Records       []map[string]any `json:"records"`
 		Pods          []map[string]any `json:"pods"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.RecordsSource != "pods" || len(result.Records) != 1 || len(result.Pods) != 1 {
-		t.Fatalf("records alias result = %#v", result)
+	if result.RecordsSource != nil || len(result.Records) != 0 || len(result.Pods) != 1 {
+		t.Fatalf("collection shape result = %#v", result)
 	}
 }
 

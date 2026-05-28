@@ -46,7 +46,7 @@ func manifestSpec() pluginbinding.ManifestSpec {
 		Name:        PluginName,
 		Version:     PluginVersion,
 		Description: PluginDescription,
-		Aliases:     []string{"k8s", "kube", PluginName},
+		Aliases:     []string{"kube", "k8s"},
 		Operations: []core.OperationSpec{
 			clusterListSpec(),
 			clusterTestSpec(),

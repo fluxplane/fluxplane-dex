@@ -159,8 +159,8 @@ type PodLogsInput struct {
 	Namespace   string `json:"namespace,omitempty" jsonschema:"description=Pod namespace."`
 	Name        string `json:"name,omitempty" jsonschema:"description=Pod name."`
 	Container   string `json:"container,omitempty" jsonschema:"description=Container name. Empty uses Kubernetes default selection."`
-	TailLines   int64  `json:"tail_lines,omitempty" jsonschema:"description=Number of trailing lines to return. Defaults to 100 only when no time or byte bound is provided; capped at 1000."`
-	LimitBytes  int64  `json:"limit_bytes,omitempty" jsonschema:"description=Maximum bytes to return. Values above 1048576 are capped. This can be used without tail_lines."`
+	TailLines   int64  `json:"tail_lines,omitempty" jsonschema:"description=Number of trailing lines to return. Defaults to 100 only when no time or byte bound is provided."`
+	LimitBytes  int64  `json:"limit_bytes,omitempty" jsonschema:"description=Maximum bytes to return. This can be used without tail_lines."`
 	Since       string `json:"since,omitempty" jsonschema:"description=Relative duration such as 2h or absolute RFC3339 timestamp."`
 	Until       string `json:"until,omitempty" jsonschema:"description=Absolute RFC3339 timestamp upper bound; filtered client-side."`
 	Previous    bool   `json:"previous,omitempty" jsonschema:"description=Return previous terminated container logs."`
@@ -716,16 +716,10 @@ func podLogBounds(input PodLogsInput) (podLogBoundOptions, error) {
 	var out podLogBoundOptions
 	if input.TailLines > 0 {
 		tailLines := input.TailLines
-		if tailLines > 1000 {
-			tailLines = 1000
-		}
 		out.TailLines = &tailLines
 	}
 	if input.LimitBytes > 0 {
 		limitBytes := input.LimitBytes
-		if limitBytes > 1024*1024 {
-			limitBytes = 1024 * 1024
-		}
 		out.LimitBytes = &limitBytes
 	}
 	if out.TailLines == nil && out.LimitBytes == nil && strings.TrimSpace(input.Since) == "" && strings.TrimSpace(input.Until) == "" {
@@ -1501,8 +1495,7 @@ func ephemeralContainerRecord(source pluginbinding.DatasourceSource, pod corev1.
 }
 
 func containerRecordMetadata(record ContainerRecord) map[string]any {
-	return map[string]any{
-		"name":          record.Name,
+	return compactMetadata(map[string]any{
 		"namespace":     record.Namespace,
 		"pod":           record.Pod,
 		"type":          record.Type,
@@ -1513,23 +1506,48 @@ func containerRecordMetadata(record ContainerRecord) map[string]any {
 		"ready":         record.Ready,
 		"restart_count": record.RestartCount,
 		"labels":        record.Labels,
-	}
+	})
 }
 
 func namespaceRecordMetadata(record NamespaceRecord) map[string]any {
-	return map[string]any{"name": record.Name, "status": record.Status, "labels": record.Labels}
+	return compactMetadata(map[string]any{"status": record.Status, "labels": record.Labels})
 }
 
 func serviceRecordMetadata(record ServiceRecord) map[string]any {
-	return map[string]any{"name": record.Name, "namespace": record.Namespace, "type": record.Type, "cluster_ip": record.ClusterIP, "ports": record.Ports, "labels": record.Labels}
+	return compactMetadata(map[string]any{"namespace": record.Namespace, "type": record.Type, "cluster_ip": record.ClusterIP, "ports": record.Ports, "labels": record.Labels})
 }
 
 func podRecordMetadata(record PodRecord) map[string]any {
-	return map[string]any{"name": record.Name, "namespace": record.Namespace, "phase": record.Phase, "node": record.Node, "containers": record.Containers, "labels": record.Labels}
+	return compactMetadata(map[string]any{"namespace": record.Namespace, "phase": record.Phase, "node": record.Node, "containers": record.Containers, "labels": record.Labels})
 }
 
 func deploymentRecordMetadata(record DeploymentRecord) map[string]any {
-	return map[string]any{"name": record.Name, "namespace": record.Namespace, "replicas": record.Replicas, "ready_replicas": record.ReadyReplicas, "available_replicas": record.AvailableReplicas, "updated_replicas": record.UpdatedReplicas, "strategy": record.Strategy, "labels": record.Labels}
+	return compactMetadata(map[string]any{"namespace": record.Namespace, "replicas": record.Replicas, "ready_replicas": record.ReadyReplicas, "available_replicas": record.AvailableReplicas, "updated_replicas": record.UpdatedReplicas, "strategy": record.Strategy, "labels": record.Labels})
+}
+
+func compactMetadata(metadata map[string]any) map[string]any {
+	for key, value := range metadata {
+		switch typed := value.(type) {
+		case string:
+			if strings.TrimSpace(typed) == "" {
+				delete(metadata, key)
+			}
+		case []string:
+			if len(typed) == 0 {
+				delete(metadata, key)
+			}
+		case map[string]string:
+			if len(typed) == 0 {
+				delete(metadata, key)
+			}
+		case nil:
+			delete(metadata, key)
+		}
+	}
+	if len(metadata) == 0 {
+		return nil
+	}
+	return metadata
 }
 
 func deploymentRecords(source pluginbinding.DatasourceSource, items []appsv1.Deployment) []DeploymentRecord {

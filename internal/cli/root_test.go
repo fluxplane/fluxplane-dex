@@ -706,7 +706,7 @@ func main() {
 			"ok": true,
 			"result": map[string]any{
 				"name": "kubernetes",
-				"aliases": []string{"kube", "k8s"},
+				"aliases": []string{"kube", "k8s", "kubernetes"},
 				"operations": []map[string]any{
 					{"name": "kubernetes.service.show", "read_only": true, "input_schema": map[string]any{"required": []string{"name"}, "properties": map[string]any{"name": map[string]any{"type": "string"}, "context": map[string]any{"type": "string"}}}},
 					{"name": "kubernetes.pod.logs", "read_only": true, "input_schema": map[string]any{"required": []string{"name"}, "properties": map[string]any{"name": map[string]any{"type": "string"}, "container": map[string]any{"type": "string"}, "tail_lines": map[string]any{"type": "integer"}, "timestamps": map[string]any{"type": "boolean"}, "endpoint_ref": map[string]any{"type": "string"}}}},
@@ -1256,6 +1256,9 @@ func TestSkillInstallWritesDexHomeSkillAndReferences(t *testing.T) {
 	if !bytes.Contains(main, []byte("[kubernetes](references/kubernetes.md)")) || !bytes.Contains(main, []byte("[gitlab](references/gitlab.md)")) {
 		t.Fatalf("main skill missing references:\n%s", string(main))
 	}
+	if !bytes.Contains(main, []byte("[kubernetes](references/kubernetes.md) - installed, activated")) {
+		t.Fatalf("main skill missing installed label:\n%s", string(main))
+	}
 	if !bytes.Contains(main, []byte("## Installed and Active Integration References")) || !bytes.Contains(main, []byte("## Marketplace References")) || !bytes.Contains(main, []byte("available to install")) {
 		t.Fatalf("main skill missing active/marketplace split:\n%s", string(main))
 	}
@@ -1281,6 +1284,9 @@ func TestSkillInstallWritesDexHomeSkillAndReferences(t *testing.T) {
 	}
 	if !bytes.Contains(kubeRef, []byte("`dex kube pod logs`")) {
 		t.Fatalf("kubernetes reference missing dynamic command:\n%s", string(kubeRef))
+	}
+	if bytes.Contains(kubeRef, []byte("dex kubernetes, dex kube, dex kubernetes")) || strings.Count(string(kubeRef), "`dex kubernetes`") != 1 {
+		t.Fatalf("kubernetes reference has duplicate aliases:\n%s", string(kubeRef))
 	}
 	gitlabRef, err := os.ReadFile(filepath.Join(wantDir, "references", "gitlab.md"))
 	if err != nil {

@@ -34,7 +34,6 @@ func renderDecoded(out io.Writer, format string, value any) error {
 	if err != nil {
 		return err
 	}
-	value = addGenericRecords(value)
 	switch format {
 	case "json":
 		enc := json.NewEncoder(out)
@@ -70,83 +69,6 @@ func normalizeOutputValue(value any) (any, error) {
 		return nil, err
 	}
 	return decoded, nil
-}
-
-func addGenericRecords(value any) any {
-	switch x := value.(type) {
-	case map[string]any:
-		if jsonSchemaMap(x) {
-			return x
-		}
-		for key, item := range x {
-			if jsonSchemaKey(key) {
-				continue
-			}
-			x[key] = addGenericRecords(item)
-		}
-		if _, exists := x["records"]; exists {
-			return x
-		}
-		sourceKey := singleRecordSourceKey(x)
-		if sourceKey == "" {
-			return x
-		}
-		x["records"] = x[sourceKey]
-		x["records_source"] = sourceKey
-		return x
-	case []any:
-		for i, item := range x {
-			x[i] = addGenericRecords(item)
-		}
-		return x
-	default:
-		return value
-	}
-}
-
-func jsonSchemaMap(m map[string]any) bool {
-	if _, ok := m["type"]; !ok {
-		return false
-	}
-	_, hasProperties := m["properties"]
-	_, hasItems := m["items"]
-	return hasProperties || hasItems
-}
-
-func jsonSchemaKey(key string) bool {
-	key = strings.TrimSpace(key)
-	return key == "input_schema" || key == "output_schema" || key == "schema" || strings.HasSuffix(key, "_schema")
-}
-
-func singleRecordSourceKey(m map[string]any) string {
-	var found string
-	for _, key := range recordSourceKeys() {
-		if _, skip := genericEnvelopeKeys()[key]; skip {
-			continue
-		}
-		value, ok := m[key]
-		if !ok {
-			continue
-		}
-		if _, ok := collectionLen(value); !ok {
-			continue
-		}
-		if found != "" {
-			return ""
-		}
-		found = key
-	}
-	return found
-}
-
-func genericEnvelopeKeys() map[string]bool {
-	return map[string]bool{
-		"available": true,
-		"errors":    true,
-		"missing":   true,
-		"results":   true,
-		"status":    true,
-	}
 }
 
 func textOutput(value any) string {

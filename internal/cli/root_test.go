@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -149,6 +150,78 @@ func TestEndpointAddListShow(t *testing.T) {
 	}
 }
 
+func TestEndpointTestUsesSQLPluginWithResolvedEndpoint(t *testing.T) {
+	home := t.TempDir()
+	state, err := runtime.NewState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveEndpoint(core.EndpointRef{ID: "local-mysql", URL: "mysql://db.example.com:3306/app", Product: "mysql", Protocol: "mysql"}); err != nil {
+		t.Fatal(err)
+	}
+	pluginDir := writeFakeSQLPlugin(t)
+
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", home, "--dev-plugin", "sql=" + pluginDir, "endpoint", "test", "local-mysql", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var result endpointTestResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK || result.Method != "sql.query" {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.Details["endpoint_ref"] != "local-mysql" || result.Details["endpoint_url"] != "mysql://db.example.com:3306/app" {
+		t.Fatalf("details = %#v", result.Details)
+	}
+}
+
+func TestEndpointTestUsesTCPFallback(t *testing.T) {
+	home := t.TempDir()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+	state, err := runtime.NewState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveEndpoint(core.EndpointRef{ID: "local-tcp", URL: "tcp://" + listener.Addr().String(), Product: "custom", Protocol: "tcp"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", home, "endpoint", "test", "local-tcp", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var result endpointTestResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK || result.Method != "tcp_connect" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestEndpointImportCandidateFromDiscoveryJSON(t *testing.T) {
 	home := t.TempDir()
 	cmd := NewRootCommand()
@@ -255,6 +328,67 @@ func TestParseEndpointSelection(t *testing.T) {
 	if !reflect.DeepEqual(selected, []int{1, 3, 4, 5}) {
 		t.Fatalf("selected = %#v", selected)
 	}
+}
+
+func writeFakeSQLPlugin(t *testing.T) string {
+	t.Helper()
+	pluginDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pluginDir, "go.mod"), []byte("module fakesql\n\ngo 1.26\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmdDir := filepath.Join(pluginDir, "cmd", "dex-plugin-sql")
+	if err := os.MkdirAll(cmdDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mainGo := `package main
+
+import (
+	"encoding/json"
+	"os"
+)
+
+func main() {
+	var req struct {
+		Command string
+		Payload json.RawMessage
+	}
+	_ = json.NewDecoder(os.Stdin).Decode(&req)
+	if req.Command == "manifest" {
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"protocol": "dex.plugin.v1",
+			"ok": true,
+			"result": map[string]any{
+				"name": "sql",
+				"operations": []map[string]any{{"name": "sql.query", "read_only": true}},
+			},
+		})
+		return
+	}
+	var call struct {
+		Name string
+		Input json.RawMessage
+	}
+	_ = json.Unmarshal(req.Payload, &call)
+	var input map[string]any
+	_ = json.Unmarshal(call.Input, &input)
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"protocol": "dex.plugin.v1",
+		"ok": true,
+		"result": map[string]any{
+			"endpoint_ref": input["endpoint_ref"],
+			"endpoint_url": input["url"],
+			"driver": input["endpoint_product"],
+			"columns": []string{"ok"},
+			"row_count": 1,
+			"rows": []map[string]any{{"ok": 1}},
+		},
+	})
+}
+`
+	if err := os.WriteFile(filepath.Join(cmdDir, "main.go"), []byte(mainGo), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return pluginDir
 }
 
 func TestOperationShowIncludesMetadata(t *testing.T) {

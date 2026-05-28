@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -115,6 +117,18 @@ type endpointDiscoveryView struct {
 	Candidates []endpointCandidateView                `json:"candidates,omitempty"`
 	Results    map[string]endpointDiscoveryPluginView `json:"results,omitempty"`
 	Saved      []runtime.EndpointRecord               `json:"saved,omitempty"`
+}
+
+type endpointTestResult struct {
+	ID         string         `json:"id"`
+	URL        string         `json:"url,omitempty"`
+	Product    string         `json:"product,omitempty"`
+	Protocol   string         `json:"protocol,omitempty"`
+	OK         bool           `json:"ok"`
+	Method     string         `json:"method"`
+	DurationMS int64          `json:"duration_ms,omitempty"`
+	Error      string         `json:"error,omitempty"`
+	Details    map[string]any `json:"details,omitempty"`
 }
 
 func newShortcutCommand(opts *options) *cobra.Command {
@@ -666,6 +680,35 @@ func newEndpointCommand(opts *options) *cobra.Command {
 			return renderValue(cmd.OutOrStdout(), opts.output, endpoint)
 		},
 	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "test ID",
+		Short: "Test a registered endpoint",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runner, err := opts.runner()
+			if err != nil {
+				return err
+			}
+			endpoint, ok, err := runner.State.GetEndpoint(args[0])
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("unknown endpoint %q", args[0])
+			}
+			result := testEndpoint(cmd.Context(), runner, opts.instanceName(), endpoint)
+			if err := renderValue(cmd.OutOrStdout(), opts.output, result); err != nil {
+				return err
+			}
+			if !result.OK {
+				if strings.TrimSpace(result.Error) != "" {
+					return fmt.Errorf("endpoint %q test failed: %s", endpoint.ID, result.Error)
+				}
+				return fmt.Errorf("endpoint %q test failed", endpoint.ID)
+			}
+			return nil
+		},
+	})
 	addOpts := struct {
 		id          string
 		product     string
@@ -1074,6 +1117,146 @@ func mergeStringMaps(base, override map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+func testEndpoint(ctx context.Context, runner runtime.Runner, instance string, endpoint runtime.EndpointRecord) endpointTestResult {
+	if isSQLEndpoint(endpoint) {
+		return testSQLEndpoint(ctx, runner, instance, endpoint)
+	}
+	return testTCPEndpoint(ctx, endpoint)
+}
+
+func testSQLEndpoint(ctx context.Context, runner runtime.Runner, instance string, endpoint runtime.EndpointRecord) endpointTestResult {
+	start := time.Now()
+	result := endpointTestResult{
+		ID:       endpoint.ID,
+		URL:      redactEndpointURL(endpoint.URL),
+		Product:  endpoint.Product,
+		Protocol: endpoint.Protocol,
+		Method:   "sql.query",
+	}
+	inputRaw, err := json.Marshal(map[string]any{
+		"endpoint_ref": endpoint.ID,
+		"query":        "select 1 as ok",
+		"max_rows":     1,
+	})
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	resp, err := runner.InvokeInstance(ctx, "sql", instance, protocol.CommandOperationsCall, protocol.OperationCall{Name: "sql.query", Input: inputRaw})
+	result.DurationMS = time.Since(start).Milliseconds()
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	if !resp.OK {
+		if resp.Error != nil {
+			result.Error = resp.Error.Message
+		}
+		if result.Error == "" {
+			result.Error = "sql endpoint test failed"
+		}
+		return result
+	}
+	var details map[string]any
+	if err := json.Unmarshal(resp.Result, &details); err == nil {
+		delete(details, "rows")
+		if rawURL, _ := details["endpoint_url"].(string); rawURL != "" {
+			details["endpoint_url"] = redactEndpointURL(rawURL)
+		}
+		result.Details = details
+	}
+	result.OK = true
+	return result
+}
+
+func testTCPEndpoint(ctx context.Context, endpoint runtime.EndpointRecord) endpointTestResult {
+	start := time.Now()
+	result := endpointTestResult{
+		ID:       endpoint.ID,
+		URL:      redactEndpointURL(endpoint.URL),
+		Product:  endpoint.Product,
+		Protocol: endpoint.Protocol,
+		Method:   "tcp_connect",
+	}
+	hostPort, err := endpointHostPort(endpoint.URL)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", hostPort)
+	result.DurationMS = time.Since(start).Milliseconds()
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	_ = conn.Close()
+	result.OK = true
+	result.Details = map[string]any{"address": hostPort}
+	return result
+}
+
+func isSQLEndpoint(endpoint runtime.EndpointRecord) bool {
+	values := []string{endpoint.Product, endpoint.Protocol}
+	if parsed, err := url.Parse(endpoint.URL); err == nil {
+		values = append(values, parsed.Scheme)
+	}
+	for _, value := range values {
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "mysql", "mariadb", "postgres", "postgresql", "pg", "sqlite":
+			return true
+		}
+	}
+	return false
+}
+
+func endpointHostPort(rawURL string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "", err
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("endpoint url has no host")
+	}
+	if _, _, err := net.SplitHostPort(parsed.Host); err == nil {
+		return parsed.Host, nil
+	}
+	port := defaultEndpointPort(parsed.Scheme)
+	if port == "" {
+		return "", fmt.Errorf("endpoint url has no port")
+	}
+	return net.JoinHostPort(parsed.Hostname(), port), nil
+}
+
+func defaultEndpointPort(scheme string) string {
+	switch strings.ToLower(strings.TrimSpace(scheme)) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	case "mysql", "mariadb":
+		return "3306"
+	case "postgres", "postgresql", "pg":
+		return "5432"
+	}
+	return ""
+}
+
+func redactEndpointURL(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.User == nil {
+		return rawURL
+	}
+	username := parsed.User.Username()
+	if _, ok := parsed.User.Password(); ok {
+		parsed.User = url.UserPassword(username, "xxxxx")
+	} else {
+		parsed.User = url.User(username)
+	}
+	return parsed.String()
 }
 
 func newIndexCommand(opts *options) *cobra.Command {

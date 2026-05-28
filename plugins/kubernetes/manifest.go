@@ -7,7 +7,7 @@ import (
 
 const (
 	PluginName        = "kubernetes"
-	PluginVersion     = "0.2.0"
+	PluginVersion     = "0.3.0"
 	PluginDescription = "Kubernetes cluster discovery using kubeconfig and kubectl."
 
 	OperationClusterList      = "kubernetes.cluster.list"
@@ -19,6 +19,8 @@ const (
 	OperationPodList          = "kubernetes.pod.list"
 	OperationPodShow          = "kubernetes.pod.show"
 	OperationPodLogs          = "kubernetes.pod.logs"
+	OperationPortForwardStart = "kubernetes.portforward.start"
+	OperationPortForwardStop  = "kubernetes.portforward.stop"
 	OperationDeploymentList   = "kubernetes.deployment.list"
 	OperationDeploymentShow   = "kubernetes.deployment.show"
 	OperationContainerList    = "kubernetes.container.list"
@@ -55,6 +57,8 @@ func manifestSpec() pluginbinding.ManifestSpec {
 			podListSpec(),
 			podShowSpec(),
 			podLogsSpec(),
+			portForwardStartSpec(),
+			portForwardStopSpec(),
 			deploymentListSpec(),
 			deploymentShowSpec(),
 			containerListSpec(),
@@ -136,8 +140,30 @@ func podShowSpec() core.OperationSpec {
 func podLogsSpec() core.OperationSpec {
 	return pluginbinding.TypedOperationSpec[PodLogsInput, PodLogsResult](
 		OperationPodLogs,
-		"Read bounded logs for one Kubernetes pod.",
+		"Read bounded logs for one Kubernetes pod with optional time bounds.",
 		kubernetesReadOptions(core.OperationIdempotent)...,
+	)
+}
+
+func portForwardStartSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[PortForwardStartInput, PortForwardResult](
+		OperationPortForwardStart,
+		"Start a managed kubectl port-forward for a Kubernetes service, pod, or deployment.",
+		pluginbinding.Effects(core.OperationEffectWrite, core.OperationEffectProcess, core.OperationEffectNetwork, core.OperationEffectFilesystem, core.OperationEffectLocalSystem),
+		pluginbinding.Access(core.OperationAccessProcess, core.OperationAccessNetwork, core.OperationAccessFilesystem, core.OperationAccessLocalSystem),
+		pluginbinding.Risk(core.OperationRiskMedium),
+		pluginbinding.Idempotency(core.OperationNonIdempotent),
+	)
+}
+
+func portForwardStopSpec() core.OperationSpec {
+	return pluginbinding.TypedOperationSpec[PortForwardStopInput, PortForwardStopResult](
+		OperationPortForwardStop,
+		"Stop a managed kubectl port-forward by ID or process group.",
+		pluginbinding.Effects(core.OperationEffectWrite, core.OperationEffectProcess, core.OperationEffectLocalSystem),
+		pluginbinding.Access(core.OperationAccessProcess, core.OperationAccessLocalSystem),
+		pluginbinding.Risk(core.OperationRiskMedium),
+		pluginbinding.Idempotency(core.OperationIdempotent),
 	)
 }
 

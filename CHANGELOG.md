@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-28
+
+### Added
+- Added managed dex installation and upgrade commands, including `dex version`,
+  `dex upgrade`, `dex setup`, plugin upgrade/uninstall flows, and a `Taskfile`
+  install target.
+- Added `dex skill install`, which writes a dex-home skill with plugin
+  references and links it into Claude when available.
+- Added Kubernetes port-forward start/stop operations and richer pod log
+  retrieval with `since`, `until`, tail-line, and byte-limit controls.
+- Added universal `endpoint_ref` input schema exposure so generated operation
+  commands consistently surface `--endpoint-ref`.
+
+### Changed
+- Centralized CLI output rendering for text, compact, JSON, and YAML so command
+  results are rendered generically instead of through per-result type switches.
+- Improved generated integration command grouping and unavailable marketplace
+  plugin commands so inactive integrations fail with explicit install or
+  activation hints.
+- Refined skill content from a full help dump into workflow-oriented guidance,
+  compact command summaries, installed-vs-marketplace references, refresh notes,
+  and credential-redaction guidance.
+- Preserved plugin activation state during managed upgrades and resolved nested
+  plugin module versions from the owning module path.
+
+### Documentation
+- Updated README, concepts, and endpoint docs for universal endpoint refs,
+  Kubernetes pod log windows, and port-forward based endpoint workflows.
+- Updated plugin module requirements, workspace replacement, plugin manifest
+  versions, and release documentation for the `v0.3.0` release.
+
 ## [0.2.0] - 2026-05-28
 
 ### Added

@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding/plugintest"
@@ -72,6 +73,21 @@ func TestManifestIncludesInventoryCompletionMetadata(t *testing.T) {
 	completion := manifest.Datasources[0].Completion
 	if completion == nil || !containsString(completion.Fields, "context") || !containsString(completion.Fields, "namespace") || !containsString(completion.Fields, "pod") || !containsString(completion.Fields, "containers") {
 		t.Fatalf("completion = %#v", completion)
+	}
+}
+
+func TestManifestAdvertisesHostEndpointRefForOperations(t *testing.T) {
+	manifest := Manifest()
+	for _, operation := range manifest.Operations {
+		var schema struct {
+			Properties map[string]any `json:"properties"`
+		}
+		if err := json.Unmarshal(operation.Input, &schema); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := schema.Properties["endpoint_ref"]; !ok {
+			t.Fatalf("%s input schema missing endpoint_ref: %s", operation.Name, string(operation.Input))
+		}
 	}
 }
 
@@ -156,6 +172,69 @@ func TestInventoryOperationsListResources(t *testing.T) {
 	logs := plugintest.RunOK[PodLogsResult](t, plugin, OperationPodLogs, map[string]any{"namespace": "latest", "name": "api-123", "container": "api", "tail_lines": 25, "timestamps": true})
 	if logs.LineCount != 2 || logs.Lines[1] != "two" {
 		t.Fatalf("logs = %#v", logs)
+	}
+}
+
+func TestPodLogBoundsDoNotDefaultTailWhenByteOrTimeBounded(t *testing.T) {
+	bounds, err := podLogBounds(PodLogsInput{LimitBytes: 2048})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bounds.TailLines != nil || bounds.LimitBytes == nil || *bounds.LimitBytes != 2048 {
+		t.Fatalf("limit-only bounds = %#v", bounds)
+	}
+	bounds, err = podLogBounds(PodLogsInput{Since: "2h"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bounds.TailLines != nil || bounds.SinceSeconds == nil || *bounds.SinceSeconds != 7200 {
+		t.Fatalf("since bounds = %#v", bounds)
+	}
+	bounds, err = podLogBounds(PodLogsInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bounds.TailLines == nil || *bounds.TailLines != 100 {
+		t.Fatalf("default bounds = %#v", bounds)
+	}
+}
+
+func TestPodLogUntilFiltersTimestampedLines(t *testing.T) {
+	bounds, err := podLogBounds(PodLogsInput{Until: "2026-05-28T10:01:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := filterPodLogText(strings.Join([]string{
+		"2026-05-28T10:00:00Z first",
+		"2026-05-28T10:02:00Z second",
+	}, "\n"), bounds, false)
+	if text != "first" {
+		t.Fatalf("filtered text = %q", text)
+	}
+}
+
+func TestPortForwardOperationsUseInjectedLifecycle(t *testing.T) {
+	plugin := NewPluginWithService(Service{
+		ForwardStart: func(_ context.Context, input PortForwardStartInput) (PortForwardResult, error) {
+			if input.Namespace != "monitoring" || input.Resource != "service/loki" || input.RemotePort != 3100 {
+				t.Fatalf("start input = %#v", input)
+			}
+			return PortForwardResult{ID: "kpf-test", Namespace: input.Namespace, Resource: input.Resource, LocalPort: 49152, RemotePort: input.RemotePort, LocalURL: "http://127.0.0.1:49152", PID: 123, ProcessGroup: 123}, nil
+		},
+		ForwardStop: func(_ context.Context, input PortForwardStopInput) (PortForwardStopResult, error) {
+			if input.ID != "kpf-test" {
+				t.Fatalf("stop input = %#v", input)
+			}
+			return PortForwardStopResult{ID: input.ID, Stopped: true, Signal: "SIGTERM"}, nil
+		},
+	})
+	start := plugintest.RunOK[PortForwardResult](t, plugin, OperationPortForwardStart, map[string]any{"namespace": "monitoring", "resource": "service/loki", "remote_port": 3100})
+	if start.ID != "kpf-test" || start.LocalURL != "http://127.0.0.1:49152" {
+		t.Fatalf("start = %#v", start)
+	}
+	stop := plugintest.RunOK[PortForwardStopResult](t, plugin, OperationPortForwardStop, map[string]any{"id": "kpf-test"})
+	if !stop.Stopped {
+		t.Fatalf("stop = %#v", stop)
 	}
 }
 

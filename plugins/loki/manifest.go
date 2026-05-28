@@ -7,7 +7,7 @@ import (
 
 const (
 	PluginName        = "loki"
-	PluginVersion     = "0.2.0"
+	PluginVersion     = "0.3.0"
 	PluginDescription = "Loki endpoint discovery, health checks, LogQL queries, recent logs, and labels."
 
 	EnvLokiURL      = "LOKI_URL"

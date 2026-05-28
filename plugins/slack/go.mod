@@ -3,7 +3,7 @@ module github.com/fluxplane/fluxplane-dex/plugins/slack
 go 1.26
 
 require (
-	github.com/fluxplane/fluxplane-dex v0.2.0
+	github.com/fluxplane/fluxplane-dex v0.3.0
 	github.com/slack-go/slack v0.24.0
 )
 

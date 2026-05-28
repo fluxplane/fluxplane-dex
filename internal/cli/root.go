@@ -1133,7 +1133,7 @@ func newSkillCommand(opts *options) *cobra.Command {
 type skillTemplateData struct {
 	GeneratedAt        string        `json:"generated_at"`
 	Instance           string        `json:"instance"`
-	Help               string        `json:"help,omitempty"`
+	CommandSummary     string        `json:"command_summary,omitempty"`
 	Plugins            []skillPlugin `json:"plugins"`
 	ActivePlugins      []skillPlugin `json:"active_plugins,omitempty"`
 	MarketplacePlugins []skillPlugin `json:"marketplace_plugins,omitempty"`
@@ -1259,10 +1259,24 @@ Use ` + "`dex`" + ` for local, plugin-backed access to engineering systems. Pref
 Generated: {{ .GeneratedAt }}
 Instance: ` + "`{{ .Instance }}`" + `
 
-## Basic Commands
+## Patterns
 
-` + "```text" + `
-{{ .Help }}` + "```" + `
+- Discover -> import -> use: run ` + "`dex endpoint discover <product> --plugin <plugin> ... -o json`" + `, import a selected candidate with ` + "`dex endpoint import --id <friendly-id> --candidate <n> -`" + `, then pass ` + "`--endpoint-ref <friendly-id>`" + ` to generated operation commands.
+- Endpoint references: ` + "`endpoint_ref`" + ` is the portable operation input field; generated commands expose it as ` + "`--endpoint-ref`" + `. Prefer it over copying URLs or secrets.
+- Retrospective logs: use ` + "`dex kube pod logs ... --since ... --until ...`" + ` for one pod, and use Loki for cross-pod or service-level history.
+- Cluster-local services: use ` + "`dex kube portforward start`" + `, register the returned localhost URL with ` + "`dex endpoint add`" + ` or ` + "`dex endpoint import`" + `, then reuse the endpoint ref.
+
+## Command Surface
+
+{{ .CommandSummary }}
+
+Run ` + "`dex <cmd> --help`" + ` for current flags and see plugin references for generated integration commands.
+
+## Runtime Notes
+
+- Empty ` + "`null`" + `, map, or list responses can be valid; check command errors before retrying.
+- Secret material in resolved endpoint output is redacted, commonly as ` + "`xxxxx`" + `.
+- Plugin install, upgrade, uninstall, activate, and auth setup refresh the dex-home skill when it already exists.
 
 ## Installed and Active Integration References
 {{- if .ActivePlugins }}
@@ -1371,9 +1385,6 @@ func buildSkillTemplateData(ctx context.Context, runner runtime.Runner, instance
 
 func buildInstalledSkillTemplateData(ctx context.Context, opts *options, runner runtime.Runner, instance string) (skillTemplateData, error) {
 	data := skillTemplateData{GeneratedAt: time.Now().UTC().Format(time.RFC3339), Instance: runtime.NormalizeInstance(instance)}
-	if help, err := dexRootHelpText(ctx, opts); err == nil {
-		data.Help = help
-	}
 	for _, entry := range runner.Marketplace.Plugins() {
 		plugin := skillPluginFromMarketplaceEntry(runner, entry)
 		if plugin.Activated {
@@ -1403,7 +1414,23 @@ func buildInstalledSkillTemplateData(ctx context.Context, opts *options, runner 
 	sort.Slice(data.Plugins, func(i, j int) bool { return data.Plugins[i].Name < data.Plugins[j].Name })
 	sort.Slice(data.ActivePlugins, func(i, j int) bool { return data.ActivePlugins[i].Name < data.ActivePlugins[j].Name })
 	sort.Slice(data.MarketplacePlugins, func(i, j int) bool { return data.MarketplacePlugins[i].Name < data.MarketplacePlugins[j].Name })
+	data.CommandSummary = skillCommandSummary(data.ActivePlugins)
 	return data, nil
+}
+
+func skillCommandSummary(active []skillPlugin) string {
+	builtins := []string{"plugin", "op", "datasource", "endpoint", "auth", "secret", "search", "lookup", "context", "skill", "doctor", "index", "setup", "upgrade", "version"}
+	var integrations []string
+	for _, plugin := range active {
+		if command := strings.TrimSpace(plugin.Command); command != "" {
+			integrations = append(integrations, command)
+		}
+	}
+	sort.Strings(integrations)
+	if len(integrations) == 0 {
+		return "Top-level subcommands: " + strings.Join(builtins, ", ") + ". Integration commands: none active when this skill was generated."
+	}
+	return "Top-level subcommands: " + strings.Join(builtins, ", ") + ". Integration commands: " + strings.Join(integrations, ", ") + "."
 }
 
 func skillPluginFromMarketplaceEntry(runner runtime.Runner, entry core.PluginEntry) skillPlugin {
@@ -1723,25 +1750,6 @@ func addSkillRefreshResult(ctx context.Context, opts *options, runner runtime.Ru
 	if dir != "" {
 		result["skill_dir"] = dir
 	}
-}
-
-func dexRootHelpText(ctx context.Context, opts *options) (string, error) {
-	copyOpts := *opts
-	copyOpts.output = "text"
-	var out bytes.Buffer
-	copyOpts.out = &out
-	copyOpts.errOut = &out
-	cmd := newRootCommand(&copyOpts)
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--help"})
-	if err := attachGeneratedPluginCommands(ctx, cmd, &copyOpts); err != nil {
-		return "", err
-	}
-	if err := cmd.Execute(); err != nil {
-		return "", err
-	}
-	return strings.TrimRight(out.String(), "\n") + "\n", nil
 }
 
 func newAuthCommand(opts *options) *cobra.Command {
@@ -2399,7 +2407,49 @@ func attachGeneratedPluginCommands(ctx context.Context, root *cobra.Command, opt
 		}
 		root.AddCommand(cmd)
 	}
+	if err := attachUnavailableMarketplacePluginCommands(root, runner, claimed); err != nil {
+		return err
+	}
 	return nil
+}
+
+func attachUnavailableMarketplacePluginCommands(root *cobra.Command, runner runtime.Runner, claimed map[string]string) error {
+	for _, entry := range runner.Marketplace.Plugins() {
+		name := strings.TrimSpace(entry.Name)
+		if name == "" || reservedRootCommand(name) || claimed[name] != "" {
+			continue
+		}
+		status, err := runner.State.PluginStatus(entry)
+		if err != nil {
+			return err
+		}
+		if status.Activated {
+			continue
+		}
+		root.AddCommand(unavailableMarketplacePluginCommand(entry, status))
+		claimed[name] = entry.Name
+	}
+	return nil
+}
+
+func unavailableMarketplacePluginCommand(entry core.PluginEntry, status runtime.PluginStatus) *cobra.Command {
+	name := strings.TrimSpace(entry.Name)
+	short := strings.TrimSpace(entry.Description)
+	if short == "" {
+		short = "Install or activate the " + name + " plugin"
+	}
+	cmd := &cobra.Command{
+		Use:     name,
+		Short:   short,
+		GroupID: commandGroupIntegrations,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if status.Installed {
+				return fmt.Errorf("plugin %q is installed but not activated; run `dex plugin activate %s`", name, name)
+			}
+			return fmt.Errorf("plugin %q is not installed; run `dex plugin install %s`", name, name)
+		},
+	}
+	return cmd
 }
 
 func activePluginManifests(ctx context.Context, runner runtime.Runner) ([]core.PluginManifest, error) {

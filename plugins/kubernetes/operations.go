@@ -4,12 +4,18 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/fluxplane/fluxplane-dex/core"
@@ -30,6 +36,8 @@ type Service struct {
 	Pods         func(context.Context, InventoryInput) ([]corev1.Pod, error)
 	Deployments  func(context.Context, InventoryInput) ([]appsv1.Deployment, error)
 	Logs         func(context.Context, PodLogsInput) (PodLogsResult, error)
+	ForwardStart func(context.Context, PortForwardStartInput) (PortForwardResult, error)
+	ForwardStop  func(context.Context, PortForwardStopInput) (PortForwardStopResult, error)
 	Secrets      func(context.Context, EndpointDiscoverInput) ([]corev1.Secret, error)
 }
 
@@ -151,8 +159,10 @@ type PodLogsInput struct {
 	Namespace   string `json:"namespace,omitempty" jsonschema:"description=Pod namespace."`
 	Name        string `json:"name,omitempty" jsonschema:"description=Pod name."`
 	Container   string `json:"container,omitempty" jsonschema:"description=Container name. Empty uses Kubernetes default selection."`
-	TailLines   int64  `json:"tail_lines,omitempty" jsonschema:"description=Number of lines to return. Defaults to 100 and is capped at 1000."`
-	LimitBytes  int64  `json:"limit_bytes,omitempty" jsonschema:"description=Maximum bytes to return. Values above 1048576 are capped."`
+	TailLines   int64  `json:"tail_lines,omitempty" jsonschema:"description=Number of trailing lines to return. Defaults to 100 only when no time or byte bound is provided; capped at 1000."`
+	LimitBytes  int64  `json:"limit_bytes,omitempty" jsonschema:"description=Maximum bytes to return. Values above 1048576 are capped. This can be used without tail_lines."`
+	Since       string `json:"since,omitempty" jsonschema:"description=Relative duration such as 2h or absolute RFC3339 timestamp."`
+	Until       string `json:"until,omitempty" jsonschema:"description=Absolute RFC3339 timestamp upper bound; filtered client-side."`
 	Previous    bool   `json:"previous,omitempty" jsonschema:"description=Return previous terminated container logs."`
 	Timestamps  bool   `json:"timestamps,omitempty" jsonschema:"description=Include Kubernetes log timestamps."`
 }
@@ -166,8 +176,55 @@ type PodLogsResult struct {
 	LineCount  int      `json:"line_count"`
 	TailLines  int64    `json:"tail_lines,omitempty"`
 	LimitBytes int64    `json:"limit_bytes,omitempty"`
+	Since      string   `json:"since,omitempty"`
+	Until      string   `json:"until,omitempty"`
 	Previous   bool     `json:"previous,omitempty"`
 	Timestamps bool     `json:"timestamps,omitempty"`
+}
+
+type PortForwardStartInput struct {
+	EndpointRef     string `json:"endpoint_ref,omitempty" jsonschema:"description=Registered Kubernetes cluster endpoint ref resolved by the host."`
+	URL             string `json:"url,omitempty" jsonschema:"description=Kubernetes endpoint URL."`
+	Context         string `json:"context,omitempty" jsonschema:"description=Kubeconfig context override."`
+	Namespace       string `json:"namespace,omitempty" jsonschema:"description=Namespace containing the target resource."`
+	Resource        string `json:"resource,omitempty" jsonschema:"description=Resource reference such as service/loki, pod/api-123, or deployment/api."`
+	ResourceType    string `json:"resource_type,omitempty" jsonschema:"description=Resource type when name is used.,enum=service,enum=pod,enum=deployment"`
+	Name            string `json:"name,omitempty" jsonschema:"description=Resource name when resource is not used."`
+	RemotePort      int    `json:"remote_port,omitempty" jsonschema:"description=Remote service or pod port to forward."`
+	LocalPort       int    `json:"local_port,omitempty" jsonschema:"description=Local port. Empty or 0 allocates an available local port."`
+	Address         string `json:"address,omitempty" jsonschema:"description=Local bind address. Defaults to 127.0.0.1."`
+	DurationSeconds int    `json:"duration_seconds,omitempty" jsonschema:"description=Auto-cleanup timeout in seconds. Defaults to 3600 and is capped at 28800."`
+}
+
+type PortForwardResult struct {
+	ID              string    `json:"id"`
+	EndpointRef     string    `json:"endpoint_ref,omitempty"`
+	Context         string    `json:"context,omitempty"`
+	Namespace       string    `json:"namespace"`
+	Resource        string    `json:"resource"`
+	Address         string    `json:"address"`
+	LocalPort       int       `json:"local_port"`
+	RemotePort      int       `json:"remote_port"`
+	LocalURL        string    `json:"local_url"`
+	PID             int       `json:"pid"`
+	ProcessGroup    int       `json:"process_group,omitempty"`
+	DurationSeconds int       `json:"duration_seconds"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	LogPath         string    `json:"log_path,omitempty"`
+	Command         []string  `json:"command,omitempty"`
+}
+
+type PortForwardStopInput struct {
+	ID           string `json:"id,omitempty" jsonschema:"description=Managed port-forward ID returned by kubernetes.portforward.start."`
+	ProcessGroup int    `json:"process_group,omitempty" jsonschema:"description=Process group to terminate when ID is unavailable."`
+	PID          int    `json:"pid,omitempty" jsonschema:"description=Process ID to terminate when process_group is unavailable."`
+}
+
+type PortForwardStopResult struct {
+	ID      string `json:"id,omitempty"`
+	Stopped bool   `json:"stopped"`
+	Signal  string `json:"signal,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 type NamespaceListResult struct {
@@ -327,6 +384,22 @@ func (s Service) PodLogs(ctx pluginbinding.Context, input PodLogsInput) (PodLogs
 	return result, nil
 }
 
+func (s Service) PortForwardStart(ctx pluginbinding.Context, input PortForwardStartInput) (PortForwardResult, error) {
+	result, err := s.portForwardStart()(context.Background(), input)
+	if err != nil {
+		return PortForwardResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
+	}
+	return result, nil
+}
+
+func (s Service) PortForwardStop(ctx pluginbinding.Context, input PortForwardStopInput) (PortForwardStopResult, error) {
+	result, err := s.portForwardStop()(context.Background(), input)
+	if err != nil {
+		return PortForwardStopResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
+	}
+	return result, nil
+}
+
 func (s Service) ContainerList(ctx pluginbinding.Context, input InventoryInput) (ContainerListResult, error) {
 	items, err := s.pods()(context.Background(), input)
 	if err != nil {
@@ -467,6 +540,20 @@ func (s Service) logs() func(context.Context, PodLogsInput) (PodLogsResult, erro
 	return readKubernetesPodLogs
 }
 
+func (s Service) portForwardStart() func(context.Context, PortForwardStartInput) (PortForwardResult, error) {
+	if s.ForwardStart != nil {
+		return s.ForwardStart
+	}
+	return startKubernetesPortForward
+}
+
+func (s Service) portForwardStop() func(context.Context, PortForwardStopInput) (PortForwardStopResult, error) {
+	if s.ForwardStop != nil {
+		return s.ForwardStop
+	}
+	return stopKubernetesPortForward
+}
+
 func (s Service) secrets() func(context.Context, EndpointDiscoverInput) ([]corev1.Secret, error) {
 	if s.Secrets != nil {
 		return s.Secrets
@@ -564,16 +651,9 @@ func readKubernetesPodLogs(ctx context.Context, input PodLogsInput) (PodLogsResu
 	if name == "" {
 		return PodLogsResult{}, fmt.Errorf("name is required")
 	}
-	tailLines := input.TailLines
-	if tailLines <= 0 {
-		tailLines = 100
-	}
-	if tailLines > 1000 {
-		tailLines = 1000
-	}
-	limitBytes := input.LimitBytes
-	if limitBytes > 1024*1024 {
-		limitBytes = 1024 * 1024
+	bounds, err := podLogBounds(input)
+	if err != nil {
+		return PodLogsResult{}, err
 	}
 	clientset, _, err := kubernetesClient(EndpointDiscoverInput{
 		Context:   firstNonEmpty(input.Context, clusterContextFromEndpointURL(input.URL)),
@@ -585,17 +665,25 @@ func readKubernetesPodLogs(ctx context.Context, input PodLogsInput) (PodLogsResu
 	options := &corev1.PodLogOptions{
 		Container:  strings.TrimSpace(input.Container),
 		Previous:   input.Previous,
-		Timestamps: input.Timestamps,
-		TailLines:  &tailLines,
+		Timestamps: input.Timestamps || bounds.Until != nil,
 	}
-	if limitBytes > 0 {
-		options.LimitBytes = &limitBytes
+	if bounds.TailLines != nil {
+		options.TailLines = bounds.TailLines
+	}
+	if bounds.LimitBytes != nil {
+		options.LimitBytes = bounds.LimitBytes
+	}
+	if bounds.SinceSeconds != nil {
+		options.SinceSeconds = bounds.SinceSeconds
+	}
+	if bounds.SinceTime != nil {
+		options.SinceTime = bounds.SinceTime
 	}
 	raw, err := clientset.CoreV1().Pods(namespace).GetLogs(name, options).DoRaw(ctx)
 	if err != nil {
 		return PodLogsResult{}, err
 	}
-	text := strings.TrimRight(string(raw), "\n")
+	text := filterPodLogText(strings.TrimRight(string(raw), "\n"), bounds, input.Timestamps)
 	var lines []string
 	if text != "" {
 		lines = strings.Split(text, "\n")
@@ -607,11 +695,108 @@ func readKubernetesPodLogs(ctx context.Context, input PodLogsInput) (PodLogsResu
 		Lines:      lines,
 		Text:       text,
 		LineCount:  len(lines),
-		TailLines:  tailLines,
-		LimitBytes: limitBytes,
+		TailLines:  valueOrZero(bounds.TailLines),
+		LimitBytes: valueOrZero(bounds.LimitBytes),
+		Since:      strings.TrimSpace(input.Since),
+		Until:      strings.TrimSpace(input.Until),
 		Previous:   input.Previous,
 		Timestamps: input.Timestamps,
 	}, nil
+}
+
+type podLogBoundOptions struct {
+	TailLines    *int64
+	LimitBytes   *int64
+	SinceSeconds *int64
+	SinceTime    *metav1.Time
+	Until        *time.Time
+}
+
+func podLogBounds(input PodLogsInput) (podLogBoundOptions, error) {
+	var out podLogBoundOptions
+	if input.TailLines > 0 {
+		tailLines := input.TailLines
+		if tailLines > 1000 {
+			tailLines = 1000
+		}
+		out.TailLines = &tailLines
+	}
+	if input.LimitBytes > 0 {
+		limitBytes := input.LimitBytes
+		if limitBytes > 1024*1024 {
+			limitBytes = 1024 * 1024
+		}
+		out.LimitBytes = &limitBytes
+	}
+	if out.TailLines == nil && out.LimitBytes == nil && strings.TrimSpace(input.Since) == "" && strings.TrimSpace(input.Until) == "" {
+		tailLines := int64(100)
+		out.TailLines = &tailLines
+	}
+	if since := strings.TrimSpace(input.Since); since != "" {
+		if duration, err := time.ParseDuration(since); err == nil {
+			seconds := int64(duration.Seconds())
+			if seconds < 1 {
+				seconds = 1
+			}
+			out.SinceSeconds = &seconds
+		} else {
+			parsed, parseErr := time.Parse(time.RFC3339, since)
+			if parseErr != nil {
+				return out, fmt.Errorf("since must be a duration or RFC3339 timestamp")
+			}
+			out.SinceTime = &metav1.Time{Time: parsed}
+		}
+	}
+	if until := strings.TrimSpace(input.Until); until != "" {
+		parsed, err := time.Parse(time.RFC3339, until)
+		if err != nil {
+			return out, fmt.Errorf("until must be an RFC3339 timestamp")
+		}
+		out.Until = &parsed
+	}
+	return out, nil
+}
+
+func filterPodLogText(text string, bounds podLogBoundOptions, keepTimestamps bool) string {
+	if text == "" || bounds.Until == nil {
+		return text
+	}
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		timestamp, rest, ok := splitKubernetesLogTimestamp(line)
+		if !ok {
+			out = append(out, line)
+			continue
+		}
+		if timestamp.After(*bounds.Until) {
+			continue
+		}
+		if keepTimestamps {
+			out = append(out, line)
+		} else {
+			out = append(out, rest)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+func splitKubernetesLogTimestamp(line string) (time.Time, string, bool) {
+	head, rest, ok := strings.Cut(line, " ")
+	if !ok {
+		return time.Time{}, "", false
+	}
+	timestamp, err := time.Parse(time.RFC3339Nano, head)
+	if err != nil {
+		return time.Time{}, "", false
+	}
+	return timestamp, rest, true
+}
+
+func valueOrZero(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 func listKubernetesSecrets(ctx context.Context, input EndpointDiscoverInput) ([]corev1.Secret, error) {
@@ -624,6 +809,241 @@ func listKubernetesSecrets(ctx context.Context, input EndpointDiscoverInput) ([]
 		return nil, err
 	}
 	return list.Items, nil
+}
+
+func startKubernetesPortForward(ctx context.Context, input PortForwardStartInput) (PortForwardResult, error) {
+	namespace := strings.TrimSpace(input.Namespace)
+	if namespace == "" {
+		return PortForwardResult{}, fmt.Errorf("namespace is required")
+	}
+	resource := normalizedPortForwardResource(input)
+	if resource == "" {
+		return PortForwardResult{}, fmt.Errorf("resource or name is required")
+	}
+	remotePort := input.RemotePort
+	if remotePort <= 0 {
+		return PortForwardResult{}, fmt.Errorf("remote_port is required")
+	}
+	localPort := input.LocalPort
+	if localPort <= 0 {
+		port, err := availableLocalPort()
+		if err != nil {
+			return PortForwardResult{}, err
+		}
+		localPort = port
+	}
+	address := strings.TrimSpace(input.Address)
+	if address == "" {
+		address = "127.0.0.1"
+	}
+	duration := input.DurationSeconds
+	if duration <= 0 {
+		duration = 3600
+	}
+	if duration > 8*3600 {
+		duration = 8 * 3600
+	}
+	contextName := firstNonEmpty(input.Context, clusterContextFromEndpointURL(input.URL))
+	id := portForwardID(namespace, resource, localPort, remotePort)
+	dir, err := portForwardStateDir()
+	if err != nil {
+		return PortForwardResult{}, err
+	}
+	logPath := filepath.Join(dir, id+".log")
+	recordPath := filepath.Join(dir, id+".json")
+	portArg := strconv.Itoa(localPort) + ":" + strconv.Itoa(remotePort)
+	args := []string{}
+	if contextName != "" {
+		args = append(args, "--context", contextName)
+	}
+	args = append(args, "-n", namespace, "port-forward", resource, portArg, "--address", address)
+	shell := "kubectl " + shellJoin(args) + " >>" + shellQuote(logPath) + " 2>&1 & child=$!; (sleep " + strconv.Itoa(duration) + "; kill $child >/dev/null 2>&1) & wait $child"
+	cmd := exec.CommandContext(ctx, "sh", "-c", shell)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		return PortForwardResult{}, err
+	}
+	if err := waitForPortForward(address, localPort, cmd.Process.Pid, logPath); err != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		return PortForwardResult{}, err
+	}
+	result := PortForwardResult{
+		ID:              id,
+		EndpointRef:     strings.TrimSpace(input.EndpointRef),
+		Context:         contextName,
+		Namespace:       namespace,
+		Resource:        resource,
+		Address:         address,
+		LocalPort:       localPort,
+		RemotePort:      remotePort,
+		LocalURL:        "http://" + net.JoinHostPort(address, strconv.Itoa(localPort)),
+		PID:             cmd.Process.Pid,
+		ProcessGroup:    cmd.Process.Pid,
+		DurationSeconds: duration,
+		ExpiresAt:       time.Now().UTC().Add(time.Duration(duration) * time.Second),
+		LogPath:         logPath,
+		Command:         append([]string{"kubectl"}, args...),
+	}
+	if err := writePortForwardRecord(recordPath, result); err != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		return PortForwardResult{}, err
+	}
+	return result, nil
+}
+
+func waitForPortForward(address string, port, pid int, logPath string) error {
+	host := strings.TrimSpace(address)
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	target := net.JoinHostPort(host, strconv.Itoa(port))
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", target, 100*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		if processExited(pid) {
+			return fmt.Errorf("kubectl port-forward exited before %s became reachable: %s", target, tailFile(logPath, 2048))
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("kubectl port-forward did not become reachable at %s: %s", target, tailFile(logPath, 2048))
+}
+
+func processExited(pid int) bool {
+	if pid <= 0 {
+		return true
+	}
+	err := syscall.Kill(pid, 0)
+	return errors.Is(err, syscall.ESRCH)
+}
+
+func tailFile(path string, max int) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	if max > 0 && len(data) > max {
+		data = data[len(data)-max:]
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func stopKubernetesPortForward(_ context.Context, input PortForwardStopInput) (PortForwardStopResult, error) {
+	result := PortForwardStopResult{ID: strings.TrimSpace(input.ID)}
+	processGroup := input.ProcessGroup
+	pid := input.PID
+	if result.ID != "" {
+		record, err := readPortForwardRecord(result.ID)
+		if err != nil {
+			return result, err
+		}
+		if processGroup <= 0 {
+			processGroup = record.ProcessGroup
+		}
+		if pid <= 0 {
+			pid = record.PID
+		}
+	}
+	if processGroup > 0 {
+		if err := syscall.Kill(-processGroup, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+			result.Error = err.Error()
+			return result, err
+		}
+		result.Stopped = true
+		result.Signal = "SIGTERM"
+		return result, nil
+	}
+	if pid > 0 {
+		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+			result.Error = err.Error()
+			return result, err
+		}
+		result.Stopped = true
+		result.Signal = "SIGTERM"
+		return result, nil
+	}
+	return result, fmt.Errorf("id, process_group, or pid is required")
+}
+
+func normalizedPortForwardResource(input PortForwardStartInput) string {
+	resource := strings.TrimSpace(input.Resource)
+	if resource != "" {
+		return resource
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return ""
+	}
+	resourceType := strings.Trim(strings.ToLower(strings.TrimSpace(input.ResourceType)), "/")
+	if resourceType == "" {
+		resourceType = "service"
+	}
+	return resourceType + "/" + name
+}
+
+func availableLocalPort() (int, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer listener.Close()
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		return 0, fmt.Errorf("could not allocate local TCP port")
+	}
+	return addr.Port, nil
+}
+
+func portForwardID(namespace, resource string, localPort, remotePort int) string {
+	sum := sha1.Sum([]byte(namespace + "\x00" + resource + "\x00" + strconv.Itoa(localPort) + "\x00" + strconv.Itoa(remotePort) + "\x00" + strconv.FormatInt(time.Now().UnixNano(), 10)))
+	return "kpf-" + hex.EncodeToString(sum[:6])
+}
+
+func portForwardStateDir() (string, error) {
+	root := filepath.Join(os.TempDir(), "fluxplane-dex", "kubernetes", "portforwards")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", err
+	}
+	return root, nil
+}
+
+func writePortForwardRecord(path string, result PortForwardResult) error {
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
+func readPortForwardRecord(id string) (PortForwardResult, error) {
+	dir, err := portForwardStateDir()
+	if err != nil {
+		return PortForwardResult{}, err
+	}
+	data, err := os.ReadFile(filepath.Join(dir, strings.TrimSpace(id)+".json"))
+	if err != nil {
+		return PortForwardResult{}, err
+	}
+	var result PortForwardResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return PortForwardResult{}, err
+	}
+	return result, nil
+}
+
+func shellJoin(args []string) string {
+	parts := make([]string, 0, len(args))
+	for _, arg := range args {
+		parts = append(parts, shellQuote(arg))
+	}
+	return strings.Join(parts, " ")
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func kubernetesClient(input EndpointDiscoverInput) (*kubernetes.Clientset, string, error) {

@@ -7,7 +7,7 @@ import (
 
 const (
 	PluginName        = "sql"
-	PluginVersion     = "0.2.0"
+	PluginVersion     = "0.3.0"
 	PluginDescription = "Read-only SQL query operations for MySQL, PostgreSQL, SQLite, and compatible endpoints."
 
 	AuthMethodSQL        = "sql"

@@ -93,6 +93,11 @@ Operations have names, descriptions, input schemas, output schemas, read-only
 flags, compact-output hints, and secret purposes. The roadmap expands this with
 effect, risk, idempotency, access, auth-scope, and render metadata.
 
+Every operation input schema includes the host-level `endpoint_ref` convenience
+field. When present, the host resolves the registered endpoint before plugin
+invocation and injects resolved fields such as `url`, `credential_ref`, and
+`endpoint_product` into the operation payload.
+
 ## Batch Operation
 
 A batch operation call is a list of operation calls sent through one protocol
@@ -290,9 +295,11 @@ behavior.
 A managed process is a long-running task controlled by the host.
 
 Examples include Kubernetes port-forwards, log follows, background watches, or
-other streaming operations. The host should provide start, ensure, list, status,
-stop, output, and wait primitives so plugins do not invent PID files and process
-lifecycle semantics independently.
+other streaming operations. Current Kubernetes port-forward operations expose
+explicit start/stop lifecycle commands with auto-expiry. The longer-term host
+contract should provide start, ensure, list, status, stop, output, and wait
+primitives so plugins do not invent PID files and process lifecycle semantics
+independently.
 
 ## Observer
 

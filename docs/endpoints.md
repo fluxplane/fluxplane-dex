@@ -71,7 +71,23 @@ Read bounded pod logs:
 
 ```bash
 dex op run kubernetes.pod.logs '{"endpoint_ref":"dev-kubernetes","namespace":"latest","name":"api-123","tail_lines":50}'
+dex op run kubernetes.pod.logs '{"endpoint_ref":"dev-kubernetes","namespace":"latest","name":"api-123","since":"2h","limit_bytes":1048576}'
 ```
+
+`tail_lines`, `limit_bytes`, and `since` can be used independently. `until`
+accepts an RFC3339 timestamp and is applied client-side to timestamped log
+output.
+
+Start a managed local port-forward for in-cluster services such as Loki or
+Prometheus:
+
+```bash
+dex op run kubernetes.portforward.start '{"endpoint_ref":"dev-kubernetes","namespace":"monitoring","resource":"service/loki","remote_port":3100}'
+dex op run kubernetes.portforward.stop '{"id":"kpf-..."}'
+```
+
+When `local_port` is omitted, dex allocates a free localhost port. Port-forwards
+auto-expire after `duration_seconds` seconds, defaulting to one hour.
 
 After activating the Kubernetes plugin, the same operations are available
 through manifest-generated aliases:
@@ -82,7 +98,8 @@ dex kube namespace list --endpoint-ref dev-kubernetes
 dex kube service list --endpoint-ref dev-kubernetes --namespace latest
 dex kube service show latest/api --endpoint-ref dev-kubernetes
 dex kube pod list --endpoint-ref dev-kubernetes --namespace latest --query api
-dex kube pod logs latest/api-123 --endpoint-ref dev-kubernetes --tail-lines 50
+dex kube pod logs latest/api-123 --endpoint-ref dev-kubernetes --since 2h
+dex kube portforward start --endpoint-ref dev-kubernetes --namespace monitoring --resource service/loki --remote-port 3100
 dex kube container list --endpoint-ref dev-kubernetes --namespace latest --query api
 dex kube container show latest/api-123/api --endpoint-ref dev-kubernetes
 dex kube deployment list --endpoint-ref dev-kubernetes --namespace latest

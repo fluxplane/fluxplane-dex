@@ -119,6 +119,9 @@ func TestPluginManifestIncludesGeneratedInputSchema(t *testing.T) {
 	if schema.Properties["name"].Type != "string" || schema.Properties["name"].Description != "Name to greet" {
 		t.Fatalf("schema properties = %#v", schema.Properties)
 	}
+	if schema.Properties["endpoint_ref"].Type != "string" {
+		t.Fatalf("schema missing universal endpoint_ref: %#v", schema.Properties)
+	}
 }
 
 func newTestPlugin() *Plugin {

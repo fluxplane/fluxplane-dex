@@ -1,6 +1,10 @@
 package pluginbinding
 
-import "github.com/fluxplane/fluxplane-dex/core"
+import (
+	"encoding/json"
+
+	"github.com/fluxplane/fluxplane-dex/core"
+)
 
 const (
 	CapabilitySearch = "search"
@@ -257,6 +261,7 @@ func normalizeOperationSpecs(specs []core.OperationSpec) []core.OperationSpec {
 }
 
 func NormalizeOperationSpec(spec core.OperationSpec) core.OperationSpec {
+	spec.Input = normalizeOperationInputSchema(spec.Input)
 	spec.Effects = uniqueOperationEffects(spec.Effects)
 	spec.Access = uniqueOperationAccess(spec.Access)
 	spec.AuthScopes = uniqueStringValues(spec.AuthScopes)
@@ -312,6 +317,39 @@ func NormalizeOperationSpec(spec core.OperationSpec) core.OperationSpec {
 		spec.Render.Formats = uniqueStringValues(spec.Render.Formats)
 	}
 	return spec
+}
+
+func normalizeOperationInputSchema(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		raw = json.RawMessage(`{"properties":{},"type":"object"}`)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return raw
+	}
+	if schema == nil {
+		schema = map[string]any{}
+	}
+	if schemaType, _ := schema["type"].(string); schemaType != "" && schemaType != "object" {
+		return raw
+	}
+	schema["type"] = "object"
+	properties, _ := schema["properties"].(map[string]any)
+	if properties == nil {
+		properties = map[string]any{}
+		schema["properties"] = properties
+	}
+	if _, ok := properties["endpoint_ref"]; !ok {
+		properties["endpoint_ref"] = map[string]any{
+			"type":        "string",
+			"description": "Registered endpoint ref resolved by the host before invoking the operation.",
+		}
+	}
+	normalized, err := json.Marshal(normalizeSchemaValue(schema))
+	if err != nil {
+		return raw
+	}
+	return normalized
 }
 
 func uniqueStringValues(values []string) []string {

@@ -114,7 +114,8 @@ Use Kubernetes operation aliases and datasource search:
 ```bash
 dex kube service list --endpoint-ref dev-kubernetes --namespace latest
 dex kube pod list --endpoint-ref dev-kubernetes --namespace latest --query api
-dex kube pod logs latest/api-123 --endpoint-ref dev-kubernetes --tail-lines 50
+dex kube pod logs latest/api-123 --endpoint-ref dev-kubernetes --since 2h
+dex kube portforward start --endpoint-ref dev-kubernetes --namespace monitoring --resource service/loki --remote-port 3100
 dex kube container list --endpoint-ref dev-kubernetes --namespace latest --query api
 dex kube container show latest/api-123/api --endpoint-ref dev-kubernetes
 dex kube deployment list --endpoint-ref dev-kubernetes --namespace latest
@@ -259,12 +260,12 @@ replacement for the root release version.
 Plugin modules intentionally require the release root module version:
 
 ```go
-require github.com/fluxplane/fluxplane-dex v0.2.0
+require github.com/fluxplane/fluxplane-dex v0.3.0
 ```
 
 Do not add local `replace` directives to plugin modules for release. The release
-tags must include the root tag `v0.2.0` and matching plugin module tags such as
-`plugins/gitlab/v0.2.0`.
+tags must include the root tag `v0.3.0` and matching plugin module tags such as
+`plugins/gitlab/v0.3.0`.
 
 Release checks live in [Maintainer Notes](docs/maintainer.md).
 

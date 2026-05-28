@@ -1259,6 +1259,22 @@ func TestSkillInstallWritesDexHomeSkillAndReferences(t *testing.T) {
 	if !bytes.Contains(main, []byte("## Installed and Active Integration References")) || !bytes.Contains(main, []byte("## Marketplace References")) || !bytes.Contains(main, []byte("available to install")) {
 		t.Fatalf("main skill missing active/marketplace split:\n%s", string(main))
 	}
+	for _, want := range [][]byte{
+		[]byte("## Patterns"),
+		[]byte("Discover -> import -> use"),
+		[]byte("`--endpoint-ref <friendly-id>`"),
+		[]byte("Top-level subcommands: plugin, op, datasource"),
+		[]byte("Integration commands: kube"),
+		[]byte("Empty `null`, map, or list responses can be valid"),
+		[]byte("`xxxxx`"),
+	} {
+		if !bytes.Contains(main, want) {
+			t.Fatalf("main skill missing %q:\n%s", string(want), string(main))
+		}
+	}
+	if bytes.Contains(main, []byte("Usage:\n  dex")) {
+		t.Fatalf("main skill still embeds full dex help:\n%s", string(main))
+	}
 	kubeRef, err := os.ReadFile(filepath.Join(wantDir, "references", "kubernetes.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -1382,6 +1398,29 @@ func TestGeneratedCommandRequiresActivePlugin(t *testing.T) {
 	_, err = executeGeneratedRoot(t, "--dex-home", state.Home, "--dev-plugin", "kubernetes="+pluginDir, "kube", "pod", "logs", "latest/api-123")
 	if err == nil || !strings.Contains(err.Error(), "unknown command") {
 		t.Fatalf("inactive alias err = %#v", err)
+	}
+}
+
+func TestUnavailableMarketplacePluginCommandReturnsInstallHint(t *testing.T) {
+	marketplacePath := filepath.Join(t.TempDir(), "marketplace.json")
+	marketplaceData, err := json.Marshal(core.Marketplace{Version: "1", Plugins: []core.PluginEntry{{
+		Name:        "gitlab",
+		Description: "GitLab test plugin.",
+		Binary:      "dex-plugin-gitlab",
+		GoInstall:   "example.com/gitlab@latest",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marketplacePath, marketplaceData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := executeGeneratedRoot(t, "--marketplace", marketplacePath, "gitlab", "project", "list")
+	if err == nil {
+		t.Fatalf("expected unavailable plugin command to fail, output=%s", out)
+	}
+	if !strings.Contains(err.Error(), `plugin "gitlab" is not installed`) || !strings.Contains(err.Error(), "dex plugin install gitlab") {
+		t.Fatalf("unavailable plugin err = %v, output=%s", err, out)
 	}
 }
 

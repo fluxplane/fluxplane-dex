@@ -134,6 +134,9 @@ func TestInventoryOperationsListResources(t *testing.T) {
 	if pods.Count != 1 || pods.Pods[0].Phase != "Running" || pods.Pods[0].Containers[0] != "api" {
 		t.Fatalf("pods = %#v", pods)
 	}
+	if pods.Pods[0].Metadata != nil {
+		t.Fatalf("typed pod records should not duplicate fields into metadata: %#v", pods.Pods[0].Metadata)
+	}
 	containers := plugintest.RunOK[ContainerListResult](t, plugin, OperationContainerList, map[string]any{"query": "api"})
 	if containers.Count != 1 || containers.Containers[0].ID != "latest/api-123/api" || containers.Containers[0].State != "running" || !containers.Containers[0].Ready {
 		t.Fatalf("containers = %#v", containers)
@@ -198,6 +201,11 @@ func TestInventoryDatasourceSearchFindsServicesPodsAndDeployments(t *testing.T) 
 	}
 	if !entities[EntityService] || !entities[EntityPod] || !entities[EntityDeployment] || !entities[EntityContainer] {
 		t.Fatalf("records = %#v", out.Records)
+	}
+	for _, record := range out.Records {
+		if len(record.Metadata) == 0 {
+			t.Fatalf("inventory datasource record missing metadata: %#v", record)
+		}
 	}
 }
 

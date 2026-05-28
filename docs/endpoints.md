@@ -12,6 +12,10 @@ Discover Kubernetes cluster endpoints from kubeconfig contexts:
 dex endpoint discover kubernetes --plugin kubernetes -o json
 ```
 
+Discovery defaults to a compact candidate list with a limit of 20 and omits raw
+provider annotations. Use `--limit` to change the count and `--raw` when those
+provider annotations are needed for debugging.
+
 Import one discovered candidate:
 
 ```bash

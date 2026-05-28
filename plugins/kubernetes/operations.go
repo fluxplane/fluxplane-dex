@@ -976,7 +976,6 @@ func namespaceRecords(source pluginbinding.DatasourceSource, items []corev1.Name
 			Labels:           cloneStringMap(item.Labels),
 			CreatedAt:        timestampText(item.CreationTimestamp),
 		}
-		record.Metadata = map[string]any{"name": record.Name, "status": record.Status, "labels": record.Labels}
 		records = append(records, record)
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].Name < records[j].Name })
@@ -997,7 +996,6 @@ func serviceRecords(source pluginbinding.DatasourceSource, items []corev1.Servic
 			Labels:           cloneStringMap(item.Labels),
 			CreatedAt:        timestampText(item.CreationTimestamp),
 		}
-		record.Metadata = map[string]any{"name": record.Name, "namespace": record.Namespace, "type": record.Type, "cluster_ip": record.ClusterIP, "ports": record.Ports, "labels": record.Labels}
 		records = append(records, record)
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
@@ -1018,7 +1016,6 @@ func podRecords(source pluginbinding.DatasourceSource, items []corev1.Pod) []Pod
 			Labels:           cloneStringMap(item.Labels),
 			CreatedAt:        timestampText(item.CreationTimestamp),
 		}
-		record.Metadata = map[string]any{"name": record.Name, "namespace": record.Namespace, "phase": record.Phase, "node": record.Node, "containers": record.Containers, "labels": record.Labels}
 		records = append(records, record)
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
@@ -1060,7 +1057,6 @@ func containerRecord(source pluginbinding.DatasourceSource, pod corev1.Pod, cont
 		Labels:           cloneStringMap(pod.Labels),
 		CreatedAt:        timestampText(pod.CreationTimestamp),
 	}
-	record.Metadata = containerRecordMetadata(record)
 	return record
 }
 
@@ -1081,7 +1077,6 @@ func ephemeralContainerRecord(source pluginbinding.DatasourceSource, pod corev1.
 		Labels:           cloneStringMap(pod.Labels),
 		CreatedAt:        timestampText(pod.CreationTimestamp),
 	}
-	record.Metadata = containerRecordMetadata(record)
 	return record
 }
 
@@ -1101,6 +1096,22 @@ func containerRecordMetadata(record ContainerRecord) map[string]any {
 	}
 }
 
+func namespaceRecordMetadata(record NamespaceRecord) map[string]any {
+	return map[string]any{"name": record.Name, "status": record.Status, "labels": record.Labels}
+}
+
+func serviceRecordMetadata(record ServiceRecord) map[string]any {
+	return map[string]any{"name": record.Name, "namespace": record.Namespace, "type": record.Type, "cluster_ip": record.ClusterIP, "ports": record.Ports, "labels": record.Labels}
+}
+
+func podRecordMetadata(record PodRecord) map[string]any {
+	return map[string]any{"name": record.Name, "namespace": record.Namespace, "phase": record.Phase, "node": record.Node, "containers": record.Containers, "labels": record.Labels}
+}
+
+func deploymentRecordMetadata(record DeploymentRecord) map[string]any {
+	return map[string]any{"name": record.Name, "namespace": record.Namespace, "replicas": record.Replicas, "ready_replicas": record.ReadyReplicas, "available_replicas": record.AvailableReplicas, "updated_replicas": record.UpdatedReplicas, "strategy": record.Strategy, "labels": record.Labels}
+}
+
 func deploymentRecords(source pluginbinding.DatasourceSource, items []appsv1.Deployment) []DeploymentRecord {
 	records := make([]DeploymentRecord, 0, len(items))
 	for _, item := range items {
@@ -1117,7 +1128,6 @@ func deploymentRecords(source pluginbinding.DatasourceSource, items []appsv1.Dep
 			Labels:            cloneStringMap(item.Labels),
 			CreatedAt:         timestampText(item.CreationTimestamp),
 		}
-		record.Metadata = map[string]any{"name": record.Name, "namespace": record.Namespace, "replicas": record.Replicas, "ready_replicas": record.ReadyReplicas, "available_replicas": record.AvailableReplicas, "updated_replicas": record.UpdatedReplicas, "strategy": record.Strategy, "labels": record.Labels}
 		records = append(records, record)
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
@@ -1127,19 +1137,29 @@ func deploymentRecords(source pluginbinding.DatasourceSource, items []appsv1.Dep
 func inventoryRecords(source pluginbinding.DatasourceSource, namespaces []corev1.Namespace, services []corev1.Service, pods []corev1.Pod, deployments []appsv1.Deployment) []pluginbinding.DatasourceRecord {
 	var records []pluginbinding.DatasourceRecord
 	for _, record := range namespaceRecords(source, namespaces) {
-		records = append(records, record.DatasourceRecord)
+		base := record.DatasourceRecord
+		base.Metadata = namespaceRecordMetadata(record)
+		records = append(records, base)
 	}
 	for _, record := range serviceRecords(source, services) {
-		records = append(records, record.DatasourceRecord)
+		base := record.DatasourceRecord
+		base.Metadata = serviceRecordMetadata(record)
+		records = append(records, base)
 	}
 	for _, record := range podRecords(source, pods) {
-		records = append(records, record.DatasourceRecord)
+		base := record.DatasourceRecord
+		base.Metadata = podRecordMetadata(record)
+		records = append(records, base)
 	}
 	for _, record := range containerRecords(source, pods) {
-		records = append(records, record.DatasourceRecord)
+		base := record.DatasourceRecord
+		base.Metadata = containerRecordMetadata(record)
+		records = append(records, base)
 	}
 	for _, record := range deploymentRecords(source, deployments) {
-		records = append(records, record.DatasourceRecord)
+		base := record.DatasourceRecord
+		base.Metadata = deploymentRecordMetadata(record)
+		records = append(records, base)
 	}
 	sort.Slice(records, func(i, j int) bool {
 		if records[i].Entity != records[j].Entity {

@@ -51,12 +51,16 @@ func TestVersionCommand(t *testing.T) {
 		Name    string `json:"name"`
 		Module  string `json:"module"`
 		Version string `json:"version"`
+		Text    string `json:"text"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
 	if result.Name != "fluxplane-dex" || result.Module != dexModulePath || result.Version != "v1.2.3" {
 		t.Fatalf("version result = %#v", result)
+	}
+	if result.Text != "fluxplane-dex v1.2.3 (0123456789ab)" {
+		t.Fatalf("version text = %q", result.Text)
 	}
 	if !bytes.Contains(out.Bytes(), []byte(`"revision": "0123456789abcdef"`)) {
 		t.Fatalf("version output missing revision:\n%s", out.String())
@@ -422,6 +426,7 @@ func TestEndpointDiscoverPluginPassesInputAndIndexesCandidates(t *testing.T) {
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 )
 
@@ -454,7 +459,8 @@ func main() {
 			"protocol": "mysql",
 			"source": "kubernetes_secret",
 			"credential_ref": "kubernetes://latest/secrets/mysql",
-			"labels": map[string]any{"context": input["context"], "namespace": input["namespace"], "limit": "3"},
+			"labels": map[string]any{"context": input["context"], "namespace": input["namespace"], "limit": fmt.Sprint(input["limit"])},
+			"annotations": map[string]any{"raw": "hidden"},
 		}}},
 	})
 }
@@ -481,6 +487,39 @@ func main() {
 	labels := result.Candidates[0].Labels
 	if labels["context"] != "dev" || labels["namespace"] != "latest" || labels["limit"] != "3" {
 		t.Fatalf("labels = %#v", labels)
+	}
+	if result.Candidates[0].Annotations != nil {
+		t.Fatalf("default discovery should omit annotations: %#v", result.Candidates[0].Annotations)
+	}
+	rawCmd := NewRootCommand()
+	var rawOut bytes.Buffer
+	rawCmd.SetOut(&rawOut)
+	rawCmd.SetErr(&rawOut)
+	rawCmd.SetArgs([]string{"--dex-home", t.TempDir(), "--dev-plugin", "kubernetes=" + pluginDir, "endpoint", "discover", "mysql", "--plugin", "kubernetes", "--limit", "3", "--raw", "-o", "json"})
+	if err := rawCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var rawResult endpointDiscoveryView
+	if err := json.Unmarshal(rawOut.Bytes(), &rawResult); err != nil {
+		t.Fatal(err)
+	}
+	if rawResult.Candidates[0].Annotations["raw"] != "hidden" {
+		t.Fatalf("raw discovery annotations = %#v", rawResult.Candidates[0].Annotations)
+	}
+	defaultLimitCmd := NewRootCommand()
+	var defaultLimitOut bytes.Buffer
+	defaultLimitCmd.SetOut(&defaultLimitOut)
+	defaultLimitCmd.SetErr(&defaultLimitOut)
+	defaultLimitCmd.SetArgs([]string{"--dex-home", t.TempDir(), "--dev-plugin", "kubernetes=" + pluginDir, "endpoint", "discover", "mysql", "--plugin", "kubernetes", "-o", "json"})
+	if err := defaultLimitCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var defaultLimitResult endpointDiscoveryView
+	if err := json.Unmarshal(defaultLimitOut.Bytes(), &defaultLimitResult); err != nil {
+		t.Fatal(err)
+	}
+	if defaultLimitResult.Candidates[0].Labels["limit"] != "20" {
+		t.Fatalf("default discovery limit = %#v", defaultLimitResult.Candidates[0].Labels)
 	}
 }
 
@@ -734,6 +773,12 @@ func main() {
 		var manifest map[string]any
 		_ = json.Unmarshal([]byte(manifestJSON), &manifest)
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"protocol": "dex.plugin.v1", "ok": true, "result": manifest})
+		return
+	}
+	if req.Command == "auth.methods" {
+		var manifest map[string]any
+		_ = json.Unmarshal([]byte(manifestJSON), &manifest)
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"protocol": "dex.plugin.v1", "ok": true, "result": manifest["auth"]})
 		return
 	}
 	var call struct {
@@ -1211,6 +1256,9 @@ func TestSkillInstallWritesDexHomeSkillAndReferences(t *testing.T) {
 	if !bytes.Contains(main, []byte("[kubernetes](references/kubernetes.md)")) || !bytes.Contains(main, []byte("[gitlab](references/gitlab.md)")) {
 		t.Fatalf("main skill missing references:\n%s", string(main))
 	}
+	if !bytes.Contains(main, []byte("## Installed and Active Integration References")) || !bytes.Contains(main, []byte("## Marketplace References")) || !bytes.Contains(main, []byte("available to install")) {
+		t.Fatalf("main skill missing active/marketplace split:\n%s", string(main))
+	}
 	kubeRef, err := os.ReadFile(filepath.Join(wantDir, "references", "kubernetes.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -1356,14 +1404,16 @@ func TestSearchPassesEndpointToDatasource(t *testing.T) {
 		t.Fatal(err)
 	}
 	var result struct {
-		Results map[string]struct {
-			Input map[string]any `json:"input"`
+		Results struct {
+			Available map[string]struct {
+				Input map[string]any `json:"input"`
+			} `json:"available"`
 		} `json:"results"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	input := result.Results["kubernetes"].Input
+	input := result.Results.Available["kubernetes"].Input
 	if input["endpoint_ref"] != "dev-kubernetes" || input["url"] != "kubernetes://context/dev" || input["query"] != "api" || input["limit"] != float64(5) {
 		t.Fatalf("input = %#v", input)
 	}
@@ -1408,6 +1458,24 @@ func TestDatasourceCommandsUseExactDatasourceName(t *testing.T) {
 	}
 	if result.Input["datasource"] != "kubernetes.inventory" || result.Input["entity"] != "kubernetes.resource" || result.Input["url"] != "kubernetes://context/dev" {
 		t.Fatalf("input = %#v", result.Input)
+	}
+
+	out.Reset()
+	cmd = NewRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", home, "--dev-plugin", "kubernetes=" + pluginDir, "datasource", "search", "kubernetes.inventory", "api", "--endpoint-ref", "dev-kubernetes", "--limit", "5", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	result = struct {
+		Input map[string]any `json:"input"`
+	}{}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Input["query"] != "api" || result.Input["limit"] != float64(5) || result.Input["endpoint_ref"] != "dev-kubernetes" {
+		t.Fatalf("flag input = %#v", result.Input)
 	}
 }
 
@@ -1949,28 +2017,30 @@ func main() {
 		t.Fatal(err)
 	}
 	var searchResult struct {
-		Results map[string]struct {
-			Source  string `json:"source"`
-			Count   int    `json:"count"`
-			Records []struct {
-				ID            string            `json:"id"`
-				URL           string            `json:"url"`
-				Links         map[string]string `json:"links"`
-				Score         int               `json:"score"`
-				MatchedFields []string          `json:"matched_fields"`
-				Origin        struct {
-					Plugin   string `json:"plugin"`
-					Instance string `json:"instance"`
-					Index    string `json:"index"`
-					Source   string `json:"source"`
-				} `json:"origin"`
-			} `json:"records"`
+		Results struct {
+			Available map[string]struct {
+				Source  string `json:"source"`
+				Count   int    `json:"count"`
+				Records []struct {
+					ID            string            `json:"id"`
+					URL           string            `json:"url"`
+					Links         map[string]string `json:"links"`
+					Score         int               `json:"score"`
+					MatchedFields []string          `json:"matched_fields"`
+					Origin        struct {
+						Plugin   string `json:"plugin"`
+						Instance string `json:"instance"`
+						Index    string `json:"index"`
+						Source   string `json:"source"`
+					} `json:"origin"`
+				} `json:"records"`
+			} `json:"available"`
 		} `json:"results"`
 	}
 	if err := json.Unmarshal(searchOut.Bytes(), &searchResult); err != nil {
 		t.Fatal(err)
 	}
-	gitlab := searchResult.Results["gitlab"]
+	gitlab := searchResult.Results.Available["gitlab"]
 	if gitlab.Source != "host_index" || gitlab.Count != 1 || gitlab.Records[0].ID != "sbf/manager-v2" {
 		t.Fatalf("search result = %#v", gitlab)
 	}
@@ -1993,33 +2063,35 @@ func main() {
 		t.Fatal(err)
 	}
 	var lookupResult struct {
-		Results map[string]struct {
-			Source  string `json:"source"`
-			Count   int    `json:"count"`
-			Matches []struct {
-				Entity string `json:"entity"`
-				ID     string `json:"id"`
-				Source struct {
-					Plugin string `json:"plugin"`
-					Index  string `json:"index"`
-				} `json:"source"`
-				Record struct {
-					Entity string            `json:"entity"`
-					ID     string            `json:"id"`
-					URL    string            `json:"url"`
-					Links  map[string]string `json:"links"`
-					Origin struct {
+		Results struct {
+			Available map[string]struct {
+				Source  string `json:"source"`
+				Count   int    `json:"count"`
+				Matches []struct {
+					Entity string `json:"entity"`
+					ID     string `json:"id"`
+					Source struct {
 						Plugin string `json:"plugin"`
 						Index  string `json:"index"`
-					} `json:"origin"`
-				} `json:"record"`
-			} `json:"matches"`
+					} `json:"source"`
+					Record struct {
+						Entity string            `json:"entity"`
+						ID     string            `json:"id"`
+						URL    string            `json:"url"`
+						Links  map[string]string `json:"links"`
+						Origin struct {
+							Plugin string `json:"plugin"`
+							Index  string `json:"index"`
+						} `json:"origin"`
+					} `json:"record"`
+				} `json:"matches"`
+			} `json:"available"`
 		} `json:"results"`
 	}
 	if err := json.Unmarshal(lookupOut.Bytes(), &lookupResult); err != nil {
 		t.Fatal(err)
 	}
-	lookupGitLab := lookupResult.Results["gitlab"]
+	lookupGitLab := lookupResult.Results.Available["gitlab"]
 	if lookupGitLab.Source != "host_index" || lookupGitLab.Count != 1 || lookupGitLab.Matches[0].ID != "sbf/manager-v2" {
 		t.Fatalf("lookup result = %#v", lookupGitLab)
 	}
@@ -2215,28 +2287,30 @@ func main() {
 		t.Fatal(err)
 	}
 	var lookupResult struct {
-		Results map[string]struct {
-			Count   int `json:"count"`
-			Matches []struct {
-				ID     string `json:"id"`
-				Source struct {
-					Index string `json:"index"`
-				} `json:"source"`
-				Record struct {
-					Entity string            `json:"entity"`
-					ID     string            `json:"id"`
-					Links  map[string]string `json:"links"`
-					Origin struct {
-						Plugin string `json:"plugin"`
-					} `json:"origin"`
-				} `json:"record"`
-			} `json:"matches"`
+		Results struct {
+			Available map[string]struct {
+				Count   int `json:"count"`
+				Matches []struct {
+					ID     string `json:"id"`
+					Source struct {
+						Index string `json:"index"`
+					} `json:"source"`
+					Record struct {
+						Entity string            `json:"entity"`
+						ID     string            `json:"id"`
+						Links  map[string]string `json:"links"`
+						Origin struct {
+							Plugin string `json:"plugin"`
+						} `json:"origin"`
+					} `json:"record"`
+				} `json:"matches"`
+			} `json:"available"`
 		} `json:"results"`
 	}
 	if err := json.Unmarshal(lookupOut.Bytes(), &lookupResult); err != nil {
 		t.Fatal(err)
 	}
-	slack := lookupResult.Results["slack"]
+	slack := lookupResult.Results.Available["slack"]
 	if slack.Count != 1 || slack.Matches[0].ID != "U123" || slack.Matches[0].Source.Index != "slack.users" {
 		t.Fatalf("lookup result = %#v", slack)
 	}
@@ -2313,13 +2387,160 @@ func main() {
 		t.Fatal(err)
 	}
 	var result struct {
-		Results map[string]any `json:"results"`
+		Results struct {
+			Available map[string]any `json:"available"`
+		} `json:"results"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := result.Results["nosrch"]; ok {
+	if _, ok := result.Results.Available["nosrch"]; ok {
 		t.Fatalf("non-searchable plugin should not be searched: %s", out.String())
+	}
+}
+
+func TestPluginListAlias(t *testing.T) {
+	out, err := executeGeneratedRoot(t, "--dex-home", t.TempDir(), "plugin", "list", "-o", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Plugins []core.PluginEntry `json:"plugins"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Plugins) == 0 {
+		t.Fatalf("plugin list output missing plugins:\n%s", out)
+	}
+}
+
+func TestSearchHelpShowsOnlyCanonicalEndpointRefFlag(t *testing.T) {
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"search", "-h"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "--endpoint-ref string") {
+		t.Fatalf("search help missing --endpoint-ref:\n%s", got)
+	}
+	if strings.Contains(got, "--endpoint string") {
+		t.Fatalf("search help still shows deprecated endpoint flag:\n%s", got)
+	}
+}
+
+func TestFanoutGroupsMissingPluginsAwayFromAvailableData(t *testing.T) {
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "op", "ls", "-o", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Available map[string]any `json:"available"`
+		Missing   []string       `json:"missing"`
+		Errors    map[string]any `json:"errors"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Missing) == 0 {
+		t.Fatalf("expected missing plugins to be grouped:\n%s", out.String())
+	}
+	for _, name := range result.Missing {
+		if _, ok := result.Available[name]; ok {
+			t.Fatalf("missing plugin %q also appeared in available:\n%s", name, out.String())
+		}
+	}
+	for name, value := range result.Available {
+		if m, ok := value.(map[string]any); ok && m["error"] != nil {
+			t.Fatalf("available plugin %q contains mixed error data:\n%s", name, out.String())
+		}
+	}
+}
+
+func TestBackendErrorDoesNotPrintUsage(t *testing.T) {
+	marketplace := filepath.Join(t.TempDir(), "marketplace.json")
+	data, err := json.Marshal(core.Marketplace{Version: "1", Plugins: []core.PluginEntry{{
+		Name:   "broken",
+		Binary: "dex-plugin-broken",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marketplace, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "--marketplace", marketplace, "plugin", "show", "broken"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected backend error")
+	}
+	if strings.Contains(out.String(), "Usage:") {
+		t.Fatalf("backend error printed usage:\n%s", out.String())
+	}
+}
+
+func TestOverviewCommandsAcceptNoPluginArgument(t *testing.T) {
+	pluginDir := writeFakeManifestPlugin(t, "gitlab", map[string]any{
+		"name": "gitlab",
+		"auth": []map[string]any{{
+			"name": "token",
+			"kind": "bearer",
+			"fields": []map[string]any{{
+				"name":     "access_token",
+				"required": true,
+				"secret":   true,
+			}},
+		}},
+	})
+	marketplace := filepath.Join(t.TempDir(), "marketplace.json")
+	data, err := json.Marshal(core.Marketplace{Version: "1", Plugins: []core.PluginEntry{{
+		Name:      "gitlab",
+		Binary:    "dex-plugin-gitlab",
+		LocalPath: pluginDir,
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marketplace, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	state, err := runtime.NewState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SaveInstalledPlugin(core.PluginEntry{Name: "gitlab", Binary: "dex-plugin-gitlab", LocalPath: pluginDir}, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"plugin", "status"},
+		{"auth", "info"},
+		{"auth", "status"},
+		{"index", "status"},
+	} {
+		cmd := NewRootCommand()
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetArgs(append([]string{"--dex-home", home, "--marketplace", marketplace, "--dev-plugin", "gitlab=" + pluginDir, "-o", "json"}, args...))
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("%v failed: %v\n%s", args, err, out.String())
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+			t.Fatalf("%v produced non-json output: %v\n%s", args, err, out.String())
+		}
 	}
 }
 

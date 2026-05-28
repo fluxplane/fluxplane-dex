@@ -1,6 +1,7 @@
 package yaml
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -8,12 +9,14 @@ import (
 )
 
 func Marshal(v any) ([]byte, error) {
-	var decoded any
 	data, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
 	}
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	var decoded any
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(&decoded); err != nil {
 		return nil, err
 	}
 	var b strings.Builder
@@ -63,7 +66,7 @@ func writeValue(b *strings.Builder, v any, indent int) {
 
 func scalar(v any) bool {
 	switch v.(type) {
-	case nil, string, bool, float64:
+	case nil, string, bool, json.Number, float64:
 		return true
 	default:
 		return false
@@ -81,6 +84,8 @@ func writeScalar(b *strings.Builder, v any) {
 			return
 		}
 		b.WriteString(x)
+	case json.Number:
+		b.WriteString(x.String())
 	default:
 		b.WriteString(fmt.Sprint(x))
 	}

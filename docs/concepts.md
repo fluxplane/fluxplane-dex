@@ -54,12 +54,13 @@ plugin entries.
 
 ## Instance
 
-An instance is a named configuration of a plugin.
+An instance is a named configuration label for a plugin.
 
-Most plugins have a `default` instance, but the model should support multiple
+Most plugins have a `default` instance, but the model supports multiple
 instances such as different GitLab servers, Slack workspaces, Kubernetes
 clusters, or Jira tenants. Auth material, secret grants, endpoint refs, and
-runtime calls are scoped to a plugin instance.
+runtime calls are scoped to a plugin instance. Instance names are free-form and
+are created by use; an empty instance normalizes to `default`.
 
 ## Protocol
 
@@ -135,7 +136,9 @@ A datasource record is one returned item from a datasource.
 
 The common record shape includes entity, id, source, title, links, and metadata.
 Plugins can return richer typed records when useful, but records should remain
-compact and structured enough for agent use.
+compact and structured enough for agent use. Host output also adds a `records`
+alias plus `records_source` when an operation returns a typed list under a
+plugin-specific key such as `pods`, `services`, `contexts`, or `blocks`.
 
 ## Lookup
 

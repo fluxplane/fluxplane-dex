@@ -166,6 +166,10 @@ func newRootCommand(opts *options) *cobra.Command {
 		Use:   "dex",
 		Short: "Plugin-backed engineering CLI",
 		Long:  "dex is a plugin-backed CLI for fast, token-efficient access to external engineering systems.",
+		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
+			cmd.SilenceUsage = true
+			cmd.Root().SilenceUsage = true
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
@@ -179,7 +183,7 @@ func newRootCommand(opts *options) *cobra.Command {
 	root.PersistentFlags().StringVarP(&opts.output, "output", "o", opts.output, "Output format: text, compact, json, yaml")
 	root.PersistentFlags().StringVar(&opts.marketplacePath, "marketplace", opts.marketplacePath, "Marketplace index path")
 	root.PersistentFlags().StringVar(&opts.home, "dex-home", opts.home, "Dex home directory")
-	root.PersistentFlags().StringVar(&opts.instance, "instance", opts.instance, "Integration instance name")
+	root.PersistentFlags().StringVar(&opts.instance, "instance", opts.instance, "Free-form plugin instance label for auth, indexes, and runtime calls")
 	root.PersistentFlags().StringArrayVar(&opts.devPlugins, "dev-plugin", opts.devPlugins, "Development plugin override NAME=PATH")
 
 	root.AddGroup(
@@ -477,11 +481,19 @@ func dexVersion() dexVersionInfo {
 		info.Version = "dev"
 	}
 	if info.Revision != "" {
-		info.Text = "fluxplane-dex " + info.Revision
+		info.Text = "fluxplane-dex " + info.Version + " (" + shortRevision(info.Revision) + ")"
 	} else {
 		info.Text = "fluxplane-dex " + info.Version
 	}
 	return info
+}
+
+func shortRevision(revision string) string {
+	revision = strings.TrimSpace(revision)
+	if len(revision) > 12 {
+		return revision[:12]
+	}
+	return revision
 }
 
 func dexLdflags(version, revision string) string {
@@ -691,9 +703,10 @@ func newPluginCommand(opts *options) *cobra.Command {
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
-		Use:   "ls",
-		Short: "List marketplace, installed, and activated plugins",
-		Args:  cobra.NoArgs,
+		Use:     "ls",
+		Aliases: []string{"list"},
+		Short:   "List marketplace, installed, and activated plugins",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			runner, err := opts.runner()
 			if err != nil {
@@ -740,13 +753,20 @@ func newPluginCommand(opts *options) *cobra.Command {
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
-		Use:   "status NAME",
+		Use:   "status [NAME]",
 		Short: "Show plugin installation and activation status",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runner, err := opts.runner()
 			if err != nil {
 				return err
+			}
+			if len(args) == 0 {
+				statuses, err := runner.State.PluginStatuses(runner.Marketplace)
+				if err != nil {
+					return err
+				}
+				return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"status": statuses})
 			}
 			entry, ok := runner.Marketplace.Resolve(args[0])
 			if !ok {
@@ -996,14 +1016,32 @@ func newDatasourceCommand(opts *options) *cobra.Command {
 			return renderValue(cmd.OutOrStdout(), opts.output, datasource)
 		},
 	})
-	cmd.AddCommand(&cobra.Command{
+	searchOpts := struct {
+		query       string
+		entity      string
+		endpointRef string
+		limit       int
+	}{limit: 20}
+	search := &cobra.Command{
 		Use:   "search DATASOURCE_NAME [JSON|-]",
 		Short: "Search one exact datasource",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			input, err := optionalJSON(cmd.InOrStdin(), args[1:])
+			input, err := datasourceSearchInput(cmd.InOrStdin(), args[1:], searchOpts.query)
 			if err != nil {
 				return err
+			}
+			if strings.TrimSpace(searchOpts.query) != "" {
+				input["query"] = strings.TrimSpace(searchOpts.query)
+			}
+			if strings.TrimSpace(searchOpts.entity) != "" {
+				input["entity"] = strings.TrimSpace(searchOpts.entity)
+			}
+			if strings.TrimSpace(searchOpts.endpointRef) != "" {
+				input["endpoint_ref"] = strings.TrimSpace(searchOpts.endpointRef)
+			}
+			if searchOpts.limit > 0 {
+				input["limit"] = searchOpts.limit
 			}
 			runner, err := opts.runner()
 			if err != nil {
@@ -1011,7 +1049,14 @@ func newDatasourceCommand(opts *options) *cobra.Command {
 			}
 			return callDatasourceSearch(cmd.Context(), cmd.OutOrStdout(), opts.output, runner, opts.instanceName(), args[0], input)
 		},
-	})
+	}
+	search.Flags().StringVar(&searchOpts.query, "query", "", "Search query")
+	search.Flags().StringVar(&searchOpts.entity, "entity", "", "Filter by entity type")
+	search.Flags().StringVar(&searchOpts.endpointRef, "endpoint-ref", "", "Endpoint ref")
+	search.Flags().StringVar(&searchOpts.endpointRef, "endpoint", "", "Endpoint ref")
+	_ = search.Flags().MarkHidden("endpoint")
+	search.Flags().IntVar(&searchOpts.limit, "limit", 20, "Maximum records")
+	cmd.AddCommand(search)
 	return cmd
 }
 
@@ -1086,10 +1131,12 @@ func newSkillCommand(opts *options) *cobra.Command {
 }
 
 type skillTemplateData struct {
-	GeneratedAt string        `json:"generated_at"`
-	Instance    string        `json:"instance"`
-	Help        string        `json:"help,omitempty"`
-	Plugins     []skillPlugin `json:"plugins"`
+	GeneratedAt        string        `json:"generated_at"`
+	Instance           string        `json:"instance"`
+	Help               string        `json:"help,omitempty"`
+	Plugins            []skillPlugin `json:"plugins"`
+	ActivePlugins      []skillPlugin `json:"active_plugins,omitempty"`
+	MarketplacePlugins []skillPlugin `json:"marketplace_plugins,omitempty"`
 }
 
 type skillPlugin struct {
@@ -1217,9 +1264,19 @@ Instance: ` + "`{{ .Instance }}`" + `
 ` + "```text" + `
 {{ .Help }}` + "```" + `
 
-## Integration References
-{{- range .Plugins }}
+## Installed and Active Integration References
+{{- if .ActivePlugins }}
+{{- range .ActivePlugins }}
 - [{{ .Name }}]({{ .Reference }}){{ if .Description }} - {{ .Description }}{{ end }}
+{{- end }}
+{{- else }}
+No installed plugin currently exposes activated integration commands for this instance.
+{{- end }}
+
+## Marketplace References
+These plugins are known to dex but may need installation or auth before commands appear in ` + "`dex --help`" + `.
+{{- range .MarketplacePlugins }}
+- [{{ .Name }}]({{ .Reference }}){{ if .Installed }} - installed{{ else }} - available to install{{ end }}{{ if .Description }}; {{ .Description }}{{ end }}
 {{- end }}
 `
 
@@ -1337,8 +1394,15 @@ func buildInstalledSkillTemplateData(ctx context.Context, opts *options, runner 
 		}
 		plugin.Reference = filepath.ToSlash(filepath.Join("references", skillReferenceFileName(plugin.Name)))
 		data.Plugins = append(data.Plugins, plugin)
+		if plugin.Activated && plugin.Dynamic && strings.TrimSpace(plugin.Command) != "" && len(plugin.Operations) > 0 {
+			data.ActivePlugins = append(data.ActivePlugins, plugin)
+		} else {
+			data.MarketplacePlugins = append(data.MarketplacePlugins, plugin)
+		}
 	}
 	sort.Slice(data.Plugins, func(i, j int) bool { return data.Plugins[i].Name < data.Plugins[j].Name })
+	sort.Slice(data.ActivePlugins, func(i, j int) bool { return data.ActivePlugins[i].Name < data.ActivePlugins[j].Name })
+	sort.Slice(data.MarketplacePlugins, func(i, j int) bool { return data.MarketplacePlugins[i].Name < data.MarketplacePlugins[j].Name })
 	return data, nil
 }
 
@@ -1683,36 +1747,43 @@ func dexRootHelpText(ctx context.Context, opts *options) (string, error) {
 func newAuthCommand(opts *options) *cobra.Command {
 	cmd := &cobra.Command{Use: "auth", Short: "Manage plugin auth"}
 	cmd.AddCommand(&cobra.Command{
-		Use:   "info PLUGIN",
+		Use:   "info [PLUGIN]",
 		Short: "List plugin auth methods",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runner, err := opts.runner()
 			if err != nil {
 				return err
 			}
-			resp, err := runner.InvokeInstance(cmd.Context(), args[0], opts.instanceName(), protocol.CommandAuthMethods, nil)
+			if len(args) == 0 {
+				return renderValue(cmd.OutOrStdout(), opts.output, authInfoOverview(cmd.Context(), runner, opts.instanceName()))
+			}
+			info, err := authInfoForPlugin(cmd.Context(), runner, args[0], opts.instanceName())
 			if err != nil {
 				return err
 			}
-			return render(cmd.OutOrStdout(), opts.output, resp.Result)
+			return renderValue(cmd.OutOrStdout(), opts.output, info)
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
-		Use:   "status PLUGIN",
+		Use:   "status [PLUGIN]",
 		Short: "Show host-side secret readiness",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runner, err := opts.runner()
 			if err != nil {
 				return err
+			}
+			if len(args) == 0 {
+				return renderValue(cmd.OutOrStdout(), opts.output, authStatusOverview(cmd.Context(), runner, opts.instanceName()))
 			}
 			purposes, err := authPurposeSpecs(cmd.Context(), runner, args[0])
 			if err != nil {
 				return err
 			}
 			status := runner.State.SecretStatus(args[0], opts.instanceName(), purposes)
-			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"plugin": args[0], "instance": opts.instanceName(), "status": status})
+			out := map[string]any{"plugin": args[0], "instance": opts.instanceName(), "auth_required": len(purposes) > 0, "status": status}
+			return renderValue(cmd.OutOrStdout(), opts.output, out)
 		},
 	})
 	connectOpts := struct {
@@ -1754,7 +1825,9 @@ func newAuthCommand(opts *options) *cobra.Command {
 					return err
 				}
 			}
-			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"plugin": args[0], "instance": opts.instanceName(), "saved": saved, "missing": missing})
+			result := map[string]any{"plugin": args[0], "instance": opts.instanceName(), "saved": saved, "missing": missing}
+			addSkillRefreshResult(cmd.Context(), opts, runner, result)
+			return renderValue(cmd.OutOrStdout(), opts.output, result)
 		},
 	}
 	connect.Flags().StringArrayVarP(&connectOpts.fields, "field", "f", nil, "Secret field as purpose=value")
@@ -1777,7 +1850,12 @@ func newAuthCommand(opts *options) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return renderValue(cmd.OutOrStdout(), opts.output, result)
+				out := map[string]any{"plugin": result.Plugin, "instance": result.Instance, "saved": result.Saved, "missing": result.Missing, "skipped": result.Skipped}
+				addSkillRefreshResult(cmd.Context(), opts, runner, out)
+				if result.Error != "" {
+					out["error"] = result.Error
+				}
+				return renderValue(cmd.OutOrStdout(), opts.output, out)
 			}
 			results := make([]autoConnectResult, 0, len(runner.Marketplace.Plugins()))
 			for _, plugin := range runner.Marketplace.Plugins() {
@@ -1788,11 +1866,75 @@ func newAuthCommand(opts *options) *cobra.Command {
 				}
 				results = append(results, result)
 			}
-			return renderValue(cmd.OutOrStdout(), opts.output, map[string]any{"instance": opts.instanceName(), "plugins": results})
+			out := map[string]any{"instance": opts.instanceName(), "plugins": results}
+			addSkillRefreshResult(cmd.Context(), opts, runner, out)
+			return renderValue(cmd.OutOrStdout(), opts.output, out)
 		},
 	})
 	cmd.AddCommand(connect)
 	return cmd
+}
+
+func authInfoOverview(ctx context.Context, runner runtime.Runner, instance string) map[string]any {
+	out := map[string]any{"instance": runtime.NormalizeInstance(instance), "plugins": map[string]any{}}
+	plugins := out["plugins"].(map[string]any)
+	for _, plugin := range runner.Marketplace.Plugins() {
+		info, err := authInfoForPlugin(ctx, runner, plugin.Name, instance)
+		if err != nil {
+			plugins[plugin.Name] = map[string]any{"plugin": plugin.Name, "instance": runtime.NormalizeInstance(instance), "error": err.Error()}
+			continue
+		}
+		plugins[plugin.Name] = info
+	}
+	return out
+}
+
+func authInfoForPlugin(ctx context.Context, runner runtime.Runner, plugin, instance string) (map[string]any, error) {
+	resp, err := runner.InvokeInstance(ctx, plugin, runtime.NormalizeInstance(instance), protocol.CommandAuthMethods, nil)
+	if err != nil {
+		return nil, err
+	}
+	methods, err := decodeRawValue(resp.Result)
+	if err != nil {
+		return nil, err
+	}
+	required := hasAuthMethods(methods)
+	if !required {
+		methods = []any{}
+	}
+	return map[string]any{"plugin": plugin, "instance": runtime.NormalizeInstance(instance), "auth_required": required, "methods": methods}, nil
+}
+
+func authStatusOverview(ctx context.Context, runner runtime.Runner, instance string) map[string]any {
+	out := map[string]any{"instance": runtime.NormalizeInstance(instance), "status": map[string]any{}}
+	statuses := out["status"].(map[string]any)
+	for _, plugin := range runner.Marketplace.Plugins() {
+		purposes, err := authPurposeSpecs(ctx, runner, plugin.Name)
+		if err != nil {
+			statuses[plugin.Name] = map[string]any{"plugin": plugin.Name, "instance": runtime.NormalizeInstance(instance), "error": err.Error()}
+			continue
+		}
+		statuses[plugin.Name] = map[string]any{
+			"plugin":        plugin.Name,
+			"instance":      runtime.NormalizeInstance(instance),
+			"auth_required": len(purposes) > 0,
+			"status":        runner.State.SecretStatus(plugin.Name, instance, purposes),
+		}
+	}
+	return out
+}
+
+func hasAuthMethods(value any) bool {
+	switch x := value.(type) {
+	case nil:
+		return false
+	case []any:
+		return len(x) > 0
+	case map[string]any:
+		return len(x) > 0
+	default:
+		return true
+	}
 }
 
 func newSecretCommand(opts *options) *cobra.Command {
@@ -1854,8 +1996,9 @@ func newSearchCommand(opts *options) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&searchOpts.plugin, "plugin", "", "Search one plugin")
 	cmd.Flags().StringVar(&searchOpts.entity, "entity", "", "Filter by entity type")
-	cmd.Flags().StringVar(&searchOpts.endpointRef, "endpoint", "", "Endpoint ref")
 	cmd.Flags().StringVar(&searchOpts.endpointRef, "endpoint-ref", "", "Endpoint ref")
+	cmd.Flags().StringVar(&searchOpts.endpointRef, "endpoint", "", "Endpoint ref")
+	_ = cmd.Flags().MarkHidden("endpoint")
 	cmd.Flags().IntVar(&searchOpts.limit, "limit", 20, "Maximum records per plugin")
 	return cmd
 }
@@ -2138,7 +2281,8 @@ func newEndpointCommand(opts *options) *cobra.Command {
 		namespace   string
 		limit       int
 		interactive bool
-	}{}
+		raw         bool
+	}{limit: 20}
 	discover := &cobra.Command{
 		Use:   "discover [PRODUCT]",
 		Short: "Discover endpoint candidates",
@@ -2162,7 +2306,7 @@ func newEndpointCommand(opts *options) *cobra.Command {
 			if discoverOpts.limit > 0 {
 				input["limit"] = discoverOpts.limit
 			}
-			result, err := discoverEndpoints(cmd.Context(), runner, opts.instanceName(), product, discoverOpts.plugin, input)
+			result, err := discoverEndpoints(cmd.Context(), runner, opts.instanceName(), product, discoverOpts.plugin, input, discoverOpts.raw)
 			if err != nil {
 				return err
 			}
@@ -2179,8 +2323,9 @@ func newEndpointCommand(opts *options) *cobra.Command {
 	discover.Flags().StringVar(&discoverOpts.plugin, "plugin", "", "Discover with one plugin")
 	discover.Flags().StringVar(&discoverOpts.contextName, "context", "", "Discovery context")
 	discover.Flags().StringVar(&discoverOpts.namespace, "namespace", "", "Discovery namespace")
-	discover.Flags().IntVar(&discoverOpts.limit, "limit", 0, "Maximum candidates")
+	discover.Flags().IntVar(&discoverOpts.limit, "limit", 20, "Maximum candidates")
 	discover.Flags().BoolVar(&discoverOpts.interactive, "interactive", false, "Interactively select candidates to import")
+	discover.Flags().BoolVar(&discoverOpts.raw, "raw", false, "Include raw provider metadata such as annotations")
 	cmd.AddCommand(discover)
 	return cmd
 }
@@ -2578,7 +2723,7 @@ func fieldFlagName(field string) string {
 	return strings.ReplaceAll(strings.TrimSpace(field), "_", "-")
 }
 
-func discoverEndpoints(ctx context.Context, runner runtime.Runner, instance, product, pluginFilter string, input map[string]any) (endpointDiscoveryView, error) {
+func discoverEndpoints(ctx context.Context, runner runtime.Runner, instance, product, pluginFilter string, input map[string]any, includeRaw bool) (endpointDiscoveryView, error) {
 	view := endpointDiscoveryView{Product: product, Results: map[string]endpointDiscoveryPluginView{}}
 	var plugins []core.PluginEntry
 	if strings.TrimSpace(pluginFilter) != "" {
@@ -2618,6 +2763,9 @@ func discoverEndpoints(ctx context.Context, runner runtime.Runner, instance, pro
 		}
 		pluginView := endpointDiscoveryPluginView{}
 		for _, candidate := range result.Candidates {
+			if !includeRaw {
+				candidate.Annotations = nil
+			}
 			index := len(view.Candidates) + 1
 			candidateView := endpointCandidateView{Index: index, EndpointCandidate: candidate}
 			view.Candidates = append(view.Candidates, candidateView)
@@ -3071,13 +3219,16 @@ func newIndexCommand(opts *options) *cobra.Command {
 	build.Flags().StringVar(&buildOpts.entity, "entity", "", "Entity type to build")
 	cmd.AddCommand(build)
 	cmd.AddCommand(&cobra.Command{
-		Use:   "status PLUGIN",
+		Use:   "status [PLUGIN]",
 		Short: "Show plugin index status",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runner, err := opts.runner()
 			if err != nil {
 				return err
+			}
+			if len(args) == 0 {
+				return renderValue(cmd.OutOrStdout(), opts.output, indexStatusOverview(runner, opts.instanceName()))
 			}
 			plugin, ok := runner.Marketplace.Resolve(args[0])
 			if !ok {
@@ -3091,6 +3242,25 @@ func newIndexCommand(opts *options) *cobra.Command {
 		},
 	})
 	return cmd
+}
+
+func indexStatusOverview(runner runtime.Runner, instance string) map[string]any {
+	out := map[string]any{"instance": runtime.NormalizeInstance(instance), "status": map[string]any{}}
+	statuses := out["status"].(map[string]any)
+	installed, err := runner.State.LoadInstalledPlugins()
+	if err != nil {
+		out["error"] = err.Error()
+		return out
+	}
+	for _, plugin := range installed.Plugins {
+		status, err := runner.State.IndexStatus(plugin.Name, instance)
+		if err != nil {
+			statuses[plugin.Name] = map[string]any{"plugin": plugin.Name, "instance": runtime.NormalizeInstance(instance), "error": err.Error()}
+			continue
+		}
+		statuses[plugin.Name] = status
+	}
+	return out
 }
 
 func (o *options) runner() (runtime.Runner, error) {
@@ -3141,6 +3311,8 @@ func parseDevPlugins(values []string) (map[string]string, error) {
 func fanout(ctx context.Context, runner runtime.Runner, instance, command string, payload any) map[string]any {
 	instance = runtime.NormalizeInstance(instance)
 	results := map[string]any{}
+	errors := map[string]string{}
+	var missing []string
 	plugins := runner.Marketplace.Plugins()
 	if command == protocol.CommandDatasourcesSearch || command == protocol.CommandDatasourcesLookup {
 		var err error
@@ -3162,14 +3334,42 @@ func fanout(ctx context.Context, runner runtime.Runner, instance, command string
 	for _, plugin := range plugins {
 		resp, err := runner.InvokeInstance(ctx, plugin.Name, instance, command, payload)
 		if err != nil {
-			results[plugin.Name] = map[string]any{"error": err.Error()}
+			if pluginMissingError(err) {
+				missing = append(missing, plugin.Name)
+			} else {
+				errors[plugin.Name] = err.Error()
+			}
 			continue
 		}
-		var value any
-		_ = json.Unmarshal(resp.Result, &value)
+		value, err := decodeRawValue(resp.Result)
+		if err != nil {
+			errors[plugin.Name] = err.Error()
+			continue
+		}
 		results[plugin.Name] = value
 	}
-	return results
+	out := map[string]any{"available": results}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		out["missing"] = missing
+	}
+	if len(errors) > 0 {
+		out["errors"] = errors
+	}
+	return out
+}
+
+func decodeRawValue(raw json.RawMessage) (any, error) {
+	if len(raw) == 0 {
+		return map[string]any{}, nil
+	}
+	var value any
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&value); err != nil {
+		return nil, err
+	}
+	return value, nil
 }
 
 func endpointDiscovererAvailablePlugins(ctx context.Context, runner runtime.Runner, instance string) ([]core.PluginEntry, error) {
@@ -3199,15 +3399,20 @@ func fanoutSearch(ctx context.Context, runner runtime.Runner, instance string, p
 	if strings.TrimSpace(pluginFilter) != "" {
 		plugin, ok := runner.Marketplace.Resolve(pluginFilter)
 		if !ok {
-			return map[string]any{"error": "unknown plugin " + pluginFilter}
+			return map[string]any{"available": map[string]any{}, "errors": map[string]string{pluginFilter: "unknown plugin " + pluginFilter}}
 		}
 		resp, err := runner.InvokeInstance(ctx, plugin.Name, instance, protocol.CommandDatasourcesSearch, payload)
 		if err != nil {
-			return map[string]any{plugin.Name: map[string]any{"error": err.Error()}}
+			if pluginMissingError(err) {
+				return map[string]any{"available": map[string]any{}, "missing": []string{plugin.Name}}
+			}
+			return map[string]any{"available": map[string]any{}, "errors": map[string]string{plugin.Name: err.Error()}}
 		}
-		var value any
-		_ = json.Unmarshal(resp.Result, &value)
-		return map[string]any{plugin.Name: value}
+		value, err := decodeRawValue(resp.Result)
+		if err != nil {
+			return map[string]any{"available": map[string]any{}, "errors": map[string]string{plugin.Name: err.Error()}}
+		}
+		return map[string]any{"available": map[string]any{plugin.Name: value}}
 	}
 	return fanout(ctx, runner, instance, protocol.CommandDatasourcesSearch, payload)
 }
@@ -3217,17 +3422,30 @@ func fanoutLookup(ctx context.Context, runner runtime.Runner, instance string, p
 	if strings.TrimSpace(pluginFilter) != "" {
 		plugin, ok := runner.Marketplace.Resolve(pluginFilter)
 		if !ok {
-			return map[string]any{"error": "unknown plugin " + pluginFilter}
+			return map[string]any{"available": map[string]any{}, "errors": map[string]string{pluginFilter: "unknown plugin " + pluginFilter}}
 		}
 		resp, err := runner.InvokeInstance(ctx, plugin.Name, instance, protocol.CommandDatasourcesLookup, payload)
 		if err != nil {
-			return map[string]any{plugin.Name: map[string]any{"error": err.Error()}}
+			if pluginMissingError(err) {
+				return map[string]any{"available": map[string]any{}, "missing": []string{plugin.Name}}
+			}
+			return map[string]any{"available": map[string]any{}, "errors": map[string]string{plugin.Name: err.Error()}}
 		}
-		var value any
-		_ = json.Unmarshal(resp.Result, &value)
-		return map[string]any{plugin.Name: value}
+		value, err := decodeRawValue(resp.Result)
+		if err != nil {
+			return map[string]any{"available": map[string]any{}, "errors": map[string]string{plugin.Name: err.Error()}}
+		}
+		return map[string]any{"available": map[string]any{plugin.Name: value}}
 	}
 	return fanout(ctx, runner, instance, protocol.CommandDatasourcesLookup, payload)
+}
+
+func pluginMissingError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := err.Error()
+	return strings.Contains(text, "not installed") || strings.Contains(text, "run dex plugin install")
 }
 
 func searchableAvailablePlugins(ctx context.Context, runner runtime.Runner) ([]core.PluginEntry, error) {
@@ -3420,6 +3638,27 @@ func datasourcePayload(input any) (map[string]any, error) {
 		payload = map[string]any{}
 	}
 	return payload, nil
+}
+
+func datasourceSearchInput(in io.Reader, args []string, flagQuery string) (map[string]any, error) {
+	if len(args) == 0 {
+		return map[string]any{}, nil
+	}
+	raw := strings.TrimSpace(args[0])
+	if raw == "" {
+		return map[string]any{}, nil
+	}
+	if raw == "-" || strings.HasPrefix(raw, "{") {
+		input, err := optionalJSON(in, args)
+		if err != nil {
+			return nil, err
+		}
+		return datasourcePayload(input)
+	}
+	if strings.TrimSpace(flagQuery) != "" {
+		return nil, fmt.Errorf("query provided twice; use either positional query or --query")
+	}
+	return map[string]any{"query": raw}, nil
 }
 
 func hasString(values []string, candidate string) bool {

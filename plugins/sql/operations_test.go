@@ -23,6 +23,17 @@ func TestQueryRejectsWrites(t *testing.T) {
 	}
 }
 
+func TestDatasourceSearchRejectsFreeTextWithSearchSpecificMessage(t *testing.T) {
+	plugin := NewPluginWithService(Service{})
+	err := plugintest.DatasourceSearchError(t, plugin, map[string]any{
+		"datasource": DatasourceQueryRows,
+		"query":      "api",
+	})
+	if err.Code != "bad_input" || err.Message == "only read-only SELECT/SHOW/DESCRIBE/EXPLAIN/WITH queries are allowed" {
+		t.Fatalf("err = %#v", err)
+	}
+}
+
 func TestManifestQuality(t *testing.T) {
 	plugintest.AssertManifestQuality(t, Manifest())
 }

@@ -180,10 +180,16 @@ Datasource records use a common shape:
 
 Search returns standardized records. Lookup returns standardized matches with
 top-level `entity` and `id`, plus the matched record and source details.
+When a plugin operation naturally returns a typed list such as `pods`,
+`services`, `contexts`, or `blocks`, dex also adds a generic `records` alias and
+`records_source` so agents can normalize list outputs once without knowing each
+plugin's plural field name.
 
 Search and lookup fan out only to installed or connected plugins that expose the
 requested datasource capability. Host-owned index lookup is used when an index
 exists; plugins can also expose live lookup for provider-specific resolution.
+Fanout responses separate successful plugin data from unavailable or failed
+plugins with `available`, `missing`, and `errors` fields.
 
 ## Output Formats
 
@@ -238,6 +244,10 @@ dex secret get <plugin> --instance <name> --grant <token> --purpose <purpose>
 
 The grant limits plugin, instance, purpose, and expiry. Plugins should not read
 dex state files directly.
+
+`--instance` is a free-form label, not a predeclared registry entry. Use it to
+separate auth material, indexes, and runtime calls for different workspaces,
+clusters, tenants, or environments. The empty value normalizes to `default`.
 
 ## Development and Release Notes
 

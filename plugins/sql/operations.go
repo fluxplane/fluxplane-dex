@@ -133,6 +133,9 @@ func (s Service) Query(ctx pluginbinding.Context, input QueryInput) (QueryOutput
 }
 
 func (s Service) QueryRows(ctx pluginbinding.Context, input QueryInput) (QueryRowsResult, error) {
+	if strings.TrimSpace(input.Query) != "" && !readOnlyQuery(input.Query) {
+		return QueryRowsResult{}, pluginbinding.Fail("bad_input", "SQL datasource search requires a read-only SQL query; use dex datasource search sql.query_rows --query \"SELECT ...\"")
+	}
 	out, err := s.Query(ctx, input)
 	if err != nil {
 		return QueryRowsResult{}, err

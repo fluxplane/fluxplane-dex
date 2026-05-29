@@ -29,7 +29,7 @@ func visionManifest() core.PluginManifest {
 func visionManifestSpec() pluginbinding.ManifestSpec {
 	return pluginbinding.ManifestSpec{
 		Name:        visionPluginName,
-		Version:     "0.13.4",
+		Version:     "0.14.0",
 		Description: "Generic image understanding aggregator over vision provider plugins.",
 		Aliases:     []string{"image-vision", "vision"},
 		Operations: []core.OperationSpec{

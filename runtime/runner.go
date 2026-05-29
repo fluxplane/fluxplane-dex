@@ -1250,10 +1250,23 @@ func operationHasEffect(spec core.OperationSpec, effect core.OperationEffect) bo
 }
 
 func datasourceCapabilityGrants(spec core.DatasourceSpec) []CapabilityGrant {
-	if len(spec.SecretPurposes) == 0 {
-		return nil
+	var out []CapabilityGrant
+	for _, access := range spec.Access {
+		switch access {
+		case core.OperationAccessNetwork:
+			out = append(out, CapabilityGrant{Name: pluginbinding.CapabilityHTTP})
+		case core.OperationAccessProvider:
+			out = append(out, CapabilityGrant{Name: pluginbinding.CapabilityProvider, Provider: operationProvider(spec.Name), Action: "*"})
+		case core.OperationAccessFilesystem:
+			out = append(out, CapabilityGrant{Name: pluginbinding.CapabilityBlobRead})
+		case core.OperationAccessProcess, core.OperationAccessBrowser:
+			out = append(out, CapabilityGrant{Name: pluginbinding.CapabilityProvider, Provider: "*", Action: "*"})
+		}
 	}
-	return []CapabilityGrant{{Name: pluginbinding.CapabilityHTTP}}
+	if len(spec.SecretPurposes) > 0 {
+		out = append(out, CapabilityGrant{Name: pluginbinding.CapabilityHTTP})
+	}
+	return out
 }
 
 func manifestAuthEnv(manifest core.PluginManifest) map[string][]string {

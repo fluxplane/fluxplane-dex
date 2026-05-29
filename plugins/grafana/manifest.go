@@ -7,7 +7,7 @@ import (
 
 const (
 	PluginName        = "grafana"
-	PluginVersion     = "0.13.4"
+	PluginVersion     = "0.14.0"
 	PluginDescription = "Grafana datasource catalog and proxy operations for Loki, Prometheus, Alertmanager, and Tempo."
 
 	EnvGrafanaAPIToken = "GRAFANA_API_TOKEN"

@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/codewandler/md2adf v0.1.1
-	github.com/fluxplane/fluxplane-dex v0.13.4
+	github.com/fluxplane/fluxplane-dex v0.14.0
 )
 
 require (

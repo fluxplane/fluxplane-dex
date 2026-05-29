@@ -8,7 +8,7 @@ import (
 
 const (
 	PluginName        = "confluence"
-	PluginVersion     = "0.13.4"
+	PluginVersion     = "0.14.0"
 	PluginDescription = "Confluence Cloud page/user operations, attachments, datasources, indexes, and reverse lookups."
 
 	AuthMethodAtlassianCloud = "atlassian_cloud_basic"

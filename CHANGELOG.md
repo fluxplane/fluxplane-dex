@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-05-29
+
+### Added
+- Added declared datasource access grants so live datasources can request typed host capabilities such as provider access.
+
+### Changed
+- Parallelized fluxplaneplugin bundle materialization with bounded workers while preserving marketplace order, reducing coder and host startup time when many independent dex plugin manifests are probed.
+
+### Fixed
+- Fixed Kubernetes inventory datasource searches to receive provider capability grants and typed Kubernetes scope fields, allowing scoped live searches by context and namespace without broadening generic datasource schemas.
+
 ## [0.13.4] - 2026-05-29
 
 ### Changed

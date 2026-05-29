@@ -2,6 +2,7 @@ package fluxplaneplugin_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -88,6 +89,49 @@ func TestBundlesStubsUninstalledPlugins(t *testing.T) {
 	}
 	if stubs == 0 {
 		t.Fatalf("expected at least one stubbed plugin in fresh DEX_HOME")
+	}
+}
+
+func TestBundlesPreservesMarketplaceOrder(t *testing.T) {
+	want := []string{"missing-a", "missing-b", "missing-c", "missing-d", "missing-e"}
+	e := newEngineWithConfig(t, dex.Config{MarketplaceJSON: []byte(`{
+		"version": "1",
+		"plugins": [
+			{"name": "missing-a", "description": "missing a", "binary": "dex-plugin-missing-a"},
+			{"name": "missing-b", "description": "missing b", "binary": "dex-plugin-missing-b"},
+			{"name": "missing-c", "description": "missing c", "binary": "dex-plugin-missing-c"},
+			{"name": "missing-d", "description": "missing d", "binary": "dex-plugin-missing-d"},
+			{"name": "missing-e", "description": "missing e", "binary": "dex-plugin-missing-e"}
+		]
+	}`)})
+	bundles, err := fluxplaneplugin.Bundles(context.Background(), e)
+	if err != nil {
+		t.Fatalf("Bundles: %v", err)
+	}
+	var got []string
+	for _, b := range bundles {
+		if b.Source.ID == "dex-intent" {
+			continue
+		}
+		if len(b.Plugins) == 0 {
+			t.Fatalf("bundle %q missing PluginRef", b.Source.ID)
+		}
+		got = append(got, b.Plugins[0].Name)
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("bundle order = %v, want %v", got, want)
+	}
+}
+
+func TestBundlesRespectsCanceledContext(t *testing.T) {
+	e := newEngineWithConfig(t, dex.Config{MarketplaceJSON: []byte(`{
+		"version": "1",
+		"plugins": [{"name": "missing-a", "description": "missing a", "binary": "dex-plugin-missing-a"}]
+	}`)})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := fluxplaneplugin.Bundles(ctx, e); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Bundles error = %v, want context.Canceled", err)
 	}
 }
 

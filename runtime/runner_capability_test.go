@@ -337,6 +337,16 @@ func hasCapabilityGrant(grants []CapabilityGrant, name string) bool {
 
 type providerFunc func(context.Context, string, json.RawMessage) (json.RawMessage, error)
 
+func TestDatasourceCapabilityGrantsIncludeDeclaredProviderAccess(t *testing.T) {
+	grants := datasourceCapabilityGrants(core.DatasourceSpec{
+		Name:   "kubernetes.inventory",
+		Access: []core.OperationAccess{core.OperationAccessProvider},
+	})
+	if !hasCapabilityGrantWithProvider(grants, pluginbinding.CapabilityProvider, "kubernetes") {
+		t.Fatalf("datasource grants missing kubernetes provider access: %#v", grants)
+	}
+}
+
 func (f providerFunc) Call(ctx context.Context, action string, payload json.RawMessage) (json.RawMessage, error) {
 	return f(ctx, action, payload)
 }
@@ -367,4 +377,13 @@ func (h fakeCapabilityHost) EnvLookup(context.Context, pluginbinding.EnvLookupRe
 
 func (h fakeCapabilityHost) ProviderCall(context.Context, pluginbinding.ProviderCallRequest) (pluginbinding.ProviderCallResponse, error) {
 	return pluginbinding.ProviderCallResponse{}, nil
+}
+
+func hasCapabilityGrantWithProvider(grants []CapabilityGrant, name, provider string) bool {
+	for _, grant := range grants {
+		if grant.Name == name && grant.Provider == provider {
+			return true
+		}
+	}
+	return false
 }

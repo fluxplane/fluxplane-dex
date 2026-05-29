@@ -118,6 +118,7 @@ type DatasourceSpec struct {
 	Entity         string                    `json:"entity"`
 	Description    string                    `json:"description,omitempty"`
 	Capabilities   []string                  `json:"capabilities,omitempty"`
+	Access         []OperationAccess         `json:"access,omitempty"`
 	SecretPurposes []string                  `json:"secret_purposes,omitempty"`
 	Input          json.RawMessage           `json:"input_schema,omitempty"`
 	Output         json.RawMessage           `json:"output_schema,omitempty"`

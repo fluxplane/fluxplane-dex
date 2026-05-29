@@ -265,6 +265,17 @@ type DeploymentShowResult struct {
 
 type InventorySearchResult = pluginbinding.DatasourceSearchResult[pluginbinding.DatasourceRecord]
 
+type InventorySearchInput struct {
+	Datasource  string `json:"datasource,omitempty" jsonschema:"description=Exact datasource name."`
+	Query       string `json:"query,omitempty" jsonschema:"description=Search query."`
+	Limit       int    `json:"limit,omitempty" jsonschema:"description=Maximum records to return."`
+	Entity      string `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
+	EndpointRef string `json:"endpoint_ref,omitempty" jsonschema:"description=Registered endpoint ref resolved by the host."`
+	URL         string `json:"url,omitempty" jsonschema:"description=Resolved endpoint URL."`
+	Context     string `json:"context,omitempty" jsonschema:"description=Kubeconfig context name or registered Kubernetes context URI."`
+	Namespace   string `json:"namespace,omitempty" jsonschema:"description=Kubernetes namespace filter."`
+}
+
 func (s Service) ClusterList(ctx pluginbinding.Context, input ClusterListInput) (ClusterListResult, error) {
 	result, err := s.contexts(ctx)()
 	if err != nil {
@@ -421,10 +432,12 @@ func (s Service) ContainerShow(ctx pluginbinding.Context, input InventoryInput) 
 	return ContainerShowResult{}, pluginbinding.Errorf("not_found", "container %q not found", input.Name)
 }
 
-func (s Service) InventorySearch(ctx pluginbinding.Context, input pluginbinding.DatasourceSearchInput) (InventorySearchResult, error) {
+func (s Service) InventorySearch(ctx pluginbinding.Context, input InventorySearchInput) (InventorySearchResult, error) {
 	inventoryInput := InventoryInput{
 		EndpointRef: input.EndpointRef,
 		URL:         input.URL,
+		Context:     input.Context,
+		Namespace:   input.Namespace,
 		Query:       input.Query,
 		Limit:       input.Limit,
 	}

@@ -8,7 +8,7 @@ import (
 
 const (
 	PluginName        = "kubernetes"
-	PluginVersion     = "0.13.4"
+	PluginVersion     = "0.14.0"
 	PluginDescription = "Kubernetes cluster discovery using kubeconfig and kubectl."
 
 	OperationClusterList      = "kubernetes.cluster.list"
@@ -204,11 +204,12 @@ func containerShowSpec() core.OperationSpec {
 }
 
 func inventoryDatasourceSpec() core.DatasourceSpec {
-	return pluginbinding.TypedDatasourceSpec[pluginbinding.DatasourceSearchInput, InventorySearchResult](
+	return pluginbinding.TypedDatasourceSpec[InventorySearchInput, InventorySearchResult](
 		DatasourceInventory,
 		EntityResource,
 		"Kubernetes namespaces, services, pods, deployments, and containers.",
 		[]string{pluginbinding.CapabilitySearch},
+		pluginbinding.DatasourceAccess(core.OperationAccessProvider),
 		pluginbinding.Completion(
 			"Kubernetes contexts, endpoints, namespaces, resource names, pod names, container names, and labels.",
 			"endpoint_ref",

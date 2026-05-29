@@ -271,3 +271,10 @@ func hasDatasourceView(views []core.DatasourceViewSpec, name, field string) bool
 	}
 	return false
 }
+
+func TestGenericDatasourceSearchInputSchemaDoesNotAdvertiseKubernetesFields(t *testing.T) {
+	schema := MustSchemaFor[DatasourceSearchInput]()
+	if strings.Contains(string(schema), `"context"`) || strings.Contains(string(schema), `"namespace"`) {
+		t.Fatalf("generic datasource search schema includes provider-specific fields: %s", string(schema))
+	}
+}

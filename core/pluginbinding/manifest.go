@@ -106,6 +106,12 @@ func SecretPurposes(purposes ...string) OperationSpecOption {
 	}
 }
 
+func DatasourceAccess(access ...core.OperationAccess) DatasourceSpecOption {
+	return func(spec *core.DatasourceSpec) {
+		spec.Access = append([]core.OperationAccess(nil), access...)
+	}
+}
+
 func Effects(effects ...core.OperationEffect) OperationSpecOption {
 	return func(spec *core.OperationSpec) {
 		spec.Effects = append([]core.OperationEffect(nil), effects...)

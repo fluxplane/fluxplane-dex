@@ -3,6 +3,7 @@ package fluxplaneplugin
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/fluxplane/fluxplane-core/core/policy"
 	"github.com/fluxplane/fluxplane-core/core/resource"
@@ -10,6 +11,13 @@ import (
 
 	dex "github.com/fluxplane/fluxplane-dex"
 )
+
+const maxConcurrentBundleBuilds = 8
+
+type bundleJob struct {
+	index int
+	name  string
+}
 
 // Bundles emits one resource.ContributionBundle per dex marketplace plugin
 // plus a final "intent" bundle that carries the reaction rules driving
@@ -45,9 +53,67 @@ func Bundles(ctx context.Context, engine *dex.Engine) ([]resource.ContributionBu
 		return nil, fmt.Errorf("fluxplaneplugin: engine is nil")
 	}
 	entries := engine.Marketplace().Plugins()
-	out := make([]resource.ContributionBundle, 0, len(entries)+1)
-	for _, entry := range entries {
-		out = append(out, bundleFor(ctx, engine, entry.Name))
+	out := make([]resource.ContributionBundle, len(entries), len(entries)+1)
+	if len(entries) > 0 {
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		workerCount := len(entries)
+		if workerCount > maxConcurrentBundleBuilds {
+			workerCount = maxConcurrentBundleBuilds
+		}
+
+		jobs := make(chan bundleJob)
+		var wg sync.WaitGroup
+		var errOnce sync.Once
+		var firstErr error
+		setErr := func(err error) {
+			if err == nil {
+				return
+			}
+			errOnce.Do(func() {
+				firstErr = err
+				cancel()
+			})
+		}
+
+		wg.Add(workerCount)
+		for range workerCount {
+			go func() {
+				defer wg.Done()
+				for {
+					select {
+					case <-ctx.Done():
+						setErr(ctx.Err())
+						return
+					case job, ok := <-jobs:
+						if !ok {
+							return
+						}
+						out[job.index] = bundleFor(ctx, engine, job.name)
+						if err := ctx.Err(); err != nil {
+							setErr(err)
+							return
+						}
+					}
+				}
+			}()
+		}
+
+	sendJobs:
+		for i, entry := range entries {
+			select {
+			case <-ctx.Done():
+				setErr(ctx.Err())
+				break sendJobs
+			case jobs <- bundleJob{index: i, name: entry.Name}:
+			}
+		}
+		close(jobs)
+		wg.Wait()
+		if firstErr != nil {
+			return nil, firstErr
+		}
 	}
 	if intentBundle, ok := buildIntentBundle(ctx, engine); ok {
 		out = append(out, intentBundle)

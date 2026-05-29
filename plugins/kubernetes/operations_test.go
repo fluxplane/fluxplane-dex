@@ -14,6 +14,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+func TestInventoryDatasourceSchemaIncludesTypedKubernetesScope(t *testing.T) {
+	spec := inventoryDatasourceSpec()
+	schema := string(spec.Input)
+	if !strings.Contains(schema, `"context"`) || !strings.Contains(schema, `"namespace"`) {
+		t.Fatalf("inventory datasource schema missing Kubernetes scope fields: %s", schema)
+	}
+}
+
 func TestEndpointDiscoverFindsPrometheusService(t *testing.T) {
 	plugin := NewPluginWithService(Service{
 		Services: func(_ context.Context, _ EndpointDiscoverInput) ([]corev1.Service, error) {

@@ -1,18 +1,15 @@
 package ollama
 
 import (
-	"context"
 	"strings"
 
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 )
 
-type Service struct {
-	Client Client
-}
+type Service struct{}
 
 func NewService() Service {
-	return Service{Client: NewClient()}
+	return Service{}
 }
 
 type ModelSearchResult = pluginbinding.DatasourceSearchResult[ModelRecord]
@@ -21,33 +18,41 @@ type LookupInput = pluginbinding.DatasourceLookupInput
 type LookupResult = pluginbinding.DatasourceLookupResult[pluginbinding.LookupMatch[any]]
 type GetInput = pluginbinding.DatasourceGetInput
 
-func (s Service) Info(_ pluginbinding.Context, _ InfoInput) (Version, error) {
+func (s Service) Info(ctx pluginbinding.Context, input InfoInput) (Version, error) {
+	client, err := s.client(ctx, input.OllamaTargetInput)
+	if err != nil {
+		return Version{}, err
+	}
 	var out Version
-	if err := s.Client.get(context.Background(), "/api/version", &out); err != nil {
+	if err := client.get("/api/version", &out); err != nil {
 		return Version{}, pluginbinding.Errorf("ollama", "%s", err)
 	}
 	return out, nil
 }
 
-func (s Service) ModelList(_ pluginbinding.Context, _ ModelListInput) (pluginbinding.ListResult[Model], error) {
-	models, err := s.fetchModels(context.Background())
+func (s Service) ModelList(ctx pluginbinding.Context, input ModelListInput) (pluginbinding.ListResult[Model], error) {
+	models, err := s.fetchModels(ctx, input.OllamaTargetInput)
 	if err != nil {
 		return pluginbinding.ListResult[Model]{}, err
 	}
 	return pluginbinding.NewListResult(models), nil
 }
 
-func (s Service) ModelShow(_ pluginbinding.Context, input ModelShowInput) (ModelInfo, error) {
+func (s Service) ModelShow(ctx pluginbinding.Context, input ModelShowInput) (ModelInfo, error) {
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		return ModelInfo{}, pluginbinding.Fail("bad_input", "model name is required")
+	}
+	client, err := s.client(ctx, input.OllamaTargetInput)
+	if err != nil {
+		return ModelInfo{}, err
 	}
 	body := map[string]any{"name": name}
 	if input.Verbose {
 		body["verbose"] = true
 	}
 	var out ModelInfo
-	if err := s.Client.post(context.Background(), "/api/show", body, &out); err != nil {
+	if err := client.post("/api/show", body, &out); err != nil {
 		return ModelInfo{}, pluginbinding.Errorf("ollama", "%s", err)
 	}
 	if out.Name == "" {
@@ -56,23 +61,31 @@ func (s Service) ModelShow(_ pluginbinding.Context, input ModelShowInput) (Model
 	return out, nil
 }
 
-func (s Service) Ps(_ pluginbinding.Context, _ PsInput) (pluginbinding.ListResult[RunningModel], error) {
+func (s Service) Ps(ctx pluginbinding.Context, input PsInput) (pluginbinding.ListResult[RunningModel], error) {
+	client, err := s.client(ctx, input.OllamaTargetInput)
+	if err != nil {
+		return pluginbinding.ListResult[RunningModel]{}, err
+	}
 	var resp struct {
 		Models []RunningModel `json:"models"`
 	}
-	if err := s.Client.get(context.Background(), "/api/ps", &resp); err != nil {
+	if err := client.get("/api/ps", &resp); err != nil {
 		return pluginbinding.ListResult[RunningModel]{}, pluginbinding.Errorf("ollama", "%s", err)
 	}
 	return pluginbinding.NewListResult(resp.Models), nil
 }
 
-func (s Service) Generate(_ pluginbinding.Context, input GenerateInput) (GenerateResult, error) {
+func (s Service) Generate(ctx pluginbinding.Context, input GenerateInput) (GenerateResult, error) {
 	model := strings.TrimSpace(input.Model)
 	if model == "" {
 		return GenerateResult{}, pluginbinding.Fail("bad_input", "model is required")
 	}
 	if strings.TrimSpace(input.Prompt) == "" {
 		return GenerateResult{}, pluginbinding.Fail("bad_input", "prompt is required")
+	}
+	client, err := s.client(ctx, input.OllamaTargetInput)
+	if err != nil {
+		return GenerateResult{}, err
 	}
 	body := map[string]any{
 		"model":  model,
@@ -101,19 +114,23 @@ func (s Service) Generate(_ pluginbinding.Context, input GenerateInput) (Generat
 		body["options"] = input.Options
 	}
 	var out GenerateResult
-	if err := s.Client.post(context.Background(), "/api/generate", body, &out); err != nil {
+	if err := client.post("/api/generate", body, &out); err != nil {
 		return GenerateResult{}, pluginbinding.Errorf("ollama", "%s", err)
 	}
 	return out, nil
 }
 
-func (s Service) Chat(_ pluginbinding.Context, input ChatInput) (ChatResult, error) {
+func (s Service) Chat(ctx pluginbinding.Context, input ChatInput) (ChatResult, error) {
 	model := strings.TrimSpace(input.Model)
 	if model == "" {
 		return ChatResult{}, pluginbinding.Fail("bad_input", "model is required")
 	}
 	if len(input.Messages) == 0 {
 		return ChatResult{}, pluginbinding.Fail("bad_input", "messages must not be empty")
+	}
+	client, err := s.client(ctx, input.OllamaTargetInput)
+	if err != nil {
+		return ChatResult{}, err
 	}
 	body := map[string]any{
 		"model":    model,
@@ -130,19 +147,23 @@ func (s Service) Chat(_ pluginbinding.Context, input ChatInput) (ChatResult, err
 		body["options"] = input.Options
 	}
 	var out ChatResult
-	if err := s.Client.post(context.Background(), "/api/chat", body, &out); err != nil {
+	if err := client.post("/api/chat", body, &out); err != nil {
 		return ChatResult{}, pluginbinding.Errorf("ollama", "%s", err)
 	}
 	return out, nil
 }
 
-func (s Service) Embed(_ pluginbinding.Context, input EmbedInput) (EmbedResult, error) {
+func (s Service) Embed(ctx pluginbinding.Context, input EmbedInput) (EmbedResult, error) {
 	model := strings.TrimSpace(input.Model)
 	if model == "" {
 		return EmbedResult{}, pluginbinding.Fail("bad_input", "model is required")
 	}
 	if len(input.Input) == 0 {
 		return EmbedResult{}, pluginbinding.Fail("bad_input", "input must contain at least one entry")
+	}
+	client, err := s.client(ctx, input.OllamaTargetInput)
+	if err != nil {
+		return EmbedResult{}, err
 	}
 	body := map[string]any{
 		"model": model,
@@ -158,14 +179,14 @@ func (s Service) Embed(_ pluginbinding.Context, input EmbedInput) (EmbedResult, 
 		body["options"] = input.Options
 	}
 	var out EmbedResult
-	if err := s.Client.post(context.Background(), "/api/embed", body, &out); err != nil {
+	if err := client.post("/api/embed", body, &out); err != nil {
 		return EmbedResult{}, pluginbinding.Errorf("ollama", "%s", err)
 	}
 	return out, nil
 }
 
 func (s Service) ModelSearch(ctx pluginbinding.Context, input pluginbinding.DatasourceSearchInput) (ModelSearchResult, error) {
-	records, err := s.modelRecords(ctx)
+	records, err := s.modelRecords(ctx, OllamaTargetInput{EndpointRef: input.EndpointRef})
 	if err != nil {
 		return ModelSearchResult{}, err
 	}
@@ -174,7 +195,7 @@ func (s Service) ModelSearch(ctx pluginbinding.Context, input pluginbinding.Data
 }
 
 func (s Service) Lookup(ctx pluginbinding.Context, input LookupInput) (LookupResult, error) {
-	records, err := s.modelRecords(ctx)
+	records, err := s.modelRecords(ctx, OllamaTargetInput{EndpointRef: input.EndpointRef})
 	if err != nil {
 		return LookupResult{}, err
 	}
@@ -196,7 +217,7 @@ func (s Service) ModelGet(ctx pluginbinding.Context, input GetInput) (ModelGetRe
 	if id == "" {
 		return ModelGetResult{}, pluginbinding.Fail("bad_input", "id is required")
 	}
-	records, err := s.modelRecords(ctx)
+	records, err := s.modelRecords(ctx, OllamaTargetInput{EndpointRef: input.EndpointRef})
 	if err != nil {
 		return ModelGetResult{}, err
 	}
@@ -208,8 +229,8 @@ func (s Service) ModelGet(ctx pluginbinding.Context, input GetInput) (ModelGetRe
 	return ModelGetResult{}, pluginbinding.Fail("not_found", "model "+id+" not found")
 }
 
-func (s Service) modelRecords(ctx pluginbinding.Context) ([]ModelRecord, error) {
-	models, err := s.fetchModels(context.Background())
+func (s Service) modelRecords(ctx pluginbinding.Context, target OllamaTargetInput) ([]ModelRecord, error) {
+	models, err := s.fetchModels(ctx, target)
 	if err != nil {
 		return nil, err
 	}
@@ -223,14 +244,26 @@ func (s Service) modelRecords(ctx pluginbinding.Context) ([]ModelRecord, error) 
 	return records, nil
 }
 
-func (s Service) fetchModels(ctx context.Context) ([]Model, error) {
+func (s Service) fetchModels(ctx pluginbinding.Context, target OllamaTargetInput) ([]Model, error) {
+	client, err := s.client(ctx, target)
+	if err != nil {
+		return nil, err
+	}
 	var resp struct {
 		Models []Model `json:"models"`
 	}
-	if err := s.Client.get(ctx, "/api/tags", &resp); err != nil {
+	if err := client.get("/api/tags", &resp); err != nil {
 		return nil, pluginbinding.Errorf("ollama", "%s", err)
 	}
 	return resp.Models, nil
+}
+
+func (s Service) client(ctx pluginbinding.Context, target OllamaTargetInput) (Client, error) {
+	endpointRef := strings.TrimSpace(target.EndpointRef)
+	if endpointRef == "" {
+		return Client{}, pluginbinding.Fail("bad_input", "endpoint_ref is required")
+	}
+	return Client{EndpointRef: endpointRef, Host: ctx.Host}, nil
 }
 
 func filterModelRecords(records []ModelRecord, query string) []ModelRecord {

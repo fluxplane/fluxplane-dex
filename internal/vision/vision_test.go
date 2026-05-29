@@ -1,8 +1,6 @@
 package vision
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/fluxplane/fluxplane-dex/core"
@@ -71,13 +69,9 @@ func TestDataURL(t *testing.T) {
 	if err != nil || got != "https://example.com/a.webp" {
 		t.Fatalf("url = %q", got)
 	}
-	path := filepath.Join(t.TempDir(), "image.png")
-	if err := os.WriteFile(path, []byte("png bytes"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err = DataURL(ImageInput{FilePath: path})
+	got, err = DataURL(ImageInput{ContentBytes: []byte("png bytes"), Filename: "image.png"})
 	if err != nil || got != "data:image/png;base64,cG5nIGJ5dGVz" {
-		t.Fatalf("file data url = %q err=%v", got, err)
+		t.Fatalf("data url = %q err=%v", got, err)
 	}
 }
 

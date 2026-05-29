@@ -16,14 +16,21 @@ import (
 const DefaultInstance = "default"
 
 type Grant struct {
-	Token      string              `json:"token"`
-	Plugin     string              `json:"plugin"`
-	Instance   string              `json:"instance"`
-	Operations []string            `json:"operations,omitempty"`
-	Purposes   []string            `json:"purposes,omitempty"`
-	PurposeEnv map[string][]string `json:"purpose_env,omitempty"`
-	ExpiresAt  time.Time           `json:"expires_at"`
-	CreatedAt  time.Time           `json:"created_at"`
+	Token        string              `json:"token"`
+	Plugin       string              `json:"plugin"`
+	Instance     string              `json:"instance"`
+	Operations   []string            `json:"operations,omitempty"`
+	Capabilities []CapabilityGrant   `json:"capabilities,omitempty"`
+	Purposes     []string            `json:"purposes,omitempty"`
+	PurposeEnv   map[string][]string `json:"purpose_env,omitempty"`
+	ExpiresAt    time.Time           `json:"expires_at"`
+	CreatedAt    time.Time           `json:"created_at"`
+}
+
+type CapabilityGrant struct {
+	Name     string `json:"name"`
+	Provider string `json:"provider,omitempty"`
+	Action   string `json:"action,omitempty"`
 }
 
 type SecretMaterial struct {
@@ -58,6 +65,10 @@ type SecretPurpose struct {
 }
 
 func (s State) CreateGrant(plugin, instance string, operations []string, purposes []SecretPurpose, ttl time.Duration) (Grant, error) {
+	return s.CreateGrantWithCapabilities(plugin, instance, operations, purposes, nil, ttl)
+}
+
+func (s State) CreateGrantWithCapabilities(plugin, instance string, operations []string, purposes []SecretPurpose, capabilities []CapabilityGrant, ttl time.Duration) (Grant, error) {
 	plugin = strings.TrimSpace(plugin)
 	instance = NormalizeInstance(instance)
 	if plugin == "" {
@@ -72,14 +83,15 @@ func (s State) CreateGrant(plugin, instance string, operations []string, purpose
 	}
 	now := time.Now().UTC()
 	grant := Grant{
-		Token:      token,
-		Plugin:     plugin,
-		Instance:   instance,
-		Operations: normalizeList(operations),
-		Purposes:   purposeNames(purposes),
-		PurposeEnv: purposeEnv(purposes),
-		CreatedAt:  now,
-		ExpiresAt:  now.Add(ttl),
+		Token:        token,
+		Plugin:       plugin,
+		Instance:     instance,
+		Operations:   normalizeList(operations),
+		Capabilities: normalizeCapabilityGrants(capabilities),
+		Purposes:     purposeNames(purposes),
+		PurposeEnv:   purposeEnv(purposes),
+		CreatedAt:    now,
+		ExpiresAt:    now.Add(ttl),
 	}
 	if err := os.MkdirAll(s.GrantsDir(), 0o700); err != nil {
 		return Grant{}, err
@@ -92,6 +104,23 @@ func (s State) CreateGrant(plugin, instance string, operations []string, purpose
 		return Grant{}, err
 	}
 	return grant, nil
+}
+
+func (s State) ValidateCapabilityGrant(plugin, instance, token string, requested CapabilityGrant) error {
+	grant, err := s.validateGrantBase(plugin, instance, token)
+	if err != nil {
+		return err
+	}
+	requested = normalizeCapabilityGrant(requested)
+	if requested.Name == "" {
+		return fmt.Errorf("capability grant name is required")
+	}
+	for _, allowed := range grant.Capabilities {
+		if capabilityGrantMatches(allowed, requested) {
+			return nil
+		}
+	}
+	return fmt.Errorf("secret grant does not allow capability %q", requested.Name)
 }
 
 func (s State) ResolveSecret(ctx context.Context, plugin, instance, purpose, token string) (SecretMaterial, error) {
@@ -185,9 +214,20 @@ func (s State) HasStoredAuth(plugin, instance string) (bool, error) {
 }
 
 func (s State) validateGrant(plugin, instance, purpose, token string) (Grant, error) {
+	grant, err := s.validateGrantBase(plugin, instance, token)
+	if err != nil {
+		return Grant{}, err
+	}
+	purpose = strings.TrimSpace(purpose)
+	if !contains(grant.Purposes, purpose) {
+		return Grant{}, fmt.Errorf("secret grant does not allow purpose %q", purpose)
+	}
+	return grant, nil
+}
+
+func (s State) validateGrantBase(plugin, instance, token string) (Grant, error) {
 	plugin = strings.TrimSpace(plugin)
 	instance = NormalizeInstance(instance)
-	purpose = strings.TrimSpace(purpose)
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return Grant{}, fmt.Errorf("secret grant is required")
@@ -208,9 +248,6 @@ func (s State) validateGrant(plugin, instance, purpose, token string) (Grant, er
 	}
 	if grant.Plugin != plugin || grant.Instance != instance {
 		return Grant{}, fmt.Errorf("secret grant does not match plugin instance")
-	}
-	if !contains(grant.Purposes, purpose) {
-		return Grant{}, fmt.Errorf("secret grant does not allow purpose %q", purpose)
 	}
 	return grant, nil
 }
@@ -271,6 +308,43 @@ func normalizeList(values []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func normalizeCapabilityGrants(values []CapabilityGrant) []CapabilityGrant {
+	seen := map[CapabilityGrant]bool{}
+	var out []CapabilityGrant
+	for _, value := range values {
+		value = normalizeCapabilityGrant(value)
+		if value.Name == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func normalizeCapabilityGrant(value CapabilityGrant) CapabilityGrant {
+	return CapabilityGrant{
+		Name:     strings.TrimSpace(value.Name),
+		Provider: strings.TrimSpace(value.Provider),
+		Action:   strings.TrimSpace(value.Action),
+	}
+}
+
+func capabilityGrantMatches(allowed, requested CapabilityGrant) bool {
+	allowed = normalizeCapabilityGrant(allowed)
+	requested = normalizeCapabilityGrant(requested)
+	if allowed.Name != requested.Name {
+		return false
+	}
+	if allowed.Provider != "" && allowed.Provider != "*" && allowed.Provider != requested.Provider {
+		return false
+	}
+	if allowed.Action != "" && allowed.Action != "*" && allowed.Action != requested.Action {
+		return false
+	}
+	return true
 }
 
 func purposeNames(purposes []SecretPurpose) []string {

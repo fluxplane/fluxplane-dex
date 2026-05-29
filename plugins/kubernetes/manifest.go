@@ -3,11 +3,12 @@ package kubernetes
 import (
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
+	"github.com/fluxplane/fluxplane-dex/protocol"
 )
 
 const (
 	PluginName        = "kubernetes"
-	PluginVersion     = "0.9.0"
+	PluginVersion     = "0.10.0"
 	PluginDescription = "Kubernetes cluster discovery using kubeconfig and kubectl."
 
 	OperationClusterList      = "kubernetes.cluster.list"
@@ -69,6 +70,9 @@ func manifestSpec() pluginbinding.ManifestSpec {
 		},
 		Endpoints: []core.EndpointSpec{
 			pluginbinding.Endpoint(EndpointClusterDiscovered, "Product endpoints discovered inside Kubernetes clusters.", "kubernetes", "prometheus", "loki", "homer", "mysql", "postgres"),
+		},
+		Metadata: map[string]string{
+			pluginbinding.ManifestProtocolKey: protocol.Version,
 		},
 	}
 }
@@ -149,8 +153,8 @@ func portForwardStartSpec() core.OperationSpec {
 	return pluginbinding.TypedOperationSpec[PortForwardStartInput, PortForwardResult](
 		OperationPortForwardStart,
 		"Start a managed kubectl port-forward for a Kubernetes service, pod, or deployment.",
-		pluginbinding.Effects(core.OperationEffectWrite, core.OperationEffectProcess, core.OperationEffectNetwork, core.OperationEffectFilesystem, core.OperationEffectLocalSystem),
-		pluginbinding.Access(core.OperationAccessProcess, core.OperationAccessNetwork, core.OperationAccessFilesystem, core.OperationAccessLocalSystem),
+		pluginbinding.Effects(core.OperationEffectWrite),
+		pluginbinding.Access(core.OperationAccessProvider),
 		pluginbinding.Risk(core.OperationRiskMedium),
 		pluginbinding.Idempotency(core.OperationNonIdempotent),
 	)
@@ -160,8 +164,8 @@ func portForwardStopSpec() core.OperationSpec {
 	return pluginbinding.TypedOperationSpec[PortForwardStopInput, PortForwardStopResult](
 		OperationPortForwardStop,
 		"Stop a managed kubectl port-forward by ID or process group.",
-		pluginbinding.Effects(core.OperationEffectWrite, core.OperationEffectProcess, core.OperationEffectLocalSystem),
-		pluginbinding.Access(core.OperationAccessProcess, core.OperationAccessLocalSystem),
+		pluginbinding.Effects(core.OperationEffectWrite),
+		pluginbinding.Access(core.OperationAccessProvider),
 		pluginbinding.Risk(core.OperationRiskMedium),
 		pluginbinding.Idempotency(core.OperationIdempotent),
 	)
@@ -223,8 +227,8 @@ func inventoryDatasourceSpec() core.DatasourceSpec {
 func kubernetesReadOptions(idempotency core.OperationIdempotency) []pluginbinding.OperationSpecOption {
 	return []pluginbinding.OperationSpecOption{
 		pluginbinding.ReadOnly(),
-		pluginbinding.Effects(core.OperationEffectRead, core.OperationEffectNetwork, core.OperationEffectFilesystem),
-		pluginbinding.Access(core.OperationAccessNetwork, core.OperationAccessFilesystem),
+		pluginbinding.Effects(core.OperationEffectRead),
+		pluginbinding.Access(core.OperationAccessProvider),
 		pluginbinding.Risk(core.OperationRiskLow),
 		pluginbinding.Idempotency(idempotency),
 	}

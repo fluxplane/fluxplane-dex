@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-05-29
+
+### Added
+- Added host-managed plugin capabilities for secrets, endpoint resolution,
+  authenticated HTTP, blobs, and provider calls so plugins can request host
+  services without reading files, environment variables, sockets, or local
+  credentials directly.
+- Added plugin-side `pluginbinding` helpers for host HTTP and capability calls,
+  plus runtime capability hosts for live operations that must touch local
+  systems from the dex host process.
+- Added IO-free verification covering plugin code and plugin-owned shared
+  helpers.
+
+### Changed
+- Moved plugin network, credential, endpoint, filesystem, and provider IO
+  behind the host protocol. Plugins now pass endpoint/auth/blob references and
+  let the runtime resolve concrete URLs, tokens, passwords, and bytes.
+- Migrated GitLab, Slack, Tavily, OpenAI vision, Atlassian attachments, SQL,
+  Docker, Kubernetes, and system operations onto host-mediated IO paths.
+- Updated `fluxplaneplugin` to use the latest `fluxplane-core` release,
+  `v0.20.0`.
+- Updated plugin module requirements, manifest versions, builtin plugin
+  versions, README examples, and maintainer release docs for `v0.10.0`.
+
+### Removed
+- Removed plugin-side credential loaders and direct Atlassian auth helpers.
+- Removed direct file path inputs for Atlassian attachment upload/download in
+  favor of inline bytes and host blob references.
+
 ## [0.9.0] - 2026-05-28
 
 ### Added

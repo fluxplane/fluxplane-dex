@@ -11,9 +11,7 @@ func NewPlugin() *pluginbinding.Plugin {
 }
 
 func NewPluginWithService(service Service) *pluginbinding.Plugin {
-	return websearch.DefineProvider(providerSpec(), service.Search,
-		pluginbinding.WithSecretGetter(service.SecretGetter),
-	)
+	return websearch.DefineProvider(providerSpec(), service.Search)
 }
 
 func Handle(req protocol.Request) protocol.Response {

@@ -8,12 +8,16 @@ import (
 
 const (
 	PluginName        = "openai"
-	PluginVersion     = "0.9.0"
+	PluginVersion     = "0.10.0"
 	PluginDescription = "OpenAI API plugin. Exposes image generation, image understanding, and model listing."
 
-	AuthMethodAPIKey  = "api_key"
-	AuthPurposeAPIKey = "api_key"
-	EnvOpenAIAPIKey   = "OPENAI_API_KEY"
+	AuthMethodAPIKey        = "api_key"
+	AuthPurposeAPIKey       = "api_key"
+	AuthPurposeOrganization = "organization"
+	AuthPurposeProject      = "project"
+	EnvOpenAIAPIKey         = "OPENAI_API_KEY"
+	EnvOpenAIOrganization   = "OPENAI_ORGANIZATION"
+	EnvOpenAIProject        = "OPENAI_PROJECT"
 
 	OperationImageGenerate = "openai.image.generate"
 	OperationVisionAnalyze = "openai.vision.analyze"
@@ -39,6 +43,8 @@ func manifestSpec() pluginbinding.ManifestSpec {
 			AuthMethodAPIKey,
 			"OpenAI API key resolved by dex secret broker.",
 			pluginbinding.AuthField(AuthPurposeAPIKey, "OpenAI API key", true, true, EnvOpenAIAPIKey),
+			pluginbinding.AuthField(AuthPurposeOrganization, "OpenAI organization header", false, false, EnvOpenAIOrganization),
+			pluginbinding.AuthField(AuthPurposeProject, "OpenAI project header", false, false, EnvOpenAIProject),
 		)},
 		Metadata: vision.ProviderMetadata(visionProviderSpec()),
 	}
@@ -52,7 +58,7 @@ func imageGenerateSpec() core.OperationSpec {
 		pluginbinding.Access(core.OperationAccessNetwork),
 		pluginbinding.Risk(core.OperationRiskMedium),
 		pluginbinding.Idempotency(core.OperationNonIdempotent),
-		pluginbinding.SecretPurposes(AuthPurposeAPIKey),
+		pluginbinding.SecretPurposes(AuthPurposeAPIKey, AuthPurposeOrganization, AuthPurposeProject),
 	)
 }
 
@@ -68,8 +74,10 @@ func visionProviderSpec() vision.ProviderSpec {
 			AuthMethodAPIKey,
 			"OpenAI API key resolved by dex secret broker.",
 			pluginbinding.AuthField(AuthPurposeAPIKey, "OpenAI API key", true, true, EnvOpenAIAPIKey),
+			pluginbinding.AuthField(AuthPurposeOrganization, "OpenAI organization header", false, false, EnvOpenAIOrganization),
+			pluginbinding.AuthField(AuthPurposeProject, "OpenAI project header", false, false, EnvOpenAIProject),
 		)},
-		SecretPurposes: []string{AuthPurposeAPIKey},
+		SecretPurposes: []string{AuthPurposeAPIKey, AuthPurposeOrganization, AuthPurposeProject},
 	}
 }
 
@@ -86,7 +94,7 @@ func modelListSpec() core.OperationSpec {
 		pluginbinding.Access(core.OperationAccessNetwork),
 		pluginbinding.Risk(core.OperationRiskLow),
 		pluginbinding.Idempotency(core.OperationIdempotent),
-		pluginbinding.SecretPurposes(AuthPurposeAPIKey),
+		pluginbinding.SecretPurposes(AuthPurposeAPIKey, AuthPurposeOrganization, AuthPurposeProject),
 		pluginbinding.Compact(),
 	)
 }

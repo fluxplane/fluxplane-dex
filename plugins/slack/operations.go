@@ -3,8 +3,6 @@ package slack
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -14,7 +12,6 @@ import (
 )
 
 type Service struct {
-	SecretGetter  pluginbinding.SecretGetter
 	ClientFactory ClientFactory
 }
 
@@ -171,9 +168,9 @@ type FileUploadInput struct {
 	SlackRoleInput
 	Channel        string `json:"channel,omitempty" jsonschema:"required,description=Slack channel ID or DM ID"`
 	ThreadTS       string `json:"thread_ts,omitempty" jsonschema:"description=Slack thread timestamp to upload into"`
-	FilePath       string `json:"file_path,omitempty" jsonschema:"description=Local file path to upload. Mutually exclusive with content_bytes."`
-	ContentBytes   []byte `json:"content_bytes,omitempty" jsonschema:"description=Base64-encoded inline file bytes. Mutually exclusive with file_path."`
-	Filename       string `json:"filename,omitempty" jsonschema:"description=Filename shown in Slack. Defaults to the file_path basename."`
+	BlobRef        string `json:"blob_ref,omitempty" jsonschema:"description=Host blob ref to upload. Mutually exclusive with content_bytes."`
+	ContentBytes   []byte `json:"content_bytes,omitempty" jsonschema:"description=Base64-encoded inline file bytes. Mutually exclusive with blob_ref."`
+	Filename       string `json:"filename,omitempty" jsonschema:"description=Filename shown in Slack. Defaults to host blob filename when using blob_ref."`
 	InitialComment string `json:"initial_comment,omitempty" jsonschema:"description=Optional message text posted with the file."`
 	AltText        string `json:"alt_text,omitempty" jsonschema:"description=Alt text for image uploads."`
 }
@@ -192,8 +189,9 @@ type FileInfoInput struct {
 
 type FileDownloadInput struct {
 	SlackRoleInput
-	FileID     string `json:"file_id,omitempty" jsonschema:"required,description=Slack file ID"`
-	OutputPath string `json:"output_path,omitempty" jsonschema:"required,description=Local file path or existing directory for the downloaded file"`
+	FileID   string `json:"file_id,omitempty" jsonschema:"required,description=Slack file ID"`
+	BlobRef  string `json:"blob_ref,omitempty" jsonschema:"description=Optional host blob ref for the downloaded file."`
+	Filename string `json:"filename,omitempty" jsonschema:"description=Filename to use for the downloaded host blob."`
 }
 
 type FileDeleteInput struct {
@@ -309,12 +307,14 @@ type FileInfoResult struct {
 }
 
 type FileDownloadResult struct {
-	OK     bool       `json:"ok"`
-	FileID string     `json:"file_id,omitempty"`
-	Path   string     `json:"path,omitempty"`
-	Size   int        `json:"size,omitempty"`
-	Role   string     `json:"role,omitempty"`
-	File   FileRecord `json:"file,omitempty"`
+	OK      bool                  `json:"ok"`
+	FileID  string                `json:"file_id,omitempty"`
+	Path    string                `json:"path,omitempty"`
+	Size    int                   `json:"size,omitempty"`
+	Role    string                `json:"role,omitempty"`
+	Blob    pluginbinding.BlobRef `json:"blob,omitempty"`
+	File    FileRecord            `json:"file,omitempty"`
+	content []byte
 }
 
 type FileDeleteResult struct {
@@ -414,8 +414,7 @@ type FileListRequest struct {
 }
 
 type FileDownloadRequest struct {
-	FileID     string
-	OutputPath string
+	FileID string
 }
 
 type UnreadsRequest struct {
@@ -679,13 +678,8 @@ func (s Service) Info(ctx pluginbinding.Context, _ NoInput) (InfoResult, error) 
 func (s Service) tokenIdentityReport(ctx pluginbinding.Context) (string, []TokenInfoResult, error) {
 	results := make([]TokenInfoResult, 0, 2)
 	for _, purpose := range []string{AuthPurposeUser, AuthPurposeBot} {
-		material, ok := ctx.OptionalSecret(purpose)
-		if !ok {
-			continue
-		}
-		material.Purpose = purpose
-		result := TokenInfoResult{Role: slackRoleFromPurpose(purpose), Source: material.Source}
-		client, err := s.client(material)
+		result := TokenInfoResult{Role: slackRoleFromPurpose(purpose)}
+		client, err := s.openClient(ctx, purpose)
 		if err != nil {
 			result.Error = err.Error()
 			results = append(results, result)
@@ -702,7 +696,7 @@ func (s Service) tokenIdentityReport(ctx pluginbinding.Context) (string, []Token
 		results = append(results, result)
 	}
 	if len(results) == 0 {
-		return "", nil, pluginbinding.Fail("secret", "no Slack user_token or bot_token configured")
+		return "", nil, pluginbinding.Fail("slack", "no Slack auth purposes configured")
 	}
 	okCount := 0
 	for _, result := range results {
@@ -745,7 +739,7 @@ func (s Service) ListEmojis(ctx pluginbinding.Context, input EmojiListInput) (Em
 		return EmojiListResult{}, pluginbinding.Fail("bad_input", "mode must be custom, builtin, or all")
 	}
 	includeCategories := mode == "builtin" || mode == "all"
-	emojis, _, err := pluginbinding.ReadWithPreferredSecrets[Client, EmojiSet](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) (EmojiSet, error) {
+	emojis, _, err := pluginbinding.ReadWithPreferredAuthPurposes[Client, EmojiSet]([]string{AuthPurposeUser, AuthPurposeBot}, s.openClientForContext(ctx), func(client Client, _ string) (EmojiSet, error) {
 		return client.ListEmojis(context.Background(), includeCategories)
 	}, fallbackableSlackError)
 	if err != nil {
@@ -760,7 +754,7 @@ func (s Service) ListBookmarks(ctx pluginbinding.Context, input BookmarkListInpu
 	if err != nil {
 		return BookmarkListResult{}, err
 	}
-	bookmarks, _, err := pluginbinding.ReadWithPreferredSecrets[Client, []Bookmark](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) ([]Bookmark, error) {
+	bookmarks, _, err := pluginbinding.ReadWithPreferredAuthPurposes[Client, []Bookmark]([]string{AuthPurposeUser, AuthPurposeBot}, s.openClientForContext(ctx), func(client Client, _ string) ([]Bookmark, error) {
 		return client.ListBookmarks(context.Background(), channel)
 	}, fallbackableSlackError)
 	if err != nil {
@@ -860,7 +854,7 @@ func (s Service) GetPresence(ctx pluginbinding.Context, input PresenceGetInput) 
 	if err != nil {
 		return PresenceGetResult{}, err
 	}
-	presence, _, err := pluginbinding.ReadWithPreferredSecrets[Client, Presence](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) (Presence, error) {
+	presence, _, err := pluginbinding.ReadWithPreferredAuthPurposes[Client, Presence]([]string{AuthPurposeUser, AuthPurposeBot}, s.openClientForContext(ctx), func(client Client, _ string) (Presence, error) {
 		return client.GetPresence(context.Background(), user)
 	}, fallbackableSlackError)
 	if err != nil {
@@ -1081,7 +1075,7 @@ func (s Service) ListFiles(ctx pluginbinding.Context, input FileListInput) (File
 	if err != nil {
 		return FileListResult{}, err
 	}
-	files, _, err := pluginbinding.ReadWithPreferredSecrets[Client, []FileRecord](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) ([]FileRecord, error) {
+	files, _, err := pluginbinding.ReadWithPreferredAuthPurposes[Client, []FileRecord]([]string{AuthPurposeUser, AuthPurposeBot}, s.openClientForContext(ctx), func(client Client, _ string) ([]FileRecord, error) {
 		return client.ListFiles(context.Background(), FileListRequest{Channel: channel, User: user, Types: strings.TrimSpace(input.Types), Limit: input.Limit})
 	}, fallbackableSlackError)
 	if err != nil {
@@ -1097,7 +1091,7 @@ func (s Service) FileInfo(ctx pluginbinding.Context, input FileInfoInput) (FileI
 	if fileID == "" {
 		return FileInfoResult{}, pluginbinding.Fail("bad_input", "file_id is required")
 	}
-	file, _, err := pluginbinding.ReadWithPreferredSecrets[Client, FileRecord](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) (FileRecord, error) {
+	file, _, err := pluginbinding.ReadWithPreferredAuthPurposes[Client, FileRecord]([]string{AuthPurposeUser, AuthPurposeBot}, s.openClientForContext(ctx), func(client Client, _ string) (FileRecord, error) {
 		return client.GetFileInfo(context.Background(), fileID)
 	}, fallbackableSlackError)
 	if err != nil {
@@ -1108,12 +1102,8 @@ func (s Service) FileInfo(ctx pluginbinding.Context, input FileInfoInput) (FileI
 
 func (s Service) DownloadFile(ctx pluginbinding.Context, input FileDownloadInput) (FileDownloadResult, error) {
 	fileID := strings.TrimSpace(input.FileID)
-	outputPath := strings.TrimSpace(input.OutputPath)
 	if fileID == "" {
 		return FileDownloadResult{}, pluginbinding.Fail("bad_input", "file_id is required")
-	}
-	if outputPath == "" {
-		return FileDownloadResult{}, pluginbinding.Fail("bad_input", "output_path is required")
 	}
 	role, purpose, err := slackWriteRole(input.Role, SlackRoleBot)
 	if err != nil {
@@ -1123,9 +1113,28 @@ func (s Service) DownloadFile(ctx pluginbinding.Context, input FileDownloadInput
 	if err != nil {
 		return FileDownloadResult{}, err
 	}
-	result, err := client.DownloadFile(context.Background(), FileDownloadRequest{FileID: fileID, OutputPath: outputPath})
+	result, err := client.DownloadFile(context.Background(), FileDownloadRequest{FileID: fileID})
 	if err != nil {
 		return FileDownloadResult{}, pluginbinding.Errorf("slack", "%s", err)
+	}
+	if len(result.content) > 0 {
+		filename := firstNonEmpty(input.Filename, result.File.Name, result.File.Title, result.File.ID)
+		blob, err := ctx.Host.BlobWrite(pluginbinding.BlobWriteRequest{
+			Ref:       strings.TrimSpace(input.BlobRef),
+			Content:   result.content,
+			Filename:  filename,
+			MediaType: result.File.Mimetype,
+			Metadata: map[string]string{
+				"source":  "slack",
+				"file_id": result.FileID,
+			},
+		})
+		if err != nil {
+			return FileDownloadResult{}, pluginbinding.Errorf("blob", "%s", err)
+		}
+		result.Blob = blob
+		result.Size = len(result.content)
+		result.content = nil
 	}
 	result.Role = role
 	return result, nil
@@ -1151,7 +1160,7 @@ func (s Service) DeleteFile(ctx pluginbinding.Context, input FileDeleteInput) (F
 }
 
 func (s Service) UploadFile(ctx pluginbinding.Context, input FileUploadInput) (FileUploadResult, error) {
-	request, err := fileUploadRequest(input)
+	request, err := fileUploadRequest(ctx, input)
 	if err != nil {
 		return FileUploadResult{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
@@ -1182,7 +1191,7 @@ func (s Service) Search(ctx pluginbinding.Context, input SearchInput) (SearchRes
 	if query == "" {
 		return SearchResult{}, pluginbinding.Fail("bad_input", "query is required")
 	}
-	messages, _, err := pluginbinding.ReadWithPreferredSecrets[Client, searchMessagesOutput](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) (searchMessagesOutput, error) {
+	messages, _, err := pluginbinding.ReadWithPreferredAuthPurposes[Client, searchMessagesOutput]([]string{AuthPurposeUser, AuthPurposeBot}, s.openClientForContext(ctx), func(client Client, _ string) (searchMessagesOutput, error) {
 		messages, total, err := client.SearchMessages(context.Background(), query, input.Limit)
 		return searchMessagesOutput{Messages: messages, Total: total}, err
 	}, fallbackableSlackError)
@@ -1212,7 +1221,7 @@ func (s Service) Mentions(ctx pluginbinding.Context, input MentionsInput) (Menti
 	if sinceQuery != "" {
 		query += " after:" + sinceQuery
 	}
-	messages, _, err := pluginbinding.ReadWithPreferredSecrets[Client, searchMessagesOutput](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) (searchMessagesOutput, error) {
+	messages, _, err := pluginbinding.ReadWithPreferredAuthPurposes[Client, searchMessagesOutput]([]string{AuthPurposeUser, AuthPurposeBot}, s.openClientForContext(ctx), func(client Client, _ string) (searchMessagesOutput, error) {
 		messages, total, err := client.SearchMessages(context.Background(), query, limit)
 		return searchMessagesOutput{Messages: messages, Total: total}, err
 	}, fallbackableSlackError)
@@ -1284,7 +1293,7 @@ func (s Service) SearchMessagesDatasource(ctx pluginbinding.Context, input Messa
 	if query == "" {
 		return MessageDatasourceResult{}, pluginbinding.Fail("bad_input", "query is required")
 	}
-	messages, _, err := pluginbinding.ReadWithPreferredSecrets[Client, searchMessagesOutput](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) (searchMessagesOutput, error) {
+	messages, _, err := pluginbinding.ReadWithPreferredAuthPurposes[Client, searchMessagesOutput]([]string{AuthPurposeUser, AuthPurposeBot}, s.openClientForContext(ctx), func(client Client, _ string) (searchMessagesOutput, error) {
 		messages, total, err := client.SearchMessages(context.Background(), query, input.Limit)
 		return searchMessagesOutput{Messages: messages, Total: total}, err
 	}, fallbackableSlackError)
@@ -1306,7 +1315,7 @@ func (s Service) Thread(ctx pluginbinding.Context, input ThreadInput) (ThreadRes
 	if err != nil {
 		return ThreadResult{}, err
 	}
-	messages, _, err := pluginbinding.ReadWithPreferredSecrets[Client, []ThreadMessage](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) ([]ThreadMessage, error) {
+	messages, _, err := pluginbinding.ReadWithPreferredAuthPurposes[Client, []ThreadMessage]([]string{AuthPurposeUser, AuthPurposeBot}, s.openClientForContext(ctx), func(client Client, _ string) ([]ThreadMessage, error) {
 		return client.GetThread(context.Background(), ref.Channel, ref.TS, input.Limit, input.MaxBytes)
 	}, fallbackableSlackError)
 	if err != nil {
@@ -1321,7 +1330,7 @@ func (s Service) ThreadMessagesDatasource(ctx pluginbinding.Context, input Threa
 	if err != nil {
 		return ThreadMessagesDatasourceResult{}, err
 	}
-	messages, _, err := pluginbinding.ReadWithPreferredSecrets[Client, []ThreadMessage](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) ([]ThreadMessage, error) {
+	messages, _, err := pluginbinding.ReadWithPreferredAuthPurposes[Client, []ThreadMessage]([]string{AuthPurposeUser, AuthPurposeBot}, s.openClientForContext(ctx), func(client Client, _ string) ([]ThreadMessage, error) {
 		return client.GetThread(context.Background(), ref.Channel, ref.TS, input.Limit, 0)
 	}, fallbackableSlackError)
 	if err != nil {
@@ -1348,7 +1357,7 @@ func (s Service) ChannelMembersDatasource(ctx pluginbinding.Context, input Chann
 	if query != "" {
 		readLimit = 0
 	}
-	members, _, err := pluginbinding.ReadWithPreferredSecrets[Client, []User](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) ([]User, error) {
+	members, _, err := pluginbinding.ReadWithPreferredAuthPurposes[Client, []User]([]string{AuthPurposeUser, AuthPurposeBot}, s.openClientForContext(ctx), func(client Client, _ string) ([]User, error) {
 		return client.ListChannelMembers(context.Background(), channel, readLimit)
 	}, fallbackableSlackError)
 	if err != nil {
@@ -1396,31 +1405,33 @@ func (s Service) indexBuild(ctx pluginbinding.Context, input map[string]any) (pl
 }
 
 func (s Service) listUsers(ctx pluginbinding.Context) ([]User, string, error) {
-	return pluginbinding.ReadWithPreferredSecrets[Client, []User](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) ([]User, error) {
+	return pluginbinding.ReadWithPreferredAuthPurposes[Client, []User]([]string{AuthPurposeUser, AuthPurposeBot}, s.openClientForContext(ctx), func(client Client, _ string) ([]User, error) {
 		return client.ListUsers(context.Background())
 	}, fallbackableSlackError)
 }
 
 func (s Service) listChannels(ctx pluginbinding.Context) ([]Channel, string, error) {
-	return pluginbinding.ReadWithPreferredSecrets[Client, []Channel](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) ([]Channel, error) {
+	return pluginbinding.ReadWithPreferredAuthPurposes[Client, []Channel]([]string{AuthPurposeUser, AuthPurposeBot}, s.openClientForContext(ctx), func(client Client, _ string) ([]Channel, error) {
 		return client.ListChannels(context.Background())
 	}, fallbackableSlackError)
 }
 
-func (s Service) client(material pluginbinding.SecretMaterial) (Client, error) {
+func (s Service) openClientForContext(ctx pluginbinding.Context) func(string) (Client, error) {
+	return func(purpose string) (Client, error) {
+		return s.openClient(ctx, purpose)
+	}
+}
+
+func (s Service) openClient(ctx pluginbinding.Context, purpose string) (Client, error) {
 	factory := s.ClientFactory
 	if factory == nil {
 		factory = NewLiveClient
 	}
-	return factory(material)
+	return factory(ctx, purpose)
 }
 
 func (s Service) clientForPurpose(ctx pluginbinding.Context, purpose string) (Client, error) {
-	material, err := ctx.Secret(purpose)
-	if err != nil {
-		return nil, pluginbinding.Errorf("secret", "%s", err)
-	}
-	client, err := s.client(material)
+	client, err := s.openClient(ctx, purpose)
 	if err != nil {
 		return nil, pluginbinding.Errorf("slack", "%s", err)
 	}
@@ -1549,11 +1560,7 @@ func parseSlackDuration(raw string) (time.Duration, error) {
 func (s Service) ownSlackUserIDs(ctx pluginbinding.Context) map[string]bool {
 	ids := map[string]bool{}
 	for _, purpose := range []string{AuthPurposeUser, AuthPurposeBot} {
-		material, ok := ctx.OptionalSecret(purpose)
-		if !ok {
-			continue
-		}
-		client, err := s.client(material)
+		client, err := s.openClient(ctx, purpose)
 		if err != nil {
 			continue
 		}
@@ -1576,7 +1583,7 @@ func (s Service) classifyMention(ctx pluginbinding.Context, message SearchMessag
 	if maxThread <= 0 {
 		maxThread = 50
 	}
-	thread, _, err := pluginbinding.ReadWithPreferredSecrets[Client, []ThreadMessage](ctx, []string{AuthPurposeUser, AuthPurposeBot}, s.client, func(client Client, _ string) ([]ThreadMessage, error) {
+	thread, _, err := pluginbinding.ReadWithPreferredAuthPurposes[Client, []ThreadMessage]([]string{AuthPurposeUser, AuthPurposeBot}, s.openClientForContext(ctx), func(client Client, _ string) ([]ThreadMessage, error) {
 		return client.GetThread(context.Background(), message.Channel, rootTS, maxThread, 0)
 	}, fallbackableSlackError)
 	if err != nil || len(thread) == 0 {
@@ -1955,34 +1962,34 @@ func limitThreadMessages(messages []ThreadMessage, limit int) []ThreadMessage {
 	return messages[:limit]
 }
 
-func fileUploadRequest(input FileUploadInput) (FileUploadRequest, error) {
+func fileUploadRequest(ctx pluginbinding.Context, input FileUploadInput) (FileUploadRequest, error) {
 	channel := strings.TrimSpace(input.Channel)
 	if channel == "" {
 		return FileUploadRequest{}, pluginbinding.Fail("bad_input", "channel is required")
 	}
-	filePath := strings.TrimSpace(input.FilePath)
-	hasFilePath := filePath != ""
+	blobRef := strings.TrimSpace(input.BlobRef)
+	hasBlobRef := blobRef != ""
 	hasContent := len(input.ContentBytes) > 0
-	if hasFilePath == hasContent {
-		return FileUploadRequest{}, pluginbinding.Fail("bad_input", "provide exactly one of file_path or content_bytes")
+	if hasBlobRef == hasContent {
+		return FileUploadRequest{}, pluginbinding.Fail("bad_input", "provide exactly one of blob_ref or content_bytes")
 	}
 	filename := strings.TrimSpace(input.Filename)
 	content := append([]byte(nil), input.ContentBytes...)
-	if hasFilePath {
-		data, err := os.ReadFile(filePath)
+	if hasBlobRef {
+		blob, err := ctx.Host.BlobRead(pluginbinding.BlobReadRequest{Ref: blobRef})
 		if err != nil {
 			return FileUploadRequest{}, err
 		}
-		content = data
+		content = append([]byte(nil), blob.Content...)
 		if filename == "" {
-			filename = filepath.Base(filePath)
+			filename = firstNonEmpty(blob.Blob.Filename, blobPathFilename(blob.Blob.Path), blob.Blob.Ref)
 		}
 	}
 	if len(content) == 0 {
 		return FileUploadRequest{}, pluginbinding.Fail("bad_input", "file content is empty")
 	}
 	if filename == "" {
-		return FileUploadRequest{}, pluginbinding.Fail("bad_input", "filename is required when using content_bytes")
+		return FileUploadRequest{}, pluginbinding.Fail("bad_input", "filename is required when using content_bytes or unnamed blob_ref")
 	}
 	return FileUploadRequest{
 		Channel:        channel,
@@ -1992,4 +1999,15 @@ func fileUploadRequest(input FileUploadInput) (FileUploadRequest, error) {
 		InitialComment: strings.TrimSpace(input.InitialComment),
 		AltText:        strings.TrimSpace(input.AltText),
 	}, nil
+}
+
+func blobPathFilename(path string) string {
+	path = strings.TrimRight(strings.TrimSpace(path), "/")
+	if path == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		return strings.TrimSpace(path[idx+1:])
+	}
+	return path
 }

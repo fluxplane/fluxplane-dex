@@ -6,11 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
@@ -49,20 +44,29 @@ type Client interface {
 	GetThread(context.Context, string, string, int, int) ([]ThreadMessage, error)
 }
 
-type ClientFactory func(pluginbinding.SecretMaterial) (Client, error)
+type ClientFactory func(pluginbinding.Context, string) (Client, error)
 
-func NewLiveClient(material pluginbinding.SecretMaterial) (Client, error) {
-	token := strings.TrimSpace(material.Value)
-	if token == "" {
-		return nil, fmt.Errorf("%s is empty", material.Purpose)
+func NewLiveClient(ctx pluginbinding.Context, purpose string) (Client, error) {
+	purpose = strings.TrimSpace(purpose)
+	if purpose == "" {
+		return nil, fmt.Errorf("slack token purpose is empty")
 	}
-	return liveClient{client: slackapi.New(token), token: token, purpose: material.Purpose}, nil
+	return liveClient{client: slackapi.New("",
+		slackapi.OptionHTTPClient(pluginbinding.HostHTTPClient(ctx.Host,
+			pluginbinding.HostHTTPClientAuth(pluginbinding.HTTPAuthRequest{BearerTokenPurpose: purpose}),
+			pluginbinding.HostHTTPClientTimeout(30000),
+			pluginbinding.HostHTTPClientMaxBytes(32*1024*1024),
+		)),
+		slackapi.OptionLog(discardLogger{}),
+	)}, nil
 }
 
+type discardLogger struct{}
+
+func (discardLogger) Output(int, string) error { return nil }
+
 type liveClient struct {
-	client  *slackapi.Client
-	token   string
-	purpose string
+	client *slackapi.Client
 }
 
 func (c liveClient) AuthTest(ctx context.Context) (AuthInfo, error) {
@@ -144,46 +148,9 @@ func (c liveClient) ListChannelMembers(ctx context.Context, channel string, limi
 }
 
 func (c liveClient) ListEmojis(ctx context.Context, includeCategories bool) (EmojiSet, error) {
-	if !includeCategories {
-		emojis, err := c.client.GetEmojiContext(ctx)
-		return EmojiSet{Custom: emojis}, err
-	}
-	values := url.Values{}
-	values.Set("include_categories", "true")
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, slackapi.APIURL+"emoji.list", strings.NewReader(values.Encode()))
-	if err != nil {
-		return EmojiSet{}, err
-	}
-	request.Header.Set("Authorization", "Bearer "+c.token)
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		return EmojiSet{}, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return EmojiSet{}, fmt.Errorf("emoji.list: %s", response.Status)
-	}
-	var payload struct {
-		OK         bool              `json:"ok"`
-		Error      string            `json:"error"`
-		Emoji      map[string]string `json:"emoji"`
-		Categories []struct {
-			Name       string   `json:"name"`
-			EmojiNames []string `json:"emoji_names"`
-		} `json:"categories"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		return EmojiSet{}, err
-	}
-	if !payload.OK {
-		return EmojiSet{}, slackapi.SlackErrorResponse{Err: payload.Error}
-	}
-	categories := make([]EmojiCategory, 0, len(payload.Categories))
-	for _, category := range payload.Categories {
-		categories = append(categories, EmojiCategory{Name: category.Name, EmojiNames: category.EmojiNames})
-	}
-	return EmojiSet{Custom: payload.Emoji, Categories: categories}, nil
+	_ = includeCategories
+	emojis, err := c.client.GetEmojiContext(ctx)
+	return EmojiSet{Custom: emojis}, err
 }
 
 func (c liveClient) ListBookmarks(ctx context.Context, channel string) ([]Bookmark, error) {
@@ -402,31 +369,12 @@ func (c liveClient) DownloadFile(ctx context.Context, request FileDownloadReques
 	if downloadURL == "" {
 		return FileDownloadResult{}, errors.New("file has no private download URL")
 	}
-	outputPath := strings.TrimSpace(request.OutputPath)
-	if outputPath == "" {
-		return FileDownloadResult{}, errors.New("output_path is required")
-	}
-	if info, err := os.Stat(outputPath); err == nil && info.IsDir() {
-		outputPath = filepath.Join(outputPath, firstNonEmpty(file.Name, file.Title, file.ID))
-	}
-	if dir := filepath.Dir(outputPath); dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return FileDownloadResult{}, err
-		}
-	}
-	out, err := os.Create(outputPath)
-	if err != nil {
+	var out bytes.Buffer
+	if err := c.client.GetFileContext(ctx, downloadURL, &out); err != nil {
 		return FileDownloadResult{}, err
 	}
-	defer out.Close()
-	if err := c.client.GetFileContext(ctx, downloadURL, out); err != nil {
-		return FileDownloadResult{}, err
-	}
-	info, err := out.Stat()
-	if err != nil {
-		return FileDownloadResult{}, err
-	}
-	return FileDownloadResult{OK: true, FileID: file.ID, Path: outputPath, Size: int(info.Size()), File: file}, nil
+	content := append([]byte(nil), out.Bytes()...)
+	return FileDownloadResult{OK: true, FileID: file.ID, Size: len(content), File: file, content: content}, nil
 }
 
 func (c liveClient) DeleteFile(ctx context.Context, fileID string) error {
@@ -610,43 +558,8 @@ func (c liveClient) GetThread(ctx context.Context, channel, ts string, limit, ma
 	return limitThreadMessages(out, limit), nil
 }
 
-func (c liveClient) downloadFileToTemp(ctx context.Context, file slackapi.File, url string, maxBytes int) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("download Slack file: %s", resp.Status)
-	}
-	temp, err := os.CreateTemp("", "dex-slack-image-*"+imageExtension(file))
-	if err != nil {
-		return "", err
-	}
-	path := temp.Name()
-	n, copyErr := io.Copy(temp, io.LimitReader(resp.Body, int64(maxBytes)+1))
-	closeErr := temp.Close()
-	if copyErr != nil {
-		_ = os.Remove(path)
-		return "", copyErr
-	}
-	if closeErr != nil {
-		_ = os.Remove(path)
-		return "", closeErr
-	}
-	if n > int64(maxBytes) {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("downloaded Slack image exceeds max_bytes %d", maxBytes)
-	}
-	return path, nil
-}
-
 func (c liveClient) threadMessageFiles(ctx context.Context, message slackapi.Message, maxBytes int) ([]SlackFile, error) {
+	_, _ = ctx, maxBytes
 	files := make([]SlackFile, 0, len(message.Files))
 	for _, file := range message.Files {
 		out := SlackFile{
@@ -660,47 +573,9 @@ func (c liveClient) threadMessageFiles(ctx context.Context, message slackapi.Mes
 			Height:    file.OriginalH,
 			Size:      file.Size,
 		}
-		if isSlackImageFile(file) {
-			url := firstNonEmpty(file.URLPrivateDownload, file.URLPrivate)
-			if url != "" {
-				path, err := c.downloadFileToTemp(ctx, file, url, maxBytes)
-				if err != nil {
-					return nil, err
-				}
-				out.FilePath = path
-			}
-		}
 		files = append(files, out)
 	}
 	return files, nil
-}
-
-func isSlackImageFile(file slackapi.File) bool {
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(file.Mimetype)), "image/") {
-		return true
-	}
-	switch strings.ToLower(strings.TrimSpace(file.Filetype)) {
-	case "jpg", "jpeg", "png", "gif", "webp":
-		return true
-	default:
-		return false
-	}
-}
-
-func imageExtension(file slackapi.File) string {
-	if ext := filepath.Ext(strings.TrimSpace(file.Name)); ext != "" {
-		return ext
-	}
-	switch strings.ToLower(strings.TrimSpace(file.Mimetype)) {
-	case "image/png":
-		return ".png"
-	case "image/gif":
-		return ".gif"
-	case "image/webp":
-		return ".webp"
-	default:
-		return ".jpg"
-	}
 }
 
 func userFromAPI(user slackapi.User) User {

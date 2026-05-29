@@ -7,15 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/fluxplane/fluxplane-dex/core"
@@ -25,8 +20,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 type Service struct {
@@ -273,7 +266,7 @@ type DeploymentShowResult struct {
 type InventorySearchResult = pluginbinding.DatasourceSearchResult[pluginbinding.DatasourceRecord]
 
 func (s Service) ClusterList(ctx pluginbinding.Context, input ClusterListInput) (ClusterListResult, error) {
-	result, err := s.contexts()()
+	result, err := s.contexts(ctx)()
 	if err != nil {
 		return ClusterListResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
@@ -281,7 +274,7 @@ func (s Service) ClusterList(ctx pluginbinding.Context, input ClusterListInput) 
 }
 
 func (s Service) ClusterTest(ctx pluginbinding.Context, input ClusterTestInput) (ClusterTestResult, error) {
-	result, err := s.clusterProbe()(context.Background(), input)
+	result, err := s.clusterProbe(ctx)(context.Background(), input)
 	if err != nil {
 		return ClusterTestResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
@@ -289,7 +282,7 @@ func (s Service) ClusterTest(ctx pluginbinding.Context, input ClusterTestInput) 
 }
 
 func (s Service) NamespaceList(ctx pluginbinding.Context, input InventoryInput) (NamespaceListResult, error) {
-	items, err := s.namespaces()(context.Background(), input)
+	items, err := s.namespaces(ctx)(context.Background(), input)
 	if err != nil {
 		return NamespaceListResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
@@ -300,7 +293,7 @@ func (s Service) NamespaceList(ctx pluginbinding.Context, input InventoryInput) 
 }
 
 func (s Service) ServiceList(ctx pluginbinding.Context, input InventoryInput) (ServiceListResult, error) {
-	items, err := s.services()(context.Background(), endpointInputFromInventory(input))
+	items, err := s.services(ctx)(context.Background(), endpointInputFromInventory(input))
 	if err != nil {
 		return ServiceListResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
@@ -312,7 +305,7 @@ func (s Service) ServiceList(ctx pluginbinding.Context, input InventoryInput) (S
 
 func (s Service) ServiceShow(ctx pluginbinding.Context, input InventoryInput) (ServiceShowResult, error) {
 	input = normalizeInventoryInput(input)
-	items, err := s.services()(context.Background(), endpointInputFromInventory(input))
+	items, err := s.services(ctx)(context.Background(), endpointInputFromInventory(input))
 	if err != nil {
 		return ServiceShowResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
@@ -326,7 +319,7 @@ func (s Service) ServiceShow(ctx pluginbinding.Context, input InventoryInput) (S
 }
 
 func (s Service) PodList(ctx pluginbinding.Context, input InventoryInput) (PodListResult, error) {
-	items, err := s.pods()(context.Background(), input)
+	items, err := s.pods(ctx)(context.Background(), input)
 	if err != nil {
 		return PodListResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
@@ -338,7 +331,7 @@ func (s Service) PodList(ctx pluginbinding.Context, input InventoryInput) (PodLi
 
 func (s Service) PodShow(ctx pluginbinding.Context, input InventoryInput) (PodShowResult, error) {
 	input = normalizeInventoryInput(input)
-	items, err := s.pods()(context.Background(), input)
+	items, err := s.pods(ctx)(context.Background(), input)
 	if err != nil {
 		return PodShowResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
@@ -352,7 +345,7 @@ func (s Service) PodShow(ctx pluginbinding.Context, input InventoryInput) (PodSh
 }
 
 func (s Service) DeploymentList(ctx pluginbinding.Context, input InventoryInput) (DeploymentListResult, error) {
-	items, err := s.deployments()(context.Background(), input)
+	items, err := s.deployments(ctx)(context.Background(), input)
 	if err != nil {
 		return DeploymentListResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
@@ -364,7 +357,7 @@ func (s Service) DeploymentList(ctx pluginbinding.Context, input InventoryInput)
 
 func (s Service) DeploymentShow(ctx pluginbinding.Context, input InventoryInput) (DeploymentShowResult, error) {
 	input = normalizeInventoryInput(input)
-	items, err := s.deployments()(context.Background(), input)
+	items, err := s.deployments(ctx)(context.Background(), input)
 	if err != nil {
 		return DeploymentShowResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
@@ -379,7 +372,7 @@ func (s Service) DeploymentShow(ctx pluginbinding.Context, input InventoryInput)
 
 func (s Service) PodLogs(ctx pluginbinding.Context, input PodLogsInput) (PodLogsResult, error) {
 	input = normalizePodLogsInput(input)
-	result, err := s.logs()(context.Background(), input)
+	result, err := s.logs(ctx)(context.Background(), input)
 	if err != nil {
 		return PodLogsResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
@@ -387,7 +380,7 @@ func (s Service) PodLogs(ctx pluginbinding.Context, input PodLogsInput) (PodLogs
 }
 
 func (s Service) PortForwardStart(ctx pluginbinding.Context, input PortForwardStartInput) (PortForwardResult, error) {
-	result, err := s.portForwardStart()(context.Background(), input)
+	result, err := s.portForwardStart(ctx)(context.Background(), input)
 	if err != nil {
 		return PortForwardResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
@@ -395,7 +388,7 @@ func (s Service) PortForwardStart(ctx pluginbinding.Context, input PortForwardSt
 }
 
 func (s Service) PortForwardStop(ctx pluginbinding.Context, input PortForwardStopInput) (PortForwardStopResult, error) {
-	result, err := s.portForwardStop()(context.Background(), input)
+	result, err := s.portForwardStop(ctx)(context.Background(), input)
 	if err != nil {
 		return PortForwardStopResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
@@ -403,7 +396,7 @@ func (s Service) PortForwardStop(ctx pluginbinding.Context, input PortForwardSto
 }
 
 func (s Service) ContainerList(ctx pluginbinding.Context, input InventoryInput) (ContainerListResult, error) {
-	items, err := s.pods()(context.Background(), input)
+	items, err := s.pods(ctx)(context.Background(), input)
 	if err != nil {
 		return ContainerListResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
@@ -415,7 +408,7 @@ func (s Service) ContainerList(ctx pluginbinding.Context, input InventoryInput) 
 
 func (s Service) ContainerShow(ctx pluginbinding.Context, input InventoryInput) (ContainerShowResult, error) {
 	input = normalizeInventoryInput(input)
-	items, err := s.pods()(context.Background(), input)
+	items, err := s.pods(ctx)(context.Background(), input)
 	if err != nil {
 		return ContainerShowResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
@@ -435,10 +428,10 @@ func (s Service) InventorySearch(ctx pluginbinding.Context, input pluginbinding.
 		Query:       input.Query,
 		Limit:       input.Limit,
 	}
-	namespaces, nsErr := s.namespaces()(context.Background(), inventoryInput)
-	services, svcErr := s.services()(context.Background(), endpointInputFromInventory(inventoryInput))
-	pods, podErr := s.pods()(context.Background(), inventoryInput)
-	deployments, deployErr := s.deployments()(context.Background(), inventoryInput)
+	namespaces, nsErr := s.namespaces(ctx)(context.Background(), inventoryInput)
+	services, svcErr := s.services(ctx)(context.Background(), endpointInputFromInventory(inventoryInput))
+	pods, podErr := s.pods(ctx)(context.Background(), inventoryInput)
+	deployments, deployErr := s.deployments(ctx)(context.Background(), inventoryInput)
 	var firstErr error
 	for _, err := range []error{nsErr, svcErr, podErr, deployErr} {
 		if err != nil && firstErr == nil {
@@ -456,26 +449,26 @@ func (s Service) InventorySearch(ctx pluginbinding.Context, input pluginbinding.
 
 func (s Service) EndpointDiscover(ctx pluginbinding.Context, input EndpointDiscoverInput) (EndpointDiscoverResult, error) {
 	if shouldDiscoverKubernetesCluster(input.Product) {
-		result, err := s.contexts()()
+		result, err := s.contexts(ctx)()
 		if err != nil {
 			return EndpointDiscoverResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 		}
 		return EndpointDiscoverResult{Candidates: limitCandidates(clusterEndpointCandidates(result.Contexts, input), input.Limit)}, nil
 	}
-	services, err := s.services()(context.Background(), input)
+	services, err := s.services(ctx)(context.Background(), input)
 	if err != nil {
 		return EndpointDiscoverResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 	}
 	candidates := serviceCandidates(services, input)
 	if shouldDiscoverIngress(input.Product) {
-		ingresses, err := s.ingresses()(context.Background(), input)
+		ingresses, err := s.ingresses(ctx)(context.Background(), input)
 		if err != nil {
 			return EndpointDiscoverResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 		}
 		candidates = append(candidates, ingressCandidates(ingresses, input)...)
 	}
 	if shouldDiscoverSQLSecret(input.Product) || shouldDiscoverGrafanaCredential(input.Product) {
-		secrets, err := s.secrets()(context.Background(), input)
+		secrets, err := s.secrets(ctx)(context.Background(), input)
 		if err != nil {
 			return EndpointDiscoverResult{}, pluginbinding.Errorf("kubernetes", "%s", err)
 		}
@@ -505,236 +498,126 @@ func (s Service) DiscoverEndpointsCommand(ctx pluginbinding.Context) protocol.Re
 	return protocol.OK(result)
 }
 
-func (s Service) contexts() func() (ClusterListResult, error) {
+func (s Service) contexts(ctx pluginbinding.Context) func() (ClusterListResult, error) {
 	if s.Contexts != nil {
 		return s.Contexts
 	}
-	return loadKubeconfigContexts
+	return func() (ClusterListResult, error) {
+		return providerCall[ClusterListResult](ctx, "contexts", ClusterListInput{})
+	}
 }
 
-func (s Service) clusterProbe() func(context.Context, ClusterTestInput) (ClusterTestResult, error) {
+func (s Service) clusterProbe(ctx pluginbinding.Context) func(context.Context, ClusterTestInput) (ClusterTestResult, error) {
 	if s.ClusterProbe != nil {
 		return s.ClusterProbe
 	}
-	return probeKubernetesCluster
+	return func(_ context.Context, input ClusterTestInput) (ClusterTestResult, error) {
+		return providerCall[ClusterTestResult](ctx, "cluster.probe", input)
+	}
 }
 
-func (s Service) namespaces() func(context.Context, InventoryInput) ([]corev1.Namespace, error) {
+func (s Service) namespaces(ctx pluginbinding.Context) func(context.Context, InventoryInput) ([]corev1.Namespace, error) {
 	if s.Namespaces != nil {
 		return s.Namespaces
 	}
-	return listKubernetesNamespaces
+	return func(_ context.Context, input InventoryInput) ([]corev1.Namespace, error) {
+		return providerCall[[]corev1.Namespace](ctx, "namespaces", input)
+	}
 }
 
-func (s Service) services() func(context.Context, EndpointDiscoverInput) ([]corev1.Service, error) {
+func (s Service) services(ctx pluginbinding.Context) func(context.Context, EndpointDiscoverInput) ([]corev1.Service, error) {
 	if s.Services != nil {
 		return s.Services
 	}
-	return listKubernetesServices
+	return func(_ context.Context, input EndpointDiscoverInput) ([]corev1.Service, error) {
+		return providerCall[[]corev1.Service](ctx, "services", input)
+	}
 }
 
-func (s Service) ingresses() func(context.Context, EndpointDiscoverInput) ([]networkingv1.Ingress, error) {
+func (s Service) ingresses(ctx pluginbinding.Context) func(context.Context, EndpointDiscoverInput) ([]networkingv1.Ingress, error) {
 	if s.Ingresses != nil {
 		return s.Ingresses
 	}
-	return listKubernetesIngresses
+	return func(_ context.Context, input EndpointDiscoverInput) ([]networkingv1.Ingress, error) {
+		return providerCall[[]networkingv1.Ingress](ctx, "ingresses", input)
+	}
 }
 
-func (s Service) pods() func(context.Context, InventoryInput) ([]corev1.Pod, error) {
+func (s Service) pods(ctx pluginbinding.Context) func(context.Context, InventoryInput) ([]corev1.Pod, error) {
 	if s.Pods != nil {
 		return s.Pods
 	}
-	return listKubernetesPods
+	return func(_ context.Context, input InventoryInput) ([]corev1.Pod, error) {
+		return providerCall[[]corev1.Pod](ctx, "pods", input)
+	}
 }
 
-func (s Service) deployments() func(context.Context, InventoryInput) ([]appsv1.Deployment, error) {
+func (s Service) deployments(ctx pluginbinding.Context) func(context.Context, InventoryInput) ([]appsv1.Deployment, error) {
 	if s.Deployments != nil {
 		return s.Deployments
 	}
-	return listKubernetesDeployments
+	return func(_ context.Context, input InventoryInput) ([]appsv1.Deployment, error) {
+		return providerCall[[]appsv1.Deployment](ctx, "deployments", input)
+	}
 }
 
-func (s Service) logs() func(context.Context, PodLogsInput) (PodLogsResult, error) {
+func (s Service) logs(ctx pluginbinding.Context) func(context.Context, PodLogsInput) (PodLogsResult, error) {
 	if s.Logs != nil {
 		return s.Logs
 	}
-	return readKubernetesPodLogs
+	return func(_ context.Context, input PodLogsInput) (PodLogsResult, error) {
+		return providerCall[PodLogsResult](ctx, "pod.logs", input)
+	}
 }
 
-func (s Service) portForwardStart() func(context.Context, PortForwardStartInput) (PortForwardResult, error) {
+func (s Service) portForwardStart(ctx pluginbinding.Context) func(context.Context, PortForwardStartInput) (PortForwardResult, error) {
 	if s.ForwardStart != nil {
 		return s.ForwardStart
 	}
-	return startKubernetesPortForward
+	return func(_ context.Context, input PortForwardStartInput) (PortForwardResult, error) {
+		return providerCall[PortForwardResult](ctx, "portforward.start", input)
+	}
 }
 
-func (s Service) portForwardStop() func(context.Context, PortForwardStopInput) (PortForwardStopResult, error) {
+func (s Service) portForwardStop(ctx pluginbinding.Context) func(context.Context, PortForwardStopInput) (PortForwardStopResult, error) {
 	if s.ForwardStop != nil {
 		return s.ForwardStop
 	}
-	return stopKubernetesPortForward
+	return func(_ context.Context, input PortForwardStopInput) (PortForwardStopResult, error) {
+		return providerCall[PortForwardStopResult](ctx, "portforward.stop", input)
+	}
 }
 
-func (s Service) secrets() func(context.Context, EndpointDiscoverInput) ([]corev1.Secret, error) {
+func (s Service) secrets(ctx pluginbinding.Context) func(context.Context, EndpointDiscoverInput) ([]corev1.Secret, error) {
 	if s.Secrets != nil {
 		return s.Secrets
 	}
-	return listKubernetesSecrets
+	return func(_ context.Context, input EndpointDiscoverInput) ([]corev1.Secret, error) {
+		return providerCall[[]corev1.Secret](ctx, "secrets", input)
+	}
 }
 
-func loadKubeconfigContexts() (ClusterListResult, error) {
-	config, err := clientcmd.NewDefaultClientConfigLoadingRules().Load()
+func providerCall[T any](ctx pluginbinding.Context, action string, input any) (T, error) {
+	var out T
+	payload, err := json.Marshal(input)
 	if err != nil {
-		return ClusterListResult{}, err
+		return out, err
 	}
-	current := strings.TrimSpace(config.CurrentContext)
-	contexts := make([]ClusterContext, 0, len(config.Contexts))
-	for name, ctx := range config.Contexts {
-		contexts = append(contexts, ClusterContext{Name: name, Current: name == current, Cluster: ctx.Cluster, User: ctx.AuthInfo})
-	}
-	sort.Slice(contexts, func(i, j int) bool { return contexts[i].Name < contexts[j].Name })
-	return ClusterListResult{Contexts: contexts}, nil
-}
-
-func probeKubernetesCluster(ctx context.Context, input ClusterTestInput) (ClusterTestResult, error) {
-	contextName := clusterContextFromTestInput(input)
-	start := time.Now()
-	clientset, _, err := kubernetesClientWithTimeout(EndpointDiscoverInput{Context: contextName}, 10*time.Second)
-	if err != nil {
-		return ClusterTestResult{}, err
-	}
-	version, err := clientset.Discovery().ServerVersion()
-	if err != nil {
-		return ClusterTestResult{}, err
-	}
-	out := ClusterTestResult{Context: contextName, OK: true, DurationMS: time.Since(start).Milliseconds()}
-	if version != nil {
-		out.ServerVersion = version.GitVersion
-		out.Platform = version.Platform
-	}
-	return out, nil
-}
-
-func listKubernetesNamespaces(ctx context.Context, input InventoryInput) ([]corev1.Namespace, error) {
-	clientset, _, err := kubernetesClient(endpointInputFromInventory(input))
-	if err != nil {
-		return nil, err
-	}
-	list, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
-	return list.Items, nil
-}
-
-func listKubernetesServices(ctx context.Context, input EndpointDiscoverInput) ([]corev1.Service, error) {
-	clientset, namespace, err := kubernetesClient(input)
-	if err != nil {
-		return nil, err
-	}
-	list, err := clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
-	return list.Items, nil
-}
-
-func listKubernetesIngresses(ctx context.Context, input EndpointDiscoverInput) ([]networkingv1.Ingress, error) {
-	clientset, namespace, err := kubernetesClient(input)
-	if err != nil {
-		return nil, err
-	}
-	list, err := clientset.NetworkingV1().Ingresses(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
-	return list.Items, nil
-}
-
-func listKubernetesPods(ctx context.Context, input InventoryInput) ([]corev1.Pod, error) {
-	clientset, namespace, err := kubernetesClient(endpointInputFromInventory(input))
-	if err != nil {
-		return nil, err
-	}
-	list, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
-	return list.Items, nil
-}
-
-func listKubernetesDeployments(ctx context.Context, input InventoryInput) ([]appsv1.Deployment, error) {
-	clientset, namespace, err := kubernetesClient(endpointInputFromInventory(input))
-	if err != nil {
-		return nil, err
-	}
-	list, err := clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
-	return list.Items, nil
-}
-
-func readKubernetesPodLogs(ctx context.Context, input PodLogsInput) (PodLogsResult, error) {
-	namespace := strings.TrimSpace(input.Namespace)
-	name := strings.TrimSpace(input.Name)
-	if namespace == "" {
-		return PodLogsResult{}, fmt.Errorf("namespace is required")
-	}
-	if name == "" {
-		return PodLogsResult{}, fmt.Errorf("name is required")
-	}
-	bounds, err := podLogBounds(input)
-	if err != nil {
-		return PodLogsResult{}, err
-	}
-	clientset, _, err := kubernetesClient(EndpointDiscoverInput{
-		Context:   firstNonEmpty(input.Context, clusterContextFromEndpointURL(input.URL)),
-		Namespace: namespace,
+	response, err := ctx.Host.CapabilityCall(pluginbinding.ProviderCallRequest{
+		Provider: PluginName,
+		Action:   action,
+		Payload:  payload,
 	})
 	if err != nil {
-		return PodLogsResult{}, err
+		return out, err
 	}
-	options := &corev1.PodLogOptions{
-		Container:  strings.TrimSpace(input.Container),
-		Previous:   input.Previous,
-		Timestamps: input.Timestamps || bounds.Until != nil,
+	if len(response.Result) == 0 {
+		return out, nil
 	}
-	if bounds.TailLines != nil {
-		options.TailLines = bounds.TailLines
+	if err := json.Unmarshal(response.Result, &out); err != nil {
+		return out, err
 	}
-	if bounds.LimitBytes != nil {
-		options.LimitBytes = bounds.LimitBytes
-	}
-	if bounds.SinceSeconds != nil {
-		options.SinceSeconds = bounds.SinceSeconds
-	}
-	if bounds.SinceTime != nil {
-		options.SinceTime = bounds.SinceTime
-	}
-	raw, err := clientset.CoreV1().Pods(namespace).GetLogs(name, options).DoRaw(ctx)
-	if err != nil {
-		return PodLogsResult{}, err
-	}
-	text := filterPodLogText(strings.TrimRight(string(raw), "\n"), bounds, input.Timestamps)
-	var lines []string
-	if text != "" {
-		lines = strings.Split(text, "\n")
-	}
-	return PodLogsResult{
-		Namespace:  namespace,
-		Name:       name,
-		Container:  strings.TrimSpace(input.Container),
-		Lines:      lines,
-		Text:       text,
-		LineCount:  len(lines),
-		TailLines:  valueOrZero(bounds.TailLines),
-		LimitBytes: valueOrZero(bounds.LimitBytes),
-		Since:      strings.TrimSpace(input.Since),
-		Until:      strings.TrimSpace(input.Until),
-		Previous:   input.Previous,
-		Timestamps: input.Timestamps,
-	}, nil
+	return out, nil
 }
 
 type podLogBoundOptions struct {
@@ -826,175 +709,6 @@ func valueOrZero(value *int64) int64 {
 	return *value
 }
 
-func listKubernetesSecrets(ctx context.Context, input EndpointDiscoverInput) ([]corev1.Secret, error) {
-	clientset, namespace, err := kubernetesClient(input)
-	if err != nil {
-		return nil, err
-	}
-	list, err := clientset.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
-	return list.Items, nil
-}
-
-func startKubernetesPortForward(ctx context.Context, input PortForwardStartInput) (PortForwardResult, error) {
-	namespace := strings.TrimSpace(input.Namespace)
-	if namespace == "" {
-		return PortForwardResult{}, fmt.Errorf("namespace is required")
-	}
-	resource := normalizedPortForwardResource(input)
-	if resource == "" {
-		return PortForwardResult{}, fmt.Errorf("resource or name is required")
-	}
-	remotePort := input.RemotePort
-	if remotePort <= 0 {
-		return PortForwardResult{}, fmt.Errorf("remote_port is required")
-	}
-	localPort := input.LocalPort
-	if localPort <= 0 {
-		port, err := availableLocalPort()
-		if err != nil {
-			return PortForwardResult{}, err
-		}
-		localPort = port
-	}
-	address := strings.TrimSpace(input.Address)
-	if address == "" {
-		address = "127.0.0.1"
-	}
-	duration := input.DurationSeconds
-	if duration <= 0 {
-		duration = 3600
-	}
-	if duration > 8*3600 {
-		duration = 8 * 3600
-	}
-	contextName := firstNonEmpty(input.Context, clusterContextFromEndpointURL(input.URL))
-	id := portForwardID(namespace, resource, localPort, remotePort)
-	dir, err := portForwardStateDir()
-	if err != nil {
-		return PortForwardResult{}, err
-	}
-	logPath := filepath.Join(dir, id+".log")
-	recordPath := filepath.Join(dir, id+".json")
-	portArg := strconv.Itoa(localPort) + ":" + strconv.Itoa(remotePort)
-	args := []string{}
-	if contextName != "" {
-		args = append(args, "--context", contextName)
-	}
-	args = append(args, "-n", namespace, "port-forward", resource, portArg, "--address", address)
-	shell := "kubectl " + shellJoin(args) + " >>" + shellQuote(logPath) + " 2>&1 & child=$!; (sleep " + strconv.Itoa(duration) + "; kill $child >/dev/null 2>&1) & wait $child"
-	cmd := exec.CommandContext(ctx, "sh", "-c", shell)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		return PortForwardResult{}, err
-	}
-	if err := waitForPortForward(address, localPort, cmd.Process.Pid, logPath); err != nil {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-		return PortForwardResult{}, err
-	}
-	result := PortForwardResult{
-		ID:              id,
-		EndpointRef:     strings.TrimSpace(input.EndpointRef),
-		Context:         contextName,
-		Namespace:       namespace,
-		Resource:        resource,
-		Address:         address,
-		LocalPort:       localPort,
-		RemotePort:      remotePort,
-		LocalURL:        "http://" + net.JoinHostPort(address, strconv.Itoa(localPort)),
-		PID:             cmd.Process.Pid,
-		ProcessGroup:    cmd.Process.Pid,
-		DurationSeconds: duration,
-		ExpiresAt:       time.Now().UTC().Add(time.Duration(duration) * time.Second),
-		LogPath:         logPath,
-		Command:         append([]string{"kubectl"}, args...),
-	}
-	if err := writePortForwardRecord(recordPath, result); err != nil {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-		return PortForwardResult{}, err
-	}
-	return result, nil
-}
-
-func waitForPortForward(address string, port, pid int, logPath string) error {
-	host := strings.TrimSpace(address)
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
-	target := net.JoinHostPort(host, strconv.Itoa(port))
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", target, 100*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			return nil
-		}
-		if processExited(pid) {
-			return fmt.Errorf("kubectl port-forward exited before %s became reachable: %s", target, tailFile(logPath, 2048))
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return fmt.Errorf("kubectl port-forward did not become reachable at %s: %s", target, tailFile(logPath, 2048))
-}
-
-func processExited(pid int) bool {
-	if pid <= 0 {
-		return true
-	}
-	err := syscall.Kill(pid, 0)
-	return errors.Is(err, syscall.ESRCH)
-}
-
-func tailFile(path string, max int) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	if max > 0 && len(data) > max {
-		data = data[len(data)-max:]
-	}
-	return strings.TrimSpace(string(data))
-}
-
-func stopKubernetesPortForward(_ context.Context, input PortForwardStopInput) (PortForwardStopResult, error) {
-	result := PortForwardStopResult{ID: strings.TrimSpace(input.ID)}
-	processGroup := input.ProcessGroup
-	pid := input.PID
-	if result.ID != "" {
-		record, err := readPortForwardRecord(result.ID)
-		if err != nil {
-			return result, err
-		}
-		if processGroup <= 0 {
-			processGroup = record.ProcessGroup
-		}
-		if pid <= 0 {
-			pid = record.PID
-		}
-	}
-	if processGroup > 0 {
-		if err := syscall.Kill(-processGroup, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
-			result.Error = err.Error()
-			return result, err
-		}
-		result.Stopped = true
-		result.Signal = "SIGTERM"
-		return result, nil
-	}
-	if pid > 0 {
-		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-			result.Error = err.Error()
-			return result, err
-		}
-		result.Stopped = true
-		result.Signal = "SIGTERM"
-		return result, nil
-	}
-	return result, fmt.Errorf("id, process_group, or pid is required")
-}
-
 func normalizedPortForwardResource(input PortForwardStartInput) string {
 	resource := strings.TrimSpace(input.Resource)
 	if resource != "" {
@@ -1011,54 +725,9 @@ func normalizedPortForwardResource(input PortForwardStartInput) string {
 	return resourceType + "/" + name
 }
 
-func availableLocalPort() (int, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	defer listener.Close()
-	addr, ok := listener.Addr().(*net.TCPAddr)
-	if !ok {
-		return 0, fmt.Errorf("could not allocate local TCP port")
-	}
-	return addr.Port, nil
-}
-
 func portForwardID(namespace, resource string, localPort, remotePort int) string {
 	sum := sha1.Sum([]byte(namespace + "\x00" + resource + "\x00" + strconv.Itoa(localPort) + "\x00" + strconv.Itoa(remotePort) + "\x00" + strconv.FormatInt(time.Now().UnixNano(), 10)))
 	return "kpf-" + hex.EncodeToString(sum[:6])
-}
-
-func portForwardStateDir() (string, error) {
-	root := filepath.Join(os.TempDir(), "fluxplane-dex", "kubernetes", "portforwards")
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return "", err
-	}
-	return root, nil
-}
-
-func writePortForwardRecord(path string, result PortForwardResult) error {
-	data, err := json.MarshalIndent(result, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o600)
-}
-
-func readPortForwardRecord(id string) (PortForwardResult, error) {
-	dir, err := portForwardStateDir()
-	if err != nil {
-		return PortForwardResult{}, err
-	}
-	data, err := os.ReadFile(filepath.Join(dir, strings.TrimSpace(id)+".json"))
-	if err != nil {
-		return PortForwardResult{}, err
-	}
-	var result PortForwardResult
-	if err := json.Unmarshal(data, &result); err != nil {
-		return PortForwardResult{}, err
-	}
-	return result, nil
 }
 
 func shellJoin(args []string) string {
@@ -1071,34 +740,6 @@ func shellJoin(args []string) string {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
-}
-
-func kubernetesClient(input EndpointDiscoverInput) (*kubernetes.Clientset, string, error) {
-	return kubernetesClientWithTimeout(input, 0)
-}
-
-func kubernetesClientWithTimeout(input EndpointDiscoverInput, timeout time.Duration) (*kubernetes.Clientset, string, error) {
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	overrides := &clientcmd.ConfigOverrides{}
-	if strings.TrimSpace(input.Context) != "" {
-		overrides.CurrentContext = strings.TrimSpace(input.Context)
-	}
-	restConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
-	if err != nil {
-		return nil, "", err
-	}
-	if timeout > 0 {
-		restConfig.Timeout = timeout
-	}
-	clientset, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return nil, "", err
-	}
-	namespace := strings.TrimSpace(input.Namespace)
-	if namespace == "" {
-		namespace = metav1.NamespaceAll
-	}
-	return clientset, namespace, nil
 }
 
 func shouldDiscoverKubernetesCluster(product string) bool {

@@ -8,17 +8,14 @@ import (
 
 const (
 	PluginName        = "jira"
-	PluginVersion     = "0.9.0"
+	PluginVersion     = "0.10.0"
 	PluginDescription = "Jira Cloud issue operations, comments, attachments, transitions, datasources, indexes, and reverse lookups."
 
 	AuthMethodAtlassianCloud = "atlassian_cloud_basic"
 	AuthPurposeAPIToken      = "api_token"
-	AuthPurposeCloudID       = "cloud_id"
 
 	EnvAtlassianAPIToken = "ATLASSIAN_API_TOKEN"
-	EnvAtlassianCloudID  = "ATLASSIAN_CLOUD_ID"
 	EnvJiraAPIToken      = "JIRA_API_TOKEN"
-	EnvJiraCloudID       = "JIRA_CLOUD_ID"
 
 	OperationAuthTest         = "jira.auth.test"
 	OperationIndexBuild       = "jira.index.build"
@@ -61,11 +58,10 @@ func manifestSpec() pluginbinding.ManifestSpec {
 		Auth: []core.AuthMethod{{
 			Name:        AuthMethodAtlassianCloud,
 			Kind:        "bearer_token",
-			Description: "Atlassian Cloud API token and cloud ID resolved by dex secret broker.",
-			Env:         []string{EnvJiraAPIToken, EnvAtlassianAPIToken, EnvJiraCloudID, EnvAtlassianCloudID},
+			Description: "Atlassian Cloud API token resolved by the host for endpoint-ref HTTP calls.",
+			Env:         []string{EnvJiraAPIToken, EnvAtlassianAPIToken},
 			Fields: []core.AuthField{
 				pluginbinding.AuthField(AuthPurposeAPIToken, "Atlassian API token", true, true, EnvJiraAPIToken, EnvAtlassianAPIToken),
-				pluginbinding.AuthField(AuthPurposeCloudID, "Atlassian Cloud ID", true, false, EnvJiraCloudID, EnvAtlassianCloudID),
 			},
 		}},
 		Operations: operationSpecs(),
@@ -111,7 +107,7 @@ func operationSpecs() []core.OperationSpec {
 }
 
 func authTestSpec() core.OperationSpec {
-	return jiraReadOperation[NoInput, AuthTestResult](OperationAuthTest, "Test Jira authentication by fetching the current user.")
+	return jiraReadOperation[AuthTestInput, AuthTestResult](OperationAuthTest, "Test Jira authentication by fetching the current user.")
 }
 
 func indexBuildSpec() core.OperationSpec {
@@ -296,5 +292,5 @@ func jiraUsersLookupSpec() core.DatasourceSpec {
 }
 
 func atlassianAuthPurposes() []string {
-	return []string{AuthPurposeAPIToken, AuthPurposeCloudID}
+	return []string{AuthPurposeAPIToken}
 }

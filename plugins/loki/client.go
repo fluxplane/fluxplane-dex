@@ -4,18 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 )
 
 type Client struct {
-	BaseURL    string
-	TenantID   string
-	HTTPClient *http.Client
+	EndpointRef string
+	Host        pluginbinding.HostClient
 }
 
 type lokiResponse struct {
@@ -30,31 +29,30 @@ type lokiResponse struct {
 }
 
 func (c Client) get(ctx context.Context, path string, values url.Values, out any) error {
-	endpoint := strings.TrimRight(c.BaseURL, "/") + path
-	if len(values) > 0 {
-		endpoint += "?" + values.Encode()
+	_ = ctx
+	endpointRef := strings.TrimSpace(c.EndpointRef)
+	if endpointRef == "" {
+		return fmt.Errorf("loki endpoint_ref is required")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	resp, err := c.Host.HTTP(pluginbinding.HTTPRequest{
+		EndpointRef: endpointRef,
+		Path:        path,
+		Query:       map[string][]string(values),
+		Method:      "GET",
+		Auth: &pluginbinding.HTTPAuthRequest{
+			HeaderPurposes: map[string]string{"X-Scope-OrgID": AuthPurposeTenantID},
+		},
+		TimeoutMS: 30000,
+		MaxBytes:  32 * 1024 * 1024,
+		UserAgent: "fluxplane-dex/0.1",
+	})
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(c.TenantID) != "" {
-		req.Header.Set("X-Scope-OrgID", strings.TrimSpace(c.TenantID))
-	}
-	client := c.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("loki returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("loki returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(resp.Body)))
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return json.Unmarshal(resp.Body, out)
 }
 
 func (c Client) ready(ctx context.Context) error {
@@ -62,23 +60,21 @@ func (c Client) ready(ctx context.Context) error {
 	if err := c.get(ctx, "/ready", nil, &out); err == nil {
 		return nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.BaseURL, "/")+"/ready", nil)
+	resp, err := c.Host.HTTP(pluginbinding.HTTPRequest{
+		EndpointRef: c.EndpointRef,
+		Path:        "/ready",
+		Method:      "GET",
+		Auth: &pluginbinding.HTTPAuthRequest{
+			HeaderPurposes: map[string]string{"X-Scope-OrgID": AuthPurposeTenantID},
+		},
+		TimeoutMS: 5000,
+		MaxBytes:  64 * 1024,
+		UserAgent: "fluxplane-dex/0.1",
+	})
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(c.TenantID) != "" {
-		req.Header.Set("X-Scope-OrgID", strings.TrimSpace(c.TenantID))
-	}
-	client := c.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 5 * time.Second}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != 200 {
 		return fmt.Errorf("loki not ready, status %d", resp.StatusCode)
 	}
 	return nil

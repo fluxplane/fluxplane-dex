@@ -61,7 +61,8 @@ func (s State) SaveEndpoint(ref core.EndpointRef) (EndpointRecord, error) {
 	if ref.URL == "" {
 		return EndpointRecord{}, fmt.Errorf("endpoint url is required")
 	}
-	if parsed, err := url.Parse(ref.URL); err != nil || parsed.Scheme == "" || parsed.Host == "" {
+	parsed, err := url.Parse(ref.URL)
+	if err != nil || parsed.Scheme == "" || (parsed.Host == "" && !endpointURLAllowsEmptyHost(parsed.Scheme)) {
 		return EndpointRecord{}, fmt.Errorf("invalid endpoint url %q", ref.URL)
 	}
 	registry, err := s.LoadEndpoints()
@@ -86,6 +87,15 @@ func (s State) SaveEndpoint(ref core.EndpointRef) (EndpointRecord, error) {
 		return EndpointRecord{}, err
 	}
 	return record, nil
+}
+
+func endpointURLAllowsEmptyHost(scheme string) bool {
+	switch strings.ToLower(strings.TrimSpace(scheme)) {
+	case "file", "sqlite", "sqlite3":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s State) SaveEndpointHealth(id string, health EndpointHealth) (EndpointRecord, error) {

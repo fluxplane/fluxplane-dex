@@ -3,11 +3,14 @@ package grafana
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/fluxplane/fluxplane-dex/core"
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding/plugintest"
 )
 
@@ -25,8 +28,9 @@ func TestDatasourceListDerivesClusterAliases(t *testing.T) {
 	}))
 	defer server.Close()
 	plugin := NewPluginWithService(NewService())
+	host := newGrafanaTestHost(server.URL, "")
 
-	out := plugintest.RunOK[DatasourceListResult](t, plugin, OperationDatasourceList, map[string]any{"url": server.URL})
+	out := plugintest.RunOK[DatasourceListResult](t, plugin, OperationDatasourceList, map[string]any{"endpoint_ref": "grafana-dev"}, plugintest.WithHost(host))
 	if out.Count != 4 {
 		t.Fatalf("count = %d", out.Count)
 	}
@@ -55,8 +59,9 @@ func TestLokiLabelsUsesClusterUIDAndBearerAuth(t *testing.T) {
 	}))
 	defer server.Close()
 	plugin := NewPluginWithService(NewService())
+	host := newGrafanaTestHost(server.URL, "glsa_test")
 
-	out := plugintest.RunOK[LabelsResult](t, plugin, OperationLokiLabels, map[string]any{"url": server.URL, "token": "glsa_test", "credential_ref": "unsupported://monitoring/secrets/grafana-admin-creds", "cluster": "alpha"})
+	out := plugintest.RunOK[LabelsResult](t, plugin, OperationLokiLabels, map[string]any{"endpoint_ref": "grafana-dev", "cluster": "alpha"}, plugintest.WithHost(host))
 	if out.UID != "loki-alpha-east" || len(out.Values) != 3 {
 		t.Fatalf("result = %#v", out)
 	}
@@ -87,8 +92,9 @@ func TestDashboardGetExtractsPanelQueries(t *testing.T) {
 	}))
 	defer server.Close()
 	plugin := NewPluginWithService(NewService())
+	host := newGrafanaTestHost(server.URL, "")
 
-	out := plugintest.RunOK[DashboardGetResult](t, plugin, OperationDashboardGet, map[string]any{"url": server.URL, "uid": "dash-1"})
+	out := plugintest.RunOK[DashboardGetResult](t, plugin, OperationDashboardGet, map[string]any{"endpoint_ref": "grafana-dev", "uid": "dash-1"}, plugintest.WithHost(host))
 	if out.Title != "Runtime" || len(out.Queries) != 2 {
 		t.Fatalf("result = %#v", out)
 	}
@@ -110,8 +116,9 @@ func TestLokiQueryNormalizesLogEntries(t *testing.T) {
 	}))
 	defer server.Close()
 	plugin := NewPluginWithService(NewService())
+	host := newGrafanaTestHost(server.URL, "")
 
-	out := plugintest.RunOK[LokiQueryResult](t, plugin, OperationLokiQuery, map[string]any{"url": server.URL, "cluster": "alpha", "query": `{namespace="latest"}`, "limit": 2})
+	out := plugintest.RunOK[LokiQueryResult](t, plugin, OperationLokiQuery, map[string]any{"endpoint_ref": "grafana-dev", "cluster": "alpha", "query": `{namespace="latest"}`, "limit": 2}, plugintest.WithHost(host))
 	if out.Count != 2 || out.Limit != 2 || out.NormalizedQuery != `{namespace="latest"}` || len(out.Raw) == 0 {
 		t.Fatalf("result = %#v", out)
 	}
@@ -136,8 +143,9 @@ func TestDatasourceHealthFallsBackForAlertmanager(t *testing.T) {
 	}))
 	defer server.Close()
 	plugin := NewPluginWithService(NewService())
+	host := newGrafanaTestHost(server.URL, "")
 
-	out := plugintest.RunOK[ProxyQueryResult](t, plugin, OperationDatasourceHealth, map[string]any{"url": server.URL, "uid": "alertmanager-alpha"})
+	out := plugintest.RunOK[ProxyQueryResult](t, plugin, OperationDatasourceHealth, map[string]any{"endpoint_ref": "grafana-dev", "uid": "alertmanager-alpha"}, plugintest.WithHost(host))
 	if out.UID != "alertmanager-alpha" || !strings.Contains(string(out.Data), "alertmanager_status") {
 		t.Fatalf("result = %#v", out)
 	}
@@ -159,8 +167,9 @@ func TestDatasourceHealthReturnsAlertmanagerProxyError(t *testing.T) {
 	}))
 	defer server.Close()
 	plugin := NewPluginWithService(NewService())
+	host := newGrafanaTestHost(server.URL, "")
 
-	out := plugintest.RunOK[ProxyQueryResult](t, plugin, OperationDatasourceHealth, map[string]any{"url": server.URL, "uid": "alertmanager-alpha"})
+	out := plugintest.RunOK[ProxyQueryResult](t, plugin, OperationDatasourceHealth, map[string]any{"endpoint_ref": "grafana-dev", "uid": "alertmanager-alpha"}, plugintest.WithHost(host))
 	if out.UID != "alertmanager-alpha" || !strings.Contains(string(out.Data), `"status":"error"`) || !strings.Contains(string(out.Data), "alertmanager_status") {
 		t.Fatalf("result = %#v", out)
 	}
@@ -178,7 +187,7 @@ func TestManifestIncludesExpectedOperations(t *testing.T) {
 		}
 	}
 	for _, operation := range manifest.Operations {
-		if !containsString(operation.SecretPurposes, AuthPurposeURL) || !containsString(operation.SecretPurposes, AuthPurposeAPIToken) || !containsString(operation.SecretPurposes, AuthPurposeUsername) || !containsString(operation.SecretPurposes, AuthPurposePassword) {
+		if !containsString(operation.SecretPurposes, AuthPurposeAPIToken) || !containsString(operation.SecretPurposes, AuthPurposeUsername) || !containsString(operation.SecretPurposes, AuthPurposePassword) {
 			t.Fatalf("%s secret purposes = %#v", operation.Name, operation.SecretPurposes)
 		}
 	}
@@ -192,7 +201,101 @@ func TestManifestIncludesExpectedOperations(t *testing.T) {
 	if !strings.Contains(raw, "endpoint_ref") || !strings.Contains(raw, "cluster") {
 		t.Fatalf("input schema = %s", raw)
 	}
+	if strings.Contains(raw, "token") || strings.Contains(raw, "password") || strings.Contains(raw, "\"url\"") || strings.Contains(raw, "credential_ref") {
+		t.Fatalf("input schema exposes endpoint secret fields = %s", raw)
+	}
 }
+
+type grafanaTestHost struct {
+	baseURL string
+	token   string
+}
+
+func newGrafanaTestHost(baseURL, token string) *grafanaTestHost {
+	return &grafanaTestHost{baseURL: strings.TrimRight(baseURL, "/"), token: token}
+}
+
+func (h *grafanaTestHost) Secret(purpose string) (pluginbinding.SecretMaterial, error) {
+	if purpose == AuthPurposeAPIToken && h.token != "" {
+		return pluginbinding.SecretMaterial{Purpose: purpose, Value: h.token}, nil
+	}
+	return pluginbinding.SecretMaterial{Purpose: purpose}, nil
+}
+
+func (h *grafanaTestHost) Lookup(pluginbinding.DatasourceLookupInput) (pluginbinding.DatasourceLookupResult[pluginbinding.LookupMatch[any]], error) {
+	return pluginbinding.DatasourceLookupResult[pluginbinding.LookupMatch[any]]{}, nil
+}
+
+func (h *grafanaTestHost) Search(pluginbinding.DatasourceSearchInput) (pluginbinding.DatasourceSearchResult[any], error) {
+	return pluginbinding.DatasourceSearchResult[any]{}, nil
+}
+
+func (h *grafanaTestHost) Get(pluginbinding.DatasourceGetInput) (pluginbinding.DatasourceGetResult[any], error) {
+	return pluginbinding.DatasourceGetResult[any]{}, nil
+}
+
+func (h *grafanaTestHost) ResolveEndpoint(string) (core.EndpointRef, error) {
+	return core.EndpointRef{}, nil
+}
+
+func (h *grafanaTestHost) HTTP(input pluginbinding.HTTPRequest) (pluginbinding.HTTPResponse, error) {
+	endpoint := h.baseURL + "/" + strings.TrimLeft(input.Path, "/")
+	method := input.Method
+	if method == "" {
+		method = "GET"
+	}
+	req, err := http.NewRequest(method, endpoint, bytes.NewReader(input.Body))
+	if err != nil {
+		return pluginbinding.HTTPResponse{}, err
+	}
+	for key, value := range input.Headers {
+		req.Header.Set(key, value)
+	}
+	if input.Auth != nil && input.Auth.BearerTokenPurpose == AuthPurposeAPIToken && h.token != "" {
+		req.Header.Set("Authorization", "Bearer "+h.token)
+	}
+	if len(input.Query) > 0 {
+		query := req.URL.Query()
+		for key, vals := range input.Query {
+			for _, value := range vals {
+				query.Add(key, value)
+			}
+		}
+		req.URL.RawQuery = query.Encode()
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return pluginbinding.HTTPResponse{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return pluginbinding.HTTPResponse{}, err
+	}
+	return pluginbinding.HTTPResponse{URL: endpoint, FinalURL: resp.Request.URL.String(), Status: resp.Status, StatusCode: resp.StatusCode, Headers: resp.Header, Body: body}, nil
+}
+
+func (h *grafanaTestHost) BlobRead(pluginbinding.BlobReadRequest) (pluginbinding.BlobReadResponse, error) {
+	return pluginbinding.BlobReadResponse{}, nil
+}
+
+func (h *grafanaTestHost) BlobWrite(pluginbinding.BlobWriteRequest) (pluginbinding.BlobRef, error) {
+	return pluginbinding.BlobRef{}, nil
+}
+
+func (h *grafanaTestHost) BlobInfo(pluginbinding.BlobInfoRequest) (pluginbinding.BlobRef, error) {
+	return pluginbinding.BlobRef{}, nil
+}
+
+func (h *grafanaTestHost) EnvLookup(string) (pluginbinding.EnvLookupResponse, error) {
+	return pluginbinding.EnvLookupResponse{}, nil
+}
+
+func (h *grafanaTestHost) CapabilityCall(pluginbinding.ProviderCallRequest) (pluginbinding.ProviderCallResponse, error) {
+	return pluginbinding.ProviderCallResponse{}, nil
+}
+
+var _ pluginbinding.HostClient = (*grafanaTestHost)(nil)
 
 func containsString(values []string, candidate string) bool {
 	for _, value := range values {

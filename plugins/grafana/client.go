@@ -1,27 +1,22 @@
 package grafana
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"strings"
-	"time"
+
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 )
 
 type Client struct {
-	BaseURL    string
-	Token      string
-	Username   string
-	Password   string
-	HTTPClient *http.Client
+	EndpointRef string
+	Host        pluginbinding.HostClient
 }
 
 func (c Client) get(ctx context.Context, path string, values url.Values) (json.RawMessage, error) {
-	return c.request(ctx, http.MethodGet, path, values, nil)
+	return c.request(ctx, "GET", path, values, nil)
 }
 
 func (c Client) postJSON(ctx context.Context, path string, values url.Values, body any) (json.RawMessage, error) {
@@ -33,64 +28,49 @@ func (c Client) postJSON(ctx context.Context, path string, values url.Values, bo
 			return nil, err
 		}
 	}
-	return c.request(ctx, http.MethodPost, path, values, payload)
+	return c.request(ctx, "POST", path, values, payload)
 }
 
 func (c Client) delete(ctx context.Context, path string, values url.Values) (json.RawMessage, error) {
-	return c.request(ctx, http.MethodDelete, path, values, nil)
+	return c.request(ctx, "DELETE", path, values, nil)
 }
 
 func (c Client) request(ctx context.Context, method, path string, values url.Values, payload []byte) (json.RawMessage, error) {
-	base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
-	if base == "" {
-		return nil, fmt.Errorf("grafana url is required")
+	_ = ctx
+	endpointRef := strings.TrimSpace(c.EndpointRef)
+	if endpointRef == "" {
+		return nil, fmt.Errorf("grafana endpoint_ref is required")
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	endpoint := base + path
-	if len(values) > 0 {
-		endpoint += "?" + values.Encode()
-	}
-	var requestBody io.Reader
+	headers := map[string]string{}
 	if len(payload) > 0 {
-		requestBody = bytes.NewReader(payload)
+		headers["Content-Type"] = "application/json"
 	}
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, requestBody)
-	if err != nil {
-		return nil, err
-	}
-	if len(payload) > 0 {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	c.authorize(req)
-	client := c.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	resp, err := c.Host.HTTP(pluginbinding.HTTPRequest{
+		EndpointRef: endpointRef,
+		Path:        path,
+		Query:       map[string][]string(values),
+		Method:      method,
+		Headers:     headers,
+		Body:        payload,
+		Auth: &pluginbinding.HTTPAuthRequest{
+			BearerTokenPurpose: AuthPurposeAPIToken,
+			UsernamePurpose:    AuthPurposeUsername,
+			PasswordPurpose:    AuthPurposePassword,
+		},
+		TimeoutMS: 30000,
+		MaxBytes:  32 * 1024 * 1024,
+		UserAgent: "fluxplane-dex/0.1",
+	})
 	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("grafana returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("grafana returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(resp.Body)))
 	}
-	return json.RawMessage(body), nil
-}
-
-func (c Client) authorize(req *http.Request) {
-	if strings.TrimSpace(c.Token) != "" {
-		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(c.Token))
-		return
-	}
-	if strings.TrimSpace(c.Username) != "" || strings.TrimSpace(c.Password) != "" {
-		req.SetBasicAuth(c.Username, c.Password)
-	}
+	return json.RawMessage(resp.Body), nil
 }
 
 func grafanaProxyPath(uid, nativePath string) string {

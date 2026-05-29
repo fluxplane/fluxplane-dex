@@ -12,7 +12,6 @@ import (
 )
 
 type Service struct {
-	SecretGetter  pluginbinding.SecretGetter
 	ClientFactory ClientFactory
 }
 
@@ -21,15 +20,11 @@ func NewService() Service {
 }
 
 func (s Service) client(ctx pluginbinding.Context) (Client, error) {
-	secrets, err := resolveSecrets(ctx)
-	if err != nil {
-		return nil, err
-	}
 	factory := s.ClientFactory
 	if factory == nil {
 		factory = NewLiveClient
 	}
-	return factory(secrets)
+	return factory(ctx)
 }
 
 type NoInput struct{}

@@ -1,4 +1,4 @@
-package docker
+package dockerhost
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	. "github.com/fluxplane/fluxplane-dex/plugins/docker"
 )
 
 func TestDockerE2EContainerImageNetworkVolumeAndCopy(t *testing.T) {
@@ -15,7 +17,7 @@ func TestDockerE2EContainerImageNetworkVolumeAndCopy(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	client, err := NewLiveClient()
+	client, err := NewClient()
 	if err != nil {
 		t.Fatal(err)
 	}

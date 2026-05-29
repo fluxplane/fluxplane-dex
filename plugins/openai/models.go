@@ -1,6 +1,11 @@
 package openai
 
+type OpenAITargetInput struct {
+	EndpointRef string `json:"endpoint_ref,omitempty" jsonschema:"required,description=Registered OpenAI endpoint ref resolved by the host."`
+}
+
 type ImageGenerateInput struct {
+	OpenAITargetInput
 	Prompt            string `json:"prompt,omitempty" jsonschema:"required,description=Text description of the desired image. Max 32000 chars for GPT image models\\, 4000 for dall-e-3\\, 1000 for dall-e-2."`
 	Model             string `json:"model,omitempty" jsonschema:"description=Image model. Known values: gpt-image-1\\, gpt-image-1-mini\\, gpt-image-1.5\\, dall-e-3\\, dall-e-2. Custom values accepted."`
 	N                 int    `json:"n,omitempty" jsonschema:"description=Number of images to generate. dall-e-3 only supports 1.,minimum=1,maximum=10"`
@@ -62,7 +67,9 @@ type responseContent struct {
 	Text string `json:"text,omitempty"`
 }
 
-type ModelListInput struct{}
+type ModelListInput struct {
+	OpenAITargetInput
+}
 
 type Model struct {
 	ID      string `json:"id" jsonschema:"description=Model identifier (e.g. gpt-4o\\, dall-e-3\\, gpt-image-1)."`

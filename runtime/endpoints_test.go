@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -70,7 +71,7 @@ func TestEndpointRegistryStoresHealthAndPreservesOnUpdate(t *testing.T) {
 	}
 }
 
-func TestRunnerResolvesEndpointRefIntoOperationInput(t *testing.T) {
+func TestRunnerValidatesEndpointRefWithoutInjectingOperationInput(t *testing.T) {
 	state, err := NewState(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -85,23 +86,23 @@ func TestRunnerResolvesEndpointRefIntoOperationInput(t *testing.T) {
 	}
 	runner := Runner{State: state}
 	call := protocol.OperationCall{Name: "sql.query", Input: json.RawMessage(`{"endpoint_ref":"mysql-dev","query":"select 1"}`)}
-	changed, err := runner.resolveOperationEndpointRef(&call)
+	changed, err := runner.resolveOperationEndpointRefWithMode(&call, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !changed {
-		t.Fatal("expected endpoint_ref to be resolved")
+	if changed {
+		t.Fatal("endpoint_ref validation should not rewrite operation input")
 	}
 	var input map[string]any
 	if err := json.Unmarshal(call.Input, &input); err != nil {
 		t.Fatal(err)
 	}
-	if input["url"] != "mysql://127.0.0.1:3306/app" || input["credential_ref"] != "kubernetes://apps/secrets/mysql" || input["endpoint_product"] != "mysql" {
+	if input["endpoint_ref"] != "mysql-dev" || input["url"] != nil || input["credential_ref"] != nil || input["endpoint_product"] != nil {
 		t.Fatalf("input = %#v", input)
 	}
 }
 
-func TestRunnerResolvesEndpointRefIntoDatasourcePayload(t *testing.T) {
+func TestRunnerValidatesEndpointRefWithoutInjectingDatasourcePayload(t *testing.T) {
 	state, err := NewState(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +120,7 @@ func TestRunnerResolvesEndpointRefIntoDatasourcePayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.resolveDatasourceEndpointRef(&req); err != nil {
+	if err := runner.resolveDatasourceEndpointRef(context.Background(), "kubernetes", &req); err != nil {
 		t.Fatal(err)
 	}
 	var input map[string]any

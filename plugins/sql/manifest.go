@@ -3,11 +3,12 @@ package sql
 import (
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
+	"github.com/fluxplane/fluxplane-dex/protocol"
 )
 
 const (
 	PluginName        = "sql"
-	PluginVersion     = "0.9.0"
+	PluginVersion     = "0.10.0"
 	PluginDescription = "Read-only SQL query operations for MySQL, PostgreSQL, SQLite, and compatible endpoints."
 
 	AuthMethodSQL        = "sql"
@@ -32,6 +33,7 @@ func manifestSpec() pluginbinding.ManifestSpec {
 		Version:     PluginVersion,
 		Description: PluginDescription,
 		Aliases:     []string{"mysql", PluginName},
+		Metadata:    map[string]string{pluginbinding.ManifestProtocolKey: protocol.Version},
 		Auth: []core.AuthMethod{{
 			Name:        AuthMethodSQL,
 			Kind:        "credentials",
@@ -56,7 +58,7 @@ func querySpec() core.OperationSpec {
 		pluginbinding.ReadOnly(),
 		pluginbinding.SecretPurposes(AuthPurposeUsername, AuthPurposePassword),
 		pluginbinding.Effects(core.OperationEffectRead, core.OperationEffectNetwork),
-		pluginbinding.Access(core.OperationAccessAuth, core.OperationAccessSecret, core.OperationAccessNetwork),
+		pluginbinding.Access(core.OperationAccessAuth, core.OperationAccessSecret, core.OperationAccessProvider),
 		pluginbinding.Risk(core.OperationRiskLow),
 		pluginbinding.Idempotency(core.OperationIdempotent),
 	)

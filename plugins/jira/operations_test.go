@@ -3,15 +3,12 @@ package jira
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding/plugintest"
-	"github.com/fluxplane/fluxplane-dex/internal/atlassian"
 )
 
 func requestJSON(value any) string {
@@ -22,23 +19,22 @@ func requestJSON(value any) string {
 	return string(data)
 }
 
-func TestServiceBuildsClientFromResolvedSecrets(t *testing.T) {
+func TestServiceBuildsClientFromEndpointRef(t *testing.T) {
 	client := &fakeClient{user: User{AccountID: "acct-1", DisplayName: "Ada"}}
-	var captured atlassian.Credentials
+	var capturedEndpointRef string
 	plugin := NewPluginWithService(Service{
-		SecretGetter: testSecretGetter,
-		ClientFactory: func(credentials atlassian.Credentials) (Client, error) {
-			captured = credentials
+		ClientFactory: func(_ pluginbinding.Context, endpointRef string) (Client, error) {
+			capturedEndpointRef = endpointRef
 			return client, nil
 		},
 	})
 
-	out := plugintest.RunOK[AuthTestResult](t, plugin, OperationAuthTest, map[string]any{}, plugintest.WithInstance("work"))
+	out := plugintest.RunOK[AuthTestResult](t, plugin, OperationAuthTest, map[string]any{"endpoint_ref": "jira-dev"}, plugintest.WithInstance("work"))
 	if out.Status != "ok" || out.User.AccountID != "acct-1" {
 		t.Fatalf("auth output = %#v", out)
 	}
-	if captured.Token.Value != "token" || captured.CloudID.Value != "cloud-123" || captured.BaseURL != "https://api.atlassian.com/ex/jira/cloud-123" {
-		t.Fatalf("captured credentials = %#v", captured)
+	if capturedEndpointRef != "jira-dev" {
+		t.Fatalf("endpoint_ref = %q", capturedEndpointRef)
 	}
 }
 
@@ -342,21 +338,25 @@ func TestTransitionRunAutoTransition(t *testing.T) {
 	}
 }
 
-func TestUploadLocalMarkdownImagesRewritesLocalReferences(t *testing.T) {
-	dir := t.TempDir()
-	imagePath := filepath.Join(dir, "diagram.png")
-	if err := os.WriteFile(imagePath, []byte("png-bytes"), 0o600); err != nil {
-		t.Fatalf("write image = %v", err)
+func TestUploadMarkdownBlobImagesRewritesBlobReferences(t *testing.T) {
+	host := &jiraTestHost{blobs: map[string]pluginbinding.BlobReadResponse{
+		"blob://diagram": {
+			Blob:    pluginbinding.BlobRef{Ref: "blob://diagram", Filename: "diagram.png", MediaType: "image/png"},
+			Content: []byte("png-bytes"),
+		},
+	}}
+	ctx := pluginbinding.Context{Host: host}
+	client := &fakeClient{
+		attachmentUploadResult: AttachmentUploadResult{OK: true, IssueKey: "DEX-9", Attachments: []Attachment{{ID: "A1", Filename: "diagram.png", Content: "https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/attachment/content/A1"}}},
 	}
-	client := &fakeClient{attachmentUploadResult: AttachmentUploadResult{OK: true, IssueKey: "DEX-9", Attachments: []Attachment{{ID: "A1", Filename: "diagram.png", Content: "https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/attachment/content/A1"}}}}
 
-	markdown := "See ![architecture](" + imagePath + ") and ![remote](https://example.com/img.png) and titled ![alt](" + imagePath + ` "title text")`
-	rewritten, err := uploadLocalMarkdownImages(context.Background(), client, "DEX-9", markdown)
+	markdown := `See ![architecture](blob://diagram) and ![remote](https://example.com/img.png) and titled ![alt](blob://diagram "title text")`
+	rewritten, err := uploadMarkdownBlobImages(ctx, client, "DEX-9", markdown)
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
-	if strings.Contains(rewritten, imagePath) {
-		t.Fatalf("rewritten still references local path: %s", rewritten)
+	if strings.Contains(rewritten, "blob://diagram") {
+		t.Fatalf("rewritten still references blob: %s", rewritten)
 	}
 	if !strings.Contains(rewritten, "rest/api/3/attachment/content/A1") {
 		t.Fatalf("rewritten missing uploaded URL: %s", rewritten)
@@ -367,11 +367,14 @@ func TestUploadLocalMarkdownImagesRewritesLocalReferences(t *testing.T) {
 	if client.attachmentRequest.Filename != "diagram.png" {
 		t.Fatalf("upload request filename = %q", client.attachmentRequest.Filename)
 	}
+	if string(client.attachmentRequest.Data) != "png-bytes" {
+		t.Fatalf("upload request data = %q", string(client.attachmentRequest.Data))
+	}
 }
 
-func TestUploadLocalMarkdownImagesNoOpsWhenNoImages(t *testing.T) {
+func TestUploadMarkdownBlobImagesNoOpsWhenNoImages(t *testing.T) {
 	client := &fakeClient{}
-	out, err := uploadLocalMarkdownImages(context.Background(), client, "DEX-9", "just text, no images")
+	out, err := uploadMarkdownBlobImages(pluginbinding.Context{Host: &jiraTestHost{}}, client, "DEX-9", "just text, no images")
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -381,19 +384,58 @@ func TestUploadLocalMarkdownImagesNoOpsWhenNoImages(t *testing.T) {
 }
 
 func testPlugin(client Client) *pluginbinding.Plugin {
-	return NewPluginWithService(Service{SecretGetter: testSecretGetter, ClientFactory: func(atlassian.Credentials) (Client, error) { return client, nil }})
+	return NewPluginWithService(Service{ClientFactory: func(pluginbinding.Context, string) (Client, error) { return client, nil }})
 }
 
-func testSecretGetter(_ pluginbinding.Context, purpose string) (pluginbinding.SecretMaterial, error) {
-	switch purpose {
-	case AuthPurposeAPIToken:
-		return pluginbinding.SecretMaterial{Value: "token"}, nil
-	case AuthPurposeCloudID:
-		return pluginbinding.SecretMaterial{Value: "cloud-123"}, nil
-	default:
-		return pluginbinding.SecretMaterial{}, errors.New("unexpected purpose")
-	}
+type jiraTestHost struct {
+	blobs map[string]pluginbinding.BlobReadResponse
 }
+
+func (h *jiraTestHost) Secret(string) (pluginbinding.SecretMaterial, error) {
+	return pluginbinding.SecretMaterial{}, nil
+}
+
+func (h *jiraTestHost) Lookup(pluginbinding.DatasourceLookupInput) (pluginbinding.DatasourceLookupResult[pluginbinding.LookupMatch[any]], error) {
+	return pluginbinding.DatasourceLookupResult[pluginbinding.LookupMatch[any]]{}, nil
+}
+
+func (h *jiraTestHost) Search(pluginbinding.DatasourceSearchInput) (pluginbinding.DatasourceSearchResult[any], error) {
+	return pluginbinding.DatasourceSearchResult[any]{}, nil
+}
+
+func (h *jiraTestHost) Get(pluginbinding.DatasourceGetInput) (pluginbinding.DatasourceGetResult[any], error) {
+	return pluginbinding.DatasourceGetResult[any]{}, nil
+}
+
+func (h *jiraTestHost) ResolveEndpoint(string) (core.EndpointRef, error) {
+	return core.EndpointRef{}, nil
+}
+
+func (h *jiraTestHost) HTTP(pluginbinding.HTTPRequest) (pluginbinding.HTTPResponse, error) {
+	return pluginbinding.HTTPResponse{}, nil
+}
+
+func (h *jiraTestHost) BlobRead(input pluginbinding.BlobReadRequest) (pluginbinding.BlobReadResponse, error) {
+	return h.blobs[strings.TrimSpace(input.Ref)], nil
+}
+
+func (h *jiraTestHost) BlobWrite(input pluginbinding.BlobWriteRequest) (pluginbinding.BlobRef, error) {
+	return pluginbinding.BlobRef{Ref: firstNonEmpty(input.Ref, "blob://written"), Filename: input.Filename, MediaType: input.MediaType, Size: int64(len(input.Content))}, nil
+}
+
+func (h *jiraTestHost) BlobInfo(pluginbinding.BlobInfoRequest) (pluginbinding.BlobRef, error) {
+	return pluginbinding.BlobRef{}, nil
+}
+
+func (h *jiraTestHost) EnvLookup(string) (pluginbinding.EnvLookupResponse, error) {
+	return pluginbinding.EnvLookupResponse{}, nil
+}
+
+func (h *jiraTestHost) CapabilityCall(pluginbinding.ProviderCallRequest) (pluginbinding.ProviderCallResponse, error) {
+	return pluginbinding.ProviderCallResponse{}, nil
+}
+
+var _ pluginbinding.HostClient = (*jiraTestHost)(nil)
 
 type fakeClient struct {
 	user                   User

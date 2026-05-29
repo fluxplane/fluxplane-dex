@@ -1,11 +1,10 @@
 package duckduckgo
 
 import (
-	"io"
-	"net/http"
-	"strings"
 	"testing"
 
+	"github.com/fluxplane/fluxplane-dex/core"
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding/plugintest"
 	"github.com/fluxplane/fluxplane-dex/internal/websearch"
 )
@@ -38,30 +37,71 @@ func TestDatasourceSearchUsesSharedWebsearchWrapper(t *testing.T) {
 	body := `
 <a class="result__a" href="/l/?kh=-1&uddg=https%3A%2F%2Fexample.com%2Fa">Example <b>A</b></a>
 <a class="result__snippet">A snippet &amp; more</a>`
+	host := &fakeHostClient{httpBody: body}
 	plugin := NewPluginWithService(Service{
-		HTTPClient:       &fakeHTTPDoer{body: body},
 		EndpointTemplate: "https://duckduckgo.test/html/?q={query}",
 	})
 
-	out := plugintest.DatasourceSearchOK[websearch.DatasourceSearchResult](t, plugin, websearch.SearchInput{Query: "fluxplane dex", Entity: websearch.EntitySearchResult}, plugintest.WithInstance("work"))
+	out := plugintest.DatasourceSearchOK[websearch.DatasourceSearchResult](t, plugin, websearch.SearchInput{Query: "fluxplane dex", Entity: websearch.EntitySearchResult}, plugintest.WithInstance("work"), plugintest.WithHost(host))
 	if out.Source != "live" || out.Count != 1 || out.Records[0].ID != "https://example.com/a" {
 		t.Fatalf("datasource output = %#v", out)
 	}
 	if out.Records[0].Source.Plugin != PluginName || out.Records[0].Source.Instance != "work" {
 		t.Fatalf("record source = %#v", out.Records[0].Source)
 	}
+	if host.httpRequest.URL != "https://duckduckgo.test/html/?q=fluxplane+dex" || host.httpRequest.Method != "GET" {
+		t.Fatalf("host HTTP request = %#v", host.httpRequest)
+	}
 }
 
-type fakeHTTPDoer struct {
-	req  *http.Request
-	body string
+type fakeHostClient struct {
+	httpRequest pluginbinding.HTTPRequest
+	httpBody    string
 }
 
-func (f *fakeHTTPDoer) Do(req *http.Request) (*http.Response, error) {
-	f.req = req
-	return &http.Response{
-		StatusCode: http.StatusOK,
-		Status:     http.StatusText(http.StatusOK),
-		Body:       io.NopCloser(strings.NewReader(f.body)),
-	}, nil
+func (f *fakeHostClient) Secret(string) (pluginbinding.SecretMaterial, error) {
+	return pluginbinding.SecretMaterial{}, nil
 }
+
+func (f *fakeHostClient) Lookup(pluginbinding.DatasourceLookupInput) (pluginbinding.DatasourceLookupResult[pluginbinding.LookupMatch[any]], error) {
+	return pluginbinding.DatasourceLookupResult[pluginbinding.LookupMatch[any]]{}, nil
+}
+
+func (f *fakeHostClient) Search(pluginbinding.DatasourceSearchInput) (pluginbinding.DatasourceSearchResult[any], error) {
+	return pluginbinding.DatasourceSearchResult[any]{}, nil
+}
+
+func (f *fakeHostClient) Get(pluginbinding.DatasourceGetInput) (pluginbinding.DatasourceGetResult[any], error) {
+	return pluginbinding.DatasourceGetResult[any]{}, nil
+}
+
+func (f *fakeHostClient) ResolveEndpoint(string) (core.EndpointRef, error) {
+	return core.EndpointRef{}, nil
+}
+
+func (f *fakeHostClient) HTTP(input pluginbinding.HTTPRequest) (pluginbinding.HTTPResponse, error) {
+	f.httpRequest = input
+	return pluginbinding.HTTPResponse{StatusCode: 200, Status: "200 OK", Body: []byte(f.httpBody)}, nil
+}
+
+func (f *fakeHostClient) BlobRead(pluginbinding.BlobReadRequest) (pluginbinding.BlobReadResponse, error) {
+	return pluginbinding.BlobReadResponse{}, nil
+}
+
+func (f *fakeHostClient) BlobWrite(pluginbinding.BlobWriteRequest) (pluginbinding.BlobRef, error) {
+	return pluginbinding.BlobRef{}, nil
+}
+
+func (f *fakeHostClient) BlobInfo(pluginbinding.BlobInfoRequest) (pluginbinding.BlobRef, error) {
+	return pluginbinding.BlobRef{}, nil
+}
+
+func (f *fakeHostClient) EnvLookup(string) (pluginbinding.EnvLookupResponse, error) {
+	return pluginbinding.EnvLookupResponse{}, nil
+}
+
+func (f *fakeHostClient) CapabilityCall(pluginbinding.ProviderCallRequest) (pluginbinding.ProviderCallResponse, error) {
+	return pluginbinding.ProviderCallResponse{}, nil
+}
+
+var _ pluginbinding.HostClient = (*fakeHostClient)(nil)

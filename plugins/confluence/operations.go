@@ -11,7 +11,6 @@ import (
 )
 
 type Service struct {
-	SecretGetter  pluginbinding.SecretGetter
 	ClientFactory ClientFactory
 }
 
@@ -19,20 +18,23 @@ func NewService() Service {
 	return Service{ClientFactory: NewLiveClient}
 }
 
-func (s Service) client(ctx pluginbinding.Context) (Client, atlassian.Credentials, error) {
-	credentials, err := resolveCredentials(ctx)
-	if err != nil {
-		return nil, atlassian.Credentials{}, err
-	}
+func (s Service) client(ctx pluginbinding.Context, input any) (Client, string, error) {
+	endpointRef := strings.TrimSpace(pluginbinding.StringFromInput(pluginbinding.InputMap(input), "endpoint_ref"))
 	factory := s.ClientFactory
 	if factory == nil {
 		factory = NewLiveClient
 	}
-	client, err := factory(credentials)
-	return client, credentials, err
+	client, err := factory(ctx, endpointRef)
+	return client, "", err
 }
 
-type NoInput struct{}
+type ConfluenceTargetInput struct {
+	EndpointRef string `json:"endpoint_ref,omitempty" jsonschema:"description=Registered Confluence endpoint ref resolved by the host."`
+}
+
+type AuthTestInput struct {
+	ConfluenceTargetInput
+}
 
 type LookupInput = pluginbinding.DatasourceLookupInput
 type LookupResult = pluginbinding.DatasourceLookupResult[pluginbinding.LookupMatch[any]]
@@ -48,6 +50,7 @@ type AuthTestResult struct {
 }
 
 type PageSearchInput struct {
+	ConfluenceTargetInput
 	pluginbinding.DatasourceSearchInput
 	CQL      string `json:"cql,omitempty" jsonschema:"description=Confluence CQL query"`
 	Title    string `json:"title,omitempty" jsonschema:"description=Exact page title filter"`
@@ -56,11 +59,13 @@ type PageSearchInput struct {
 }
 
 type PageShowInput struct {
+	ConfluenceTargetInput
 	ID     string `json:"id,omitempty" jsonschema:"description=Page ID"`
 	PageID string `json:"page_id,omitempty" jsonschema:"description=Alias for id"`
 }
 
 type PageCreateInput struct {
+	ConfluenceTargetInput
 	SpaceKey    string `json:"space_key,omitempty" jsonschema:"required,description=Confluence space key."`
 	Title       string `json:"title,omitempty" jsonschema:"required,description=Page title."`
 	BodyStorage string `json:"body_storage,omitempty" jsonschema:"description=Confluence storage-format XHTML body. Defaults to a minimal paragraph."`
@@ -68,41 +73,48 @@ type PageCreateInput struct {
 }
 
 type PageDeleteInput struct {
+	ConfluenceTargetInput
 	ID     string `json:"id,omitempty" jsonschema:"description=Page ID"`
 	PageID string `json:"page_id,omitempty" jsonschema:"description=Alias for id"`
 }
 
 type AttachmentAddInput struct {
+	ConfluenceTargetInput
 	PageID       string `json:"page_id,omitempty" jsonschema:"required,description=Confluence page ID."`
 	ID           string `json:"id,omitempty" jsonschema:"description=Alias for page_id."`
-	FilePath     string `json:"file_path,omitempty" jsonschema:"description=Local file path to upload. Mutually exclusive with content_bytes."`
-	ContentBytes []byte `json:"content_bytes,omitempty" jsonschema:"description=Base64-encoded inline bytes. Mutually exclusive with file_path."`
-	Filename     string `json:"filename,omitempty" jsonschema:"description=Filename shown in Confluence. Defaults to file_path basename."`
+	BlobRef      string `json:"blob_ref,omitempty" jsonschema:"description=Host blob ref to upload. Mutually exclusive with content_bytes."`
+	ContentBytes []byte `json:"content_bytes,omitempty" jsonschema:"description=Base64-encoded inline bytes. Mutually exclusive with blob_ref."`
+	Filename     string `json:"filename,omitempty" jsonschema:"description=Filename shown in Confluence. Defaults to host blob filename when using blob_ref."`
 	ContentType  string `json:"content_type,omitempty" jsonschema:"description=Attachment MIME type."`
 }
 
 type AttachmentListInput struct {
+	ConfluenceTargetInput
 	PageID string `json:"page_id,omitempty" jsonschema:"required,description=Confluence page ID."`
 	ID     string `json:"id,omitempty" jsonschema:"description=Alias for page_id."`
 }
 
 type AttachmentGetInput struct {
+	ConfluenceTargetInput
 	AttachmentID string `json:"attachment_id,omitempty" jsonschema:"required,description=Confluence attachment ID."`
 	PageID       string `json:"page_id,omitempty" jsonschema:"description=Optional page ID used for Confluence's attachment download endpoint."`
-	Download     bool   `json:"download,omitempty" jsonschema:"description=Download attachment bytes into content_bytes. Enabled automatically when output_path is set."`
-	OutputPath   string `json:"output_path,omitempty" jsonschema:"description=Local file path or directory to write the attachment. If omitted, content_bytes is returned."`
+	Download     bool   `json:"download,omitempty" jsonschema:"description=Download attachment bytes into content_bytes. Enabled automatically when blob_ref is set."`
+	BlobRef      string `json:"blob_ref,omitempty" jsonschema:"description=Optional host blob ref for downloaded attachment bytes."`
 }
 
 type AttachmentDeleteInput struct {
+	ConfluenceTargetInput
 	AttachmentID string `json:"attachment_id,omitempty" jsonschema:"required,description=Confluence attachment ID."`
 }
 
 type UserSearchInput struct {
+	ConfluenceTargetInput
 	pluginbinding.DatasourceSearchInput
 	CQL string `json:"cql,omitempty" jsonschema:"description=Confluence user CQL query"`
 }
 
 type IndexBuildInput struct {
+	ConfluenceTargetInput
 	pluginbinding.IndexBuildInput
 	PageLimit int    `json:"page_limit,omitempty" jsonschema:"description=Page fetch page size"`
 	PageQuery string `json:"page_query,omitempty" jsonschema:"description=Page text query"`
@@ -114,10 +126,10 @@ type IndexBuildInput struct {
 	UserCQL   string `json:"user_cql,omitempty" jsonschema:"description=User CQL query"`
 }
 
-func (s Service) AuthTest(ctx pluginbinding.Context, _ NoInput) (AuthTestResult, error) {
-	client, _, err := s.client(ctx)
+func (s Service) AuthTest(ctx pluginbinding.Context, input AuthTestInput) (AuthTestResult, error) {
+	client, _, err := s.client(ctx, input)
 	if err != nil {
-		return AuthTestResult{}, pluginbinding.Errorf("secret", "%s", err)
+		return AuthTestResult{}, pluginbinding.Errorf("confluence", "%s", err)
 	}
 	user, err := client.CurrentUser(context.Background())
 	if err != nil {
@@ -127,7 +139,7 @@ func (s Service) AuthTest(ctx pluginbinding.Context, _ NoInput) (AuthTestResult,
 }
 
 func (s Service) PageSearch(ctx pluginbinding.Context, input PageSearchInput) (PageSearchResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return PageSearchResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -139,7 +151,7 @@ func (s Service) PageSearch(ctx pluginbinding.Context, input PageSearchInput) (P
 }
 
 func (s Service) PageShow(ctx pluginbinding.Context, input PageShowInput) (pluginbinding.ShowResult[Page], error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return pluginbinding.ShowResult[Page]{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -158,7 +170,7 @@ func (s Service) PageShow(ctx pluginbinding.Context, input PageShowInput) (plugi
 }
 
 func (s Service) PageCreate(ctx pluginbinding.Context, input PageCreateInput) (PageMutationResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return PageMutationResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -174,7 +186,7 @@ func (s Service) PageCreate(ctx pluginbinding.Context, input PageCreateInput) (P
 }
 
 func (s Service) PageDelete(ctx pluginbinding.Context, input PageDeleteInput) (PageMutationResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return PageMutationResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -190,7 +202,7 @@ func (s Service) PageDelete(ctx pluginbinding.Context, input PageDeleteInput) (P
 }
 
 func (s Service) AttachmentAdd(ctx pluginbinding.Context, input AttachmentAddInput) (AttachmentUploadResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return AttachmentUploadResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -198,7 +210,7 @@ func (s Service) AttachmentAdd(ctx pluginbinding.Context, input AttachmentAddInp
 	if pageID == "" {
 		return AttachmentUploadResult{}, pluginbinding.Fail("bad_input", "page_id is required")
 	}
-	request, err := attachmentUploadRequest(input.FilePath, input.ContentBytes, input.Filename, input.ContentType)
+	request, err := attachmentUploadRequest(ctx, input.BlobRef, input.ContentBytes, input.Filename, input.ContentType)
 	if err != nil {
 		return AttachmentUploadResult{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
@@ -210,7 +222,7 @@ func (s Service) AttachmentAdd(ctx pluginbinding.Context, input AttachmentAddInp
 }
 
 func (s Service) AttachmentList(ctx pluginbinding.Context, input AttachmentListInput) (AttachmentListResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return AttachmentListResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -226,7 +238,7 @@ func (s Service) AttachmentList(ctx pluginbinding.Context, input AttachmentListI
 }
 
 func (s Service) AttachmentGet(ctx pluginbinding.Context, input AttachmentGetInput) (AttachmentGetResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return AttachmentGetResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -234,24 +246,33 @@ func (s Service) AttachmentGet(ctx pluginbinding.Context, input AttachmentGetInp
 	if attachmentID == "" {
 		return AttachmentGetResult{}, pluginbinding.Fail("bad_input", "attachment_id is required")
 	}
-	outputPath := strings.TrimSpace(input.OutputPath)
-	result, err := client.GetAttachment(context.Background(), attachmentID, input.PageID, input.Download || outputPath != "")
+	blobRef := strings.TrimSpace(input.BlobRef)
+	result, err := client.GetAttachment(context.Background(), attachmentID, input.PageID, input.Download || blobRef != "")
 	if err != nil {
 		return AttachmentGetResult{}, pluginbinding.Errorf("confluence", "%s", err)
 	}
-	if outputPath != "" && len(result.ContentBytes) > 0 {
-		path, err := atlassian.WriteAttachment(outputPath, firstNonEmpty(result.Filename, attachmentID), result.ContentBytes)
+	if blobRef != "" && len(result.ContentBytes) > 0 {
+		blob, err := ctx.Host.BlobWrite(pluginbinding.BlobWriteRequest{
+			Ref:       blobRef,
+			Content:   result.ContentBytes,
+			Filename:  firstNonEmpty(result.Filename, attachmentID),
+			MediaType: result.MimeType,
+			Metadata: map[string]string{
+				"source":        "confluence",
+				"attachment_id": attachmentID,
+			},
+		})
 		if err != nil {
-			return AttachmentGetResult{}, pluginbinding.Errorf("filesystem", "%s", err)
+			return AttachmentGetResult{}, pluginbinding.Errorf("blob", "%s", err)
 		}
-		result.OutputPath = path
+		result.Blob = blob
 		result.ContentBytes = nil
 	}
 	return result, nil
 }
 
 func (s Service) AttachmentDelete(ctx pluginbinding.Context, input AttachmentDeleteInput) (AttachmentDeleteResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return AttachmentDeleteResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -267,7 +288,7 @@ func (s Service) AttachmentDelete(ctx pluginbinding.Context, input AttachmentDel
 }
 
 func (s Service) UserSearch(ctx pluginbinding.Context, input UserSearchInput) (UserSearchResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return UserSearchResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -279,7 +300,7 @@ func (s Service) UserSearch(ctx pluginbinding.Context, input UserSearchInput) (U
 }
 
 func (s Service) PageDatasource(ctx pluginbinding.Context, input PageSearchInput) (PageDatasourceResult, error) {
-	client, credentials, err := s.client(ctx)
+	client, baseURL, err := s.client(ctx, input)
 	if err != nil {
 		return PageDatasourceResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -287,11 +308,11 @@ func (s Service) PageDatasource(ctx pluginbinding.Context, input PageSearchInput
 	if err != nil {
 		return PageDatasourceResult{}, pluginbinding.Errorf("confluence", "%s", err)
 	}
-	return pluginbinding.NewDatasourceSearchResult(DatasourcePages, pageSearchDisplayQuery(pluginbinding.InputMap(input)), pageRecords(ctx.DatasourceSource(), credentials.BaseURL, pages)), nil
+	return pluginbinding.NewDatasourceSearchResult(DatasourcePages, pageSearchDisplayQuery(pluginbinding.InputMap(input)), pageRecords(ctx.DatasourceSource(), baseURL, pages)), nil
 }
 
 func (s Service) UserDatasource(ctx pluginbinding.Context, input UserSearchInput) (UserDatasourceResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return UserDatasourceResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -303,7 +324,7 @@ func (s Service) UserDatasource(ctx pluginbinding.Context, input UserSearchInput
 }
 
 func (s Service) IndexBuild(ctx pluginbinding.Context, input IndexBuildInput) (pluginbinding.IndexBuildResult, error) {
-	client, credentials, err := s.client(ctx)
+	client, baseURL, err := s.client(ctx, input)
 	if err != nil {
 		return pluginbinding.IndexBuildResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -318,7 +339,7 @@ func (s Service) IndexBuild(ctx pluginbinding.Context, input IndexBuildInput) (p
 		pluginbinding.NewIndexJob(DatasourcePages, EntityPage, OperationIndexBuild, func() ([]Page, error) {
 			return client.SearchPages(context.Background(), pageOptions)
 		}, func(source pluginbinding.DatasourceSource, page Page) (PageRecord, bool) {
-			return normalizePageRecord(source, credentials.BaseURL, page)
+			return normalizePageRecord(source, baseURL, page)
 		}, pluginbinding.IndexBuildMetadata(EntityPage, OperationIndexBuild, map[string]any{"query": pageOptions.Query, "cql": pageOptions.CQL, "title": pageOptions.Title, "space_key": pageOptions.SpaceKey, "limit": pageOptions.Limit})),
 		pluginbinding.NewIndexJob(DatasourceUsers, EntityUser, OperationIndexBuild, func() ([]User, error) {
 			return client.SearchUsers(context.Background(), userOptions)
@@ -327,7 +348,7 @@ func (s Service) IndexBuild(ctx pluginbinding.Context, input IndexBuildInput) (p
 }
 
 func (s Service) Lookup(ctx pluginbinding.Context, input LookupInput) (LookupResult, error) {
-	client, credentials, err := s.client(ctx)
+	client, baseURL, err := s.client(ctx, input)
 	if err != nil {
 		return LookupResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -335,7 +356,7 @@ func (s Service) Lookup(ctx pluginbinding.Context, input LookupInput) (LookupRes
 	if input.Entity == "" || input.Entity == EntityPage {
 		for _, id := range lookupPageIDs(input) {
 			if page, err := client.GetPage(context.Background(), id); err == nil {
-				record, ok := normalizePageRecord(ctx.DatasourceSource(), credentials.BaseURL, page)
+				record, ok := normalizePageRecord(ctx.DatasourceSource(), baseURL, page)
 				if ok {
 					candidates = append(candidates, pluginbinding.NewExactLookupCandidate(ctx.LookupSource(PluginName, DatasourcePages), record.Entity, record.ID, 1200, []string{"page_id"}, record, pageLookupValues(record)))
 				}
@@ -347,7 +368,7 @@ func (s Service) Lookup(ctx pluginbinding.Context, input LookupInput) (LookupRes
 				return LookupResult{}, pluginbinding.Errorf("confluence", "%s", err)
 			}
 			for _, page := range pages {
-				record, ok := normalizePageRecord(ctx.DatasourceSource(), credentials.BaseURL, page)
+				record, ok := normalizePageRecord(ctx.DatasourceSource(), baseURL, page)
 				if ok {
 					candidates = append(candidates, pluginbinding.NewLookupCandidate(ctx.LookupSource(PluginName, DatasourcePages), record.Entity, record.ID, record, pageLookupValues(record)))
 				}
@@ -373,24 +394,24 @@ func (s Service) Lookup(ctx pluginbinding.Context, input LookupInput) (LookupRes
 
 func pageSearchOptions(input map[string]any, defaultLimit int) PageSearchOptions {
 	return PageSearchOptions{
-		Query:   pluginbinding.StringFromInput(input, "query", "search"),
-		CQL:     pluginbinding.StringFromInput(input, "cql"),
-		Title:   pluginbinding.StringFromInput(input, "title"),
+		Query:    pluginbinding.StringFromInput(input, "query", "search"),
+		CQL:      pluginbinding.StringFromInput(input, "cql"),
+		Title:    pluginbinding.StringFromInput(input, "title"),
 		SpaceKey: pluginbinding.StringFromInput(input, "space_key", "space_id"),
-		Status:  pluginbinding.DefaultStringFromInput(input, "current", "status"),
-		Limit:   pluginbinding.BoundedIntFromInput(input, "limit", defaultLimit, 100),
+		Status:   pluginbinding.DefaultStringFromInput(input, "current", "status"),
+		Limit:    pluginbinding.BoundedIntFromInput(input, "limit", defaultLimit, 100),
 	}
 }
 
 func pageIndexOptions(input map[string]any, defaultLimit int) PageSearchOptions {
 	options := PageSearchOptions{
-		Query:   pluginbinding.StringFromInput(input, "page_query", "query"),
-		CQL:     pluginbinding.StringFromInput(input, "page_cql", "cql"),
-		Title:   pluginbinding.StringFromInput(input, "title"),
+		Query:    pluginbinding.StringFromInput(input, "page_query", "query"),
+		CQL:      pluginbinding.StringFromInput(input, "page_cql", "cql"),
+		Title:    pluginbinding.StringFromInput(input, "title"),
 		SpaceKey: pluginbinding.StringFromInput(input, "space_key", "space_id"),
-		Status:  pluginbinding.DefaultStringFromInput(input, "current", "status"),
-		Limit:   pluginbinding.BoundedIntFromInput(input, "page_limit", defaultLimit, 100),
-		All:     true,
+		Status:   pluginbinding.DefaultStringFromInput(input, "current", "status"),
+		Limit:    pluginbinding.BoundedIntFromInput(input, "page_limit", defaultLimit, 100),
+		All:      true,
 	}
 	return options
 }
@@ -547,10 +568,40 @@ func userLookupValues(record UserRecord) map[string]string {
 	}
 }
 
-func attachmentUploadRequest(filePath string, contentBytes []byte, filename, contentType string) (AttachmentUploadRequest, error) {
-	out, err := atlassian.BuildAttachmentUploadRequest(filePath, contentBytes, filename, contentType)
+func attachmentUploadRequest(ctx pluginbinding.Context, blobRef string, contentBytes []byte, filename, contentType string) (AttachmentUploadRequest, error) {
+	blobRef = strings.TrimSpace(blobRef)
+	hasBlob := blobRef != ""
+	hasBytes := len(contentBytes) > 0
+	if hasBlob == hasBytes {
+		return AttachmentUploadRequest{}, fmt.Errorf("provide exactly one of blob_ref or content_bytes")
+	}
+	if hasBlob {
+		blob, err := ctx.Host.BlobRead(pluginbinding.BlobReadRequest{Ref: blobRef, MaxBytes: atlassian.MaxAttachmentUploadBytes})
+		if err != nil {
+			return AttachmentUploadRequest{}, err
+		}
+		if blob.Truncated {
+			return AttachmentUploadRequest{}, fmt.Errorf("blob %s exceeds %d byte cap", blobRef, atlassian.MaxAttachmentUploadBytes)
+		}
+		contentBytes = append([]byte(nil), blob.Content...)
+		filename = firstNonEmpty(filename, blob.Blob.Filename, blobPathFilename(blob.Blob.Path), blob.Blob.Ref)
+		contentType = firstNonEmpty(contentType, blob.Blob.MediaType)
+	}
+	out, err := atlassian.BuildAttachmentUploadRequest(contentBytes, filename, contentType)
 	if err != nil {
 		return AttachmentUploadRequest{}, err
 	}
 	return AttachmentUploadRequest{Filename: out.Filename, ContentType: out.ContentType, Data: out.Data}, nil
+}
+
+func blobPathFilename(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	path = strings.TrimRight(path, "/")
+	if index := strings.LastIndex(path, "/"); index >= 0 {
+		return strings.TrimSpace(path[index+1:])
+	}
+	return path
 }

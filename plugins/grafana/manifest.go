@@ -7,15 +7,13 @@ import (
 
 const (
 	PluginName        = "grafana"
-	PluginVersion     = "0.9.0"
+	PluginVersion     = "0.10.0"
 	PluginDescription = "Grafana datasource catalog and proxy operations for Loki, Prometheus, Alertmanager, and Tempo."
 
-	EnvGrafanaURL      = "GRAFANA_URL"
 	EnvGrafanaAPIToken = "GRAFANA_API_TOKEN"
 	EnvGrafanaUsername = "GRAFANA_USERNAME"
 	EnvGrafanaPassword = "GRAFANA_PASSWORD"
 
-	AuthPurposeURL      = "url"
 	AuthPurposeAPIToken = "api_token"
 	AuthPurposeUsername = "username"
 	AuthPurposePassword = "password"
@@ -75,10 +73,9 @@ func manifestSpec() pluginbinding.ManifestSpec {
 		Auth: []core.AuthMethod{{
 			Name:        "endpoint",
 			Kind:        "config",
-			Description: "Grafana URL plus bearer token or basic auth.",
-			Env:         []string{EnvGrafanaURL, EnvGrafanaAPIToken, EnvGrafanaUsername, EnvGrafanaPassword},
+			Description: "Grafana bearer token or basic auth used by host-resolved endpoint refs.",
+			Env:         []string{EnvGrafanaAPIToken, EnvGrafanaUsername, EnvGrafanaPassword},
 			Fields: []core.AuthField{
-				pluginbinding.AuthField(AuthPurposeURL, "Grafana base URL", false, false, EnvGrafanaURL),
 				pluginbinding.AuthField(AuthPurposeAPIToken, "Grafana service account token", true, false, EnvGrafanaAPIToken),
 				pluginbinding.AuthField(AuthPurposeUsername, "Grafana basic auth username", false, false, EnvGrafanaUsername),
 				pluginbinding.AuthField(AuthPurposePassword, "Grafana basic auth password", true, false, EnvGrafanaPassword),
@@ -185,5 +182,5 @@ func writeOptions(idempotency core.OperationIdempotency) []pluginbinding.Operati
 }
 
 func grafanaSecretPurposes() []string {
-	return []string{AuthPurposeURL, AuthPurposeAPIToken, AuthPurposeUsername, AuthPurposePassword}
+	return []string{AuthPurposeAPIToken, AuthPurposeUsername, AuthPurposePassword}
 }

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/fluxplane/fluxplane-dex/core"
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding/plugintest"
 	"github.com/fluxplane/fluxplane-dex/protocol"
 )
@@ -36,7 +37,7 @@ func TestManifestDeclaresNoAuthDatasourcesOrIndexes(t *testing.T) {
 }
 
 func TestInfoDefaultsToAllCategories(t *testing.T) {
-	out := plugintest.RunOK[InfoResult](t, NewPlugin(), OperationInfo, map[string]any{})
+	out := plugintest.RunOK[InfoResult](t, NewPlugin(), OperationInfo, map[string]any{}, plugintest.WithHost(systemTestHost{t: t}))
 	if len(out.Categories) != len(allCategories) {
 		t.Fatalf("categories = %#v", out.Categories)
 	}
@@ -50,7 +51,7 @@ func TestInfoDefaultsToAllCategories(t *testing.T) {
 func TestInfoFiltersCategories(t *testing.T) {
 	out := plugintest.RunOK[InfoResult](t, NewPlugin(), OperationInfo, map[string]any{
 		"categories": []string{"os", "time"},
-	})
+	}, plugintest.WithHost(systemTestHost{t: t}))
 	if len(out.Categories) != 2 || out.Categories[0] != "os" || out.Categories[1] != "time" {
 		t.Fatalf("categories = %#v", out.Categories)
 	}
@@ -63,7 +64,7 @@ func TestInfoCategoryAliasAndExclude(t *testing.T) {
 	out := plugintest.RunOK[InfoResult](t, NewPlugin(), OperationInfo, map[string]any{
 		"category": "arch,cpus,timezone",
 		"exclude":  []string{"cpu"},
-	})
+	}, plugintest.WithHost(systemTestHost{t: t}))
 	if len(out.Categories) != 2 || out.Categories[0] != "os" || out.Categories[1] != "time" {
 		t.Fatalf("categories = %#v", out.Categories)
 	}
@@ -73,7 +74,7 @@ func TestInfoIncludeStringAndExclude(t *testing.T) {
 	out := plugintest.RunOK[InfoResult](t, NewPlugin(), OperationInfo, map[string]any{
 		"include": "os,network",
 		"exclude": "network",
-	})
+	}, plugintest.WithHost(systemTestHost{t: t}))
 	if len(out.Categories) != 1 || out.Categories[0] != "os" {
 		t.Fatalf("categories = %#v", out.Categories)
 	}
@@ -91,7 +92,7 @@ func TestInfoUnknownCategoryFails(t *testing.T) {
 func TestInfoNetworkShape(t *testing.T) {
 	out := plugintest.RunOK[InfoResult](t, NewPlugin(), OperationInfo, map[string]any{
 		"category": "network",
-	})
+	}, plugintest.WithHost(systemTestHost{t: t}))
 	network, ok := out.System["network"].(map[string]any)
 	if !ok {
 		t.Fatalf("network = %#v", out.System["network"])
@@ -120,3 +121,78 @@ func TestBuildContext(t *testing.T) {
 		t.Fatalf("blocks = %#v", result.Blocks)
 	}
 }
+
+type systemTestHost struct {
+	t *testing.T
+}
+
+func (h systemTestHost) Secret(string) (pluginbinding.SecretMaterial, error) {
+	return pluginbinding.SecretMaterial{}, nil
+}
+
+func (h systemTestHost) Lookup(pluginbinding.DatasourceLookupInput) (pluginbinding.DatasourceLookupResult[pluginbinding.LookupMatch[any]], error) {
+	return pluginbinding.DatasourceLookupResult[pluginbinding.LookupMatch[any]]{}, nil
+}
+
+func (h systemTestHost) Search(pluginbinding.DatasourceSearchInput) (pluginbinding.DatasourceSearchResult[any], error) {
+	return pluginbinding.DatasourceSearchResult[any]{}, nil
+}
+
+func (h systemTestHost) Get(pluginbinding.DatasourceGetInput) (pluginbinding.DatasourceGetResult[any], error) {
+	return pluginbinding.DatasourceGetResult[any]{}, nil
+}
+
+func (h systemTestHost) ResolveEndpoint(string) (core.EndpointRef, error) {
+	return core.EndpointRef{}, nil
+}
+
+func (h systemTestHost) HTTP(pluginbinding.HTTPRequest) (pluginbinding.HTTPResponse, error) {
+	return pluginbinding.HTTPResponse{}, nil
+}
+
+func (h systemTestHost) BlobRead(pluginbinding.BlobReadRequest) (pluginbinding.BlobReadResponse, error) {
+	return pluginbinding.BlobReadResponse{}, nil
+}
+
+func (h systemTestHost) BlobWrite(pluginbinding.BlobWriteRequest) (pluginbinding.BlobRef, error) {
+	return pluginbinding.BlobRef{}, nil
+}
+
+func (h systemTestHost) BlobInfo(pluginbinding.BlobInfoRequest) (pluginbinding.BlobRef, error) {
+	return pluginbinding.BlobRef{}, nil
+}
+
+func (h systemTestHost) EnvLookup(string) (pluginbinding.EnvLookupResponse, error) {
+	return pluginbinding.EnvLookupResponse{}, nil
+}
+
+func (h systemTestHost) CapabilityCall(input pluginbinding.ProviderCallRequest) (pluginbinding.ProviderCallResponse, error) {
+	if input.Provider != systemProvider || input.Action != "info" {
+		h.t.Fatalf("provider call = %#v", input)
+	}
+	var payload struct {
+		Categories []string `json:"categories"`
+	}
+	if err := json.Unmarshal(input.Payload, &payload); err != nil {
+		h.t.Fatal(err)
+	}
+	system := map[string]any{}
+	for _, category := range payload.Categories {
+		if category == categoryNetwork {
+			system[category] = map[string]any{"interfaces": []any{map[string]any{"name": "lo"}}}
+			continue
+		}
+		system[category] = map[string]any{"ok": true}
+	}
+	raw, err := json.Marshal(InfoResult{
+		Categories:  payload.Categories,
+		GeneratedAt: "2026-05-29T00:00:00Z",
+		System:      system,
+	})
+	if err != nil {
+		return pluginbinding.ProviderCallResponse{}, err
+	}
+	return pluginbinding.ProviderCallResponse{Result: raw}, nil
+}
+
+var _ pluginbinding.HostClient = systemTestHost{}

@@ -8,43 +8,41 @@ import (
 
 const (
 	PluginName        = "gitlab"
-	PluginVersion     = "0.9.0"
+	PluginVersion     = "0.10.0"
 	PluginDescription = "GitLab operations, datasources, indexes, and reverse lookups."
 
 	AuthMethodPersonalAccessToken = "personal_access_token"
 	AuthPurposeAccessToken        = "access_token"
-	AuthPurposeGitLabURL          = "gitlab_url"
 
 	EnvGitLabPersonalToken = "GITLAB_PERSONAL_TOKEN"
 	EnvGitLabAccessToken   = "GITLAB_ACCESS_TOKEN"
 	EnvGitLabToken         = "GITLAB_TOKEN"
-	EnvGitLabURL           = "GITLAB_URL"
 
-	OperationAuthTest               = "gitlab.auth.test"
-	OperationIndexBuild             = "gitlab.index.build"
-	OperationProjectList            = "gitlab.project.list"
-	OperationProjectShow            = "gitlab.project.show"
-	OperationMRList                 = "gitlab.mr.list"
-	OperationMRShow                 = "gitlab.mr.show"
-	OperationMRCreate               = "gitlab.mr.create"
-	OperationMRApprove              = "gitlab.mr.approve"
-	OperationMRMerge                = "gitlab.mr.merge"
-	OperationTagCreate              = "gitlab.repository.tag.create"
-	OperationBranchCreate           = "gitlab.branch.create"
-	OperationBranchDelete           = "gitlab.branch.delete"
-	OperationBranchDeleteMerged     = "gitlab.branch.delete_merged"
-	OperationRepoFileCreate         = "gitlab.repository.file.create"
-	OperationRepoFileUpdate         = "gitlab.repository.file.update"
-	OperationRepoFileDelete         = "gitlab.repository.file.delete"
-	OperationCommitCreate           = "gitlab.repository.commit.create"
-	OperationCIVariableCreate       = "gitlab.ci.variable.create"
-	OperationCIVariableUpdate       = "gitlab.ci.variable.update"
-	OperationCIVariableDelete       = "gitlab.ci.variable.delete"
-	OperationPipelineCreate         = "gitlab.pipeline.create"
-	OperationPipelineRetry          = "gitlab.pipeline.retry"
-	OperationPipelineCancel         = "gitlab.pipeline.cancel"
-	OperationSnippetCreate          = "gitlab.snippet.create"
-	OperationSnippetDelete          = "gitlab.snippet.delete"
+	OperationAuthTest           = "gitlab.auth.test"
+	OperationIndexBuild         = "gitlab.index.build"
+	OperationProjectList        = "gitlab.project.list"
+	OperationProjectShow        = "gitlab.project.show"
+	OperationMRList             = "gitlab.mr.list"
+	OperationMRShow             = "gitlab.mr.show"
+	OperationMRCreate           = "gitlab.mr.create"
+	OperationMRApprove          = "gitlab.mr.approve"
+	OperationMRMerge            = "gitlab.mr.merge"
+	OperationTagCreate          = "gitlab.repository.tag.create"
+	OperationBranchCreate       = "gitlab.branch.create"
+	OperationBranchDelete       = "gitlab.branch.delete"
+	OperationBranchDeleteMerged = "gitlab.branch.delete_merged"
+	OperationRepoFileCreate     = "gitlab.repository.file.create"
+	OperationRepoFileUpdate     = "gitlab.repository.file.update"
+	OperationRepoFileDelete     = "gitlab.repository.file.delete"
+	OperationCommitCreate       = "gitlab.repository.commit.create"
+	OperationCIVariableCreate   = "gitlab.ci.variable.create"
+	OperationCIVariableUpdate   = "gitlab.ci.variable.update"
+	OperationCIVariableDelete   = "gitlab.ci.variable.delete"
+	OperationPipelineCreate     = "gitlab.pipeline.create"
+	OperationPipelineRetry      = "gitlab.pipeline.retry"
+	OperationPipelineCancel     = "gitlab.pipeline.cancel"
+	OperationSnippetCreate      = "gitlab.snippet.create"
+	OperationSnippetDelete      = "gitlab.snippet.delete"
 
 	DatasourceProjects      = "gitlab.projects"
 	DatasourceUsers         = "gitlab.users"
@@ -71,7 +69,6 @@ func manifestSpec() pluginbinding.ManifestSpec {
 		AuthMethodPersonalAccessToken,
 		"GitLab personal access token resolved by dex secret broker.",
 		pluginbinding.AuthField(AuthPurposeAccessToken, "GitLab personal access token", true, true, EnvGitLabPersonalToken, EnvGitLabAccessToken, EnvGitLabToken),
-		pluginbinding.AuthField(AuthPurposeGitLabURL, "GitLab base URL", true, false, EnvGitLabURL),
 	)
 	auth.Env = []string{EnvGitLabPersonalToken, EnvGitLabAccessToken, EnvGitLabToken}
 	return pluginbinding.ManifestSpec{
@@ -260,7 +257,7 @@ func gitlabCompactReadOperation[I any, O any](name, description string) core.Ope
 func gitlabReadOptions(idempotency core.OperationIdempotency) []pluginbinding.OperationSpecOption {
 	return []pluginbinding.OperationSpecOption{
 		pluginbinding.ReadOnly(),
-		pluginbinding.SecretPurposes(AuthPurposeAccessToken, AuthPurposeGitLabURL),
+		pluginbinding.SecretPurposes(AuthPurposeAccessToken),
 		pluginbinding.Effects(core.OperationEffectRead, core.OperationEffectNetwork),
 		pluginbinding.Access(core.OperationAccessAuth, core.OperationAccessSecret, core.OperationAccessNetwork),
 		pluginbinding.Risk(core.OperationRiskLow),
@@ -282,7 +279,7 @@ func gitlabDestructiveOperation[I any, O any](name, description string) core.Ope
 
 func gitlabWriteOptions(idempotency core.OperationIdempotency, risk core.OperationRisk) []pluginbinding.OperationSpecOption {
 	return []pluginbinding.OperationSpecOption{
-		pluginbinding.SecretPurposes(AuthPurposeAccessToken, AuthPurposeGitLabURL),
+		pluginbinding.SecretPurposes(AuthPurposeAccessToken),
 		pluginbinding.Effects(core.OperationEffectWrite, core.OperationEffectNetwork),
 		pluginbinding.Access(core.OperationAccessAuth, core.OperationAccessSecret, core.OperationAccessNetwork),
 		pluginbinding.Risk(risk),
@@ -311,5 +308,5 @@ func gitlabMergeRequestsLookupSpec() core.DatasourceSpec {
 }
 
 func gitlabLookupSpec(name, entity, description string) core.DatasourceSpec {
-	return pluginbinding.TypedDatasourceSpec[LookupInput, LookupResult](name, entity, description, []string{pluginbinding.CapabilityLookup}, pluginbinding.DatasourceSecretPurposes(AuthPurposeAccessToken, AuthPurposeGitLabURL))
+	return pluginbinding.TypedDatasourceSpec[LookupInput, LookupResult](name, entity, description, []string{pluginbinding.CapabilityLookup}, pluginbinding.DatasourceSecretPurposes(AuthPurposeAccessToken))
 }

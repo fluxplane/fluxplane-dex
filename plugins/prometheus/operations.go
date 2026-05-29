@@ -6,9 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/url"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,16 +16,18 @@ import (
 )
 
 type Service struct {
-	HTTPClient *http.Client
-	DefaultURL string
 }
 
 func NewService() Service {
-	return Service{HTTPClient: &http.Client{Timeout: 30 * time.Second}}
+	return Service{}
+}
+
+type PrometheusTargetInput struct {
+	EndpointRef string `json:"endpoint_ref,omitempty" jsonschema:"description=Registered Prometheus endpoint ref resolved by the host."`
 }
 
 type TestInput struct {
-	URL string `json:"url,omitempty" jsonschema:"description=Prometheus base URL. Defaults to PROMETHEUS_URL."`
+	PrometheusTargetInput
 }
 
 type TestResult struct {
@@ -38,7 +38,7 @@ type TestResult struct {
 }
 
 type QueryInput struct {
-	URL   string `json:"url,omitempty"`
+	PrometheusTargetInput
 	Query string `json:"query,omitempty" jsonschema:"required,description=PromQL query"`
 	Time  string `json:"time,omitempty" jsonschema:"description=RFC3339 or unix timestamp"`
 }
@@ -51,7 +51,7 @@ type QueryResult struct {
 }
 
 type QueryRangeInput struct {
-	URL   string `json:"url,omitempty"`
+	PrometheusTargetInput
 	Query string `json:"query,omitempty" jsonschema:"required,description=PromQL query"`
 	Start string `json:"start,omitempty" jsonschema:"description=RFC3339, unix timestamp, or duration ago"`
 	End   string `json:"end,omitempty" jsonschema:"description=RFC3339, unix timestamp, or duration ago"`
@@ -61,7 +61,7 @@ type QueryRangeInput struct {
 type QueryRangeResult = QueryResult
 
 type LabelsInput struct {
-	URL   string   `json:"url,omitempty"`
+	PrometheusTargetInput
 	Label string   `json:"label,omitempty" jsonschema:"description=Optional label name. When set, returns values for that label."`
 	Match []string `json:"match,omitempty" jsonschema:"description=Optional PromQL match selectors."`
 }
@@ -73,7 +73,7 @@ type LabelsResult struct {
 }
 
 type TargetsInput struct {
-	URL   string `json:"url,omitempty"`
+	PrometheusTargetInput
 	State string `json:"state,omitempty" jsonschema:"description=active, dropped, or any"`
 }
 
@@ -131,12 +131,12 @@ type TargetDatasourceResult = pluginbinding.DatasourceSearchResult[TargetRecord]
 type AlertDatasourceResult = pluginbinding.DatasourceSearchResult[AlertRecord]
 
 func (s Service) Test(ctx pluginbinding.Context, input TestInput) (TestResult, error) {
-	target, err := s.resolveURL(input.URL)
+	target, client, err := s.client(ctx, input.PrometheusTargetInput)
 	if err != nil {
 		return TestResult{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
 	start := time.Now()
-	err = s.client(target).ready(context.Background())
+	err = client.ready(context.Background())
 	out := TestResult{URL: target, Ready: err == nil, LatencyMS: time.Since(start).Milliseconds()}
 	if err != nil {
 		out.Error = err.Error()
@@ -149,7 +149,7 @@ func (s Service) Query(ctx pluginbinding.Context, input QueryInput) (QueryResult
 	if query == "" {
 		return QueryResult{}, pluginbinding.Fail("bad_input", "query is required")
 	}
-	target, err := s.resolveURL(input.URL)
+	target, client, err := s.client(ctx, input.PrometheusTargetInput)
 	if err != nil {
 		return QueryResult{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
@@ -161,7 +161,7 @@ func (s Service) Query(ctx pluginbinding.Context, input QueryInput) (QueryResult
 		}
 		values.Set("time", strconv.FormatInt(t.Unix(), 10))
 	}
-	return s.query(context.Background(), target, query, "/api/v1/query", values)
+	return s.query(context.Background(), target, client, query, "/api/v1/query", values)
 }
 
 func (s Service) QueryRange(ctx pluginbinding.Context, input QueryRangeInput) (QueryRangeResult, error) {
@@ -169,7 +169,7 @@ func (s Service) QueryRange(ctx pluginbinding.Context, input QueryRangeInput) (Q
 	if query == "" {
 		return QueryRangeResult{}, pluginbinding.Fail("bad_input", "query is required")
 	}
-	target, err := s.resolveURL(input.URL)
+	target, client, err := s.client(ctx, input.PrometheusTargetInput)
 	if err != nil {
 		return QueryRangeResult{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
@@ -190,11 +190,11 @@ func (s Service) QueryRange(ctx pluginbinding.Context, input QueryRangeInput) (Q
 	values.Set("start", strconv.FormatInt(start.Unix(), 10))
 	values.Set("end", strconv.FormatInt(end.Unix(), 10))
 	values.Set("step", step)
-	return s.query(context.Background(), target, query, "/api/v1/query_range", values)
+	return s.query(context.Background(), target, client, query, "/api/v1/query_range", values)
 }
 
 func (s Service) Labels(ctx pluginbinding.Context, input LabelsInput) (LabelsResult, error) {
-	target, err := s.resolveURL(input.URL)
+	target, client, err := s.client(ctx, input.PrometheusTargetInput)
 	if err != nil {
 		return LabelsResult{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
@@ -209,7 +209,7 @@ func (s Service) Labels(ctx pluginbinding.Context, input LabelsInput) (LabelsRes
 	if label != "" {
 		path = "/api/v1/label/" + url.PathEscape(label) + "/values"
 	}
-	data, err := s.client(target).get(context.Background(), path, values)
+	data, err := client.get(context.Background(), path, values)
 	if err != nil {
 		return LabelsResult{}, pluginbinding.Errorf("prometheus", "%s", err)
 	}
@@ -221,7 +221,7 @@ func (s Service) Labels(ctx pluginbinding.Context, input LabelsInput) (LabelsRes
 }
 
 func (s Service) Targets(ctx pluginbinding.Context, input TargetsInput) (TargetsResult, error) {
-	target, err := s.resolveURL(input.URL)
+	target, client, err := s.client(ctx, input.PrometheusTargetInput)
 	if err != nil {
 		return TargetsResult{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
@@ -229,7 +229,7 @@ func (s Service) Targets(ctx pluginbinding.Context, input TargetsInput) (Targets
 	if state := strings.TrimSpace(input.State); state != "" {
 		values.Set("state", state)
 	}
-	data, err := s.client(target).get(context.Background(), "/api/v1/targets", values)
+	data, err := client.get(context.Background(), "/api/v1/targets", values)
 	if err != nil {
 		return TargetsResult{}, pluginbinding.Errorf("prometheus", "%s", err)
 	}
@@ -237,11 +237,11 @@ func (s Service) Targets(ctx pluginbinding.Context, input TargetsInput) (Targets
 }
 
 func (s Service) Alerts(ctx pluginbinding.Context, input TestInput) (AlertsResult, error) {
-	target, err := s.resolveURL(input.URL)
+	target, client, err := s.client(ctx, input.PrometheusTargetInput)
 	if err != nil {
 		return AlertsResult{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
-	data, err := s.client(target).get(context.Background(), "/api/v1/alerts", nil)
+	data, err := client.get(context.Background(), "/api/v1/alerts", nil)
 	if err != nil {
 		return AlertsResult{}, pluginbinding.Errorf("prometheus", "%s", err)
 	}
@@ -369,8 +369,8 @@ func (s Service) AlertsDatasource(ctx pluginbinding.Context, input TestInput) (A
 	return pluginbinding.NewDatasourceSearchResult("live", "", records), nil
 }
 
-func (s Service) query(ctx context.Context, target, query, path string, values url.Values) (QueryResult, error) {
-	data, err := s.client(target).get(ctx, path, values)
+func (s Service) query(ctx context.Context, target string, client Client, query, path string, values url.Values) (QueryResult, error) {
+	data, err := client.get(ctx, path, values)
 	if err != nil {
 		return QueryResult{}, pluginbinding.Errorf("prometheus", "%s", err)
 	}
@@ -384,30 +384,13 @@ func (s Service) query(ctx context.Context, target, query, path string, values u
 	return QueryResult{URL: target, Query: query, ResultType: wrapped.ResultType, Results: wrapped.Result}, nil
 }
 
-func (s Service) client(target string) Client {
-	client := s.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
+func (s Service) client(ctx pluginbinding.Context, input PrometheusTargetInput) (string, Client, error) {
+	_ = s
+	endpointRef := strings.TrimSpace(input.EndpointRef)
+	if endpointRef == "" {
+		return "", Client{}, fmt.Errorf("endpoint_ref is required")
 	}
-	return Client{BaseURL: target, HTTPClient: client}
-}
-
-func (s Service) resolveURL(value string) (string, error) {
-	target := strings.TrimSpace(value)
-	if target == "" {
-		target = strings.TrimSpace(s.DefaultURL)
-	}
-	if target == "" {
-		target = strings.TrimSpace(os.Getenv(EnvPrometheusURL))
-	}
-	if target == "" {
-		return "", fmt.Errorf("prometheus url is required")
-	}
-	parsed, err := url.Parse(target)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("invalid prometheus url %q", target)
-	}
-	return strings.TrimRight(target, "/"), nil
+	return endpointRef, Client{EndpointRef: endpointRef, Host: ctx.Host}, nil
 }
 
 func parseTimeValue(value string, now time.Time) (time.Time, error) {

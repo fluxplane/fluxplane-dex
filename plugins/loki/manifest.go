@@ -7,11 +7,11 @@ import (
 
 const (
 	PluginName        = "loki"
-	PluginVersion     = "0.9.0"
+	PluginVersion     = "0.10.0"
 	PluginDescription = "Loki endpoint discovery, health checks, LogQL queries, recent logs, and labels."
 
-	EnvLokiURL      = "LOKI_URL"
-	EnvLokiTenantID = "LOKI_TENANT_ID"
+	EnvLokiTenantID     = "LOKI_TENANT_ID"
+	AuthPurposeTenantID = "tenant_id"
 
 	OperationTest       = "loki.test"
 	OperationQuery      = "loki.query"
@@ -50,11 +50,10 @@ func manifestSpec() pluginbinding.ManifestSpec {
 		Auth: []core.AuthMethod{{
 			Name:        "endpoint",
 			Kind:        "config",
-			Description: "Loki endpoint URL and optional tenant ID.",
-			Env:         []string{EnvLokiURL, EnvLokiTenantID},
+			Description: "Optional Loki tenant ID used by host-resolved endpoint refs.",
+			Env:         []string{EnvLokiTenantID},
 			Fields: []core.AuthField{
-				pluginbinding.AuthField("url", "Loki base URL", false, false, EnvLokiURL),
-				pluginbinding.AuthField("tenant_id", "Loki tenant ID", false, false, EnvLokiTenantID),
+				pluginbinding.AuthField(AuthPurposeTenantID, "Loki tenant ID", false, false, EnvLokiTenantID),
 			},
 		}},
 	}
@@ -103,6 +102,7 @@ func recentLogsSpec() core.OperationSpec {
 func readOptions(idempotency core.OperationIdempotency) []pluginbinding.OperationSpecOption {
 	return []pluginbinding.OperationSpecOption{
 		pluginbinding.ReadOnly(),
+		pluginbinding.SecretPurposes(AuthPurposeTenantID),
 		pluginbinding.Effects(core.OperationEffectRead, core.OperationEffectNetwork),
 		pluginbinding.Access(core.OperationAccessNetwork),
 		pluginbinding.Risk(core.OperationRiskLow),

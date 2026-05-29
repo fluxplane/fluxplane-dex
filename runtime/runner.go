@@ -3,6 +3,7 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -18,13 +19,28 @@ import (
 )
 
 type Runner struct {
-	Marketplace Marketplace
-	State       State
-	DevPlugins  map[string]string
-	WorkDir     string
-	Timeout     time.Duration
-	HostCommand string
-	EventSink   func(context.Context, PluginEvent)
+	Marketplace  Marketplace
+	State        State
+	DevPlugins   map[string]string
+	WorkDir      string
+	Timeout      time.Duration
+	HostCommand  string
+	EventSink    func(context.Context, PluginEvent)
+	Capabilities CapabilityHost
+	Providers    map[string]HostProvider
+}
+
+type HostProvider interface {
+	Call(ctx context.Context, action string, payload json.RawMessage) (json.RawMessage, error)
+}
+
+type CapabilityHost interface {
+	HTTP(context.Context, pluginbinding.HTTPRequest) (pluginbinding.HTTPResponse, error)
+	BlobRead(context.Context, pluginbinding.BlobReadRequest) (pluginbinding.BlobReadResponse, error)
+	BlobWrite(context.Context, pluginbinding.BlobWriteRequest) (pluginbinding.BlobRef, error)
+	BlobInfo(context.Context, pluginbinding.BlobInfoRequest) (pluginbinding.BlobRef, error)
+	EnvLookup(context.Context, pluginbinding.EnvLookupRequest) (pluginbinding.EnvLookupResponse, error)
+	ProviderCall(context.Context, pluginbinding.ProviderCallRequest) (pluginbinding.ProviderCallResponse, error)
 }
 
 type PluginEvent struct {
@@ -58,12 +74,12 @@ func (r Runner) InvokeInstance(ctx context.Context, pluginName, instance, comman
 	}
 	req.Instance = NormalizeInstance(instance)
 	if command == protocol.CommandOperationsCall || command == protocol.CommandOperationsBatch {
-		if err := r.resolveEndpointRefs(&req); err != nil {
+		if err := r.resolveEndpointRefs(ctx, entry.Name, &req); err != nil {
 			return protocol.Response{}, err
 		}
 	}
 	if isDatasourceCommand(command) {
-		if err := r.resolveDatasourceEndpointRef(&req); err != nil {
+		if err := r.resolveDatasourceEndpointRef(ctx, entry.Name, &req); err != nil {
 			return protocol.Response{}, err
 		}
 	}
@@ -84,17 +100,17 @@ func (r Runner) InvokeInstance(ctx context.Context, pluginName, instance, comman
 		return r.enrichDatasourceResponse(ctx, entry.Name, req.Instance, command, payload, resp)
 	}
 	if command == protocol.CommandOperationsCall || command == protocol.CommandOperationsBatch {
-		operations, purposes := r.operationGrantScope(ctx, entry.Name, payload)
-		grant, err := r.State.CreateGrant(entry.Name, req.Instance, operations, purposes, 5*time.Minute)
+		operations, purposes, capabilities := r.operationGrantScope(ctx, entry.Name, payload)
+		grant, err := r.State.CreateGrantWithCapabilities(entry.Name, req.Instance, operations, purposes, capabilities, 5*time.Minute)
 		if err != nil {
 			return protocol.Response{}, err
 		}
 		req.Grant = grant.Token
 	}
 	if command == protocol.CommandDatasourcesSearch || command == protocol.CommandDatasourcesGet || command == protocol.CommandDatasourcesLookup {
-		operations, purposes := r.datasourceGrantScope(ctx, entry.Name, command, payload)
-		if len(purposes) > 0 {
-			grant, err := r.State.CreateGrant(entry.Name, req.Instance, operations, purposes, 5*time.Minute)
+		operations, purposes, capabilities := r.datasourceGrantScope(ctx, entry.Name, command, payload)
+		if len(purposes) > 0 || len(capabilities) > 0 {
+			grant, err := r.State.CreateGrantWithCapabilities(entry.Name, req.Instance, operations, purposes, capabilities, 5*time.Minute)
 			if err != nil {
 				return protocol.Response{}, err
 			}
@@ -108,17 +124,18 @@ func (r Runner) InvokeInstance(ctx context.Context, pluginName, instance, comman
 	return r.enrichDatasourceResponse(ctx, entry.Name, req.Instance, command, payload, resp)
 }
 
-func (r Runner) resolveEndpointRefs(req *protocol.Request) error {
+func (r Runner) resolveEndpointRefs(ctx context.Context, plugin string, req *protocol.Request) error {
 	if req == nil || len(req.Payload) == 0 {
 		return nil
 	}
+	operationInputs := r.operationInputSchemas(ctx, plugin)
 	switch req.Command {
 	case protocol.CommandOperationsCall:
 		var call protocol.OperationCall
 		if err := json.Unmarshal(req.Payload, &call); err != nil {
 			return nil
 		}
-		changed, err := r.resolveOperationEndpointRef(&call)
+		changed, err := r.resolveOperationEndpointRefWithMode(&call, schemaHasProperty(operationInputs[call.Name], "url") || schemaHasProperty(operationInputs[call.Name], "credential_ref"))
 		if err != nil {
 			return err
 		}
@@ -136,7 +153,8 @@ func (r Runner) resolveEndpointRefs(req *protocol.Request) error {
 		}
 		changed := false
 		for i := range batch.Calls {
-			callChanged, err := r.resolveOperationEndpointRef(&batch.Calls[i])
+			call := &batch.Calls[i]
+			callChanged, err := r.resolveOperationEndpointRefWithMode(call, schemaHasProperty(operationInputs[call.Name], "url") || schemaHasProperty(operationInputs[call.Name], "credential_ref"))
 			if err != nil {
 				return err
 			}
@@ -154,6 +172,10 @@ func (r Runner) resolveEndpointRefs(req *protocol.Request) error {
 }
 
 func (r Runner) resolveOperationEndpointRef(call *protocol.OperationCall) (bool, error) {
+	return r.resolveOperationEndpointRefWithMode(call, true)
+}
+
+func (r Runner) resolveOperationEndpointRefWithMode(call *protocol.OperationCall, inject bool) (bool, error) {
 	if call == nil || len(call.Input) == 0 {
 		return false, nil
 	}
@@ -161,7 +183,7 @@ func (r Runner) resolveOperationEndpointRef(call *protocol.OperationCall) (bool,
 	if err := json.Unmarshal(call.Input, &input); err != nil {
 		return false, nil
 	}
-	changed, err := r.resolveEndpointRefInput(input)
+	changed, err := r.resolveEndpointRefInput(input, inject)
 	if err != nil || !changed {
 		return changed, err
 	}
@@ -173,7 +195,9 @@ func (r Runner) resolveOperationEndpointRef(call *protocol.OperationCall) (bool,
 	return true, nil
 }
 
-func (r Runner) resolveDatasourceEndpointRef(req *protocol.Request) error {
+func (r Runner) resolveDatasourceEndpointRef(ctx context.Context, plugin string, req *protocol.Request) error {
+	_ = ctx
+	_ = plugin
 	if req == nil || len(req.Payload) == 0 {
 		return nil
 	}
@@ -181,7 +205,7 @@ func (r Runner) resolveDatasourceEndpointRef(req *protocol.Request) error {
 	if err := json.Unmarshal(req.Payload, &input); err != nil {
 		return nil
 	}
-	changed, err := r.resolveEndpointRefInput(input)
+	changed, err := r.resolveEndpointRefInput(input, true)
 	if err != nil {
 		return err
 	}
@@ -196,16 +220,13 @@ func (r Runner) resolveDatasourceEndpointRef(req *protocol.Request) error {
 	return nil
 }
 
-func (r Runner) resolveEndpointRefInput(input map[string]any) (bool, error) {
+func (r Runner) resolveEndpointRefInput(input map[string]any, inject bool) (bool, error) {
 	if len(input) == 0 {
 		return false, nil
 	}
 	ref, _ := input["endpoint_ref"].(string)
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
-		return false, nil
-	}
-	if value, _ := input["url"].(string); strings.TrimSpace(value) != "" {
 		return false, nil
 	}
 	endpoint, ok, err := r.State.GetEndpoint(ref)
@@ -215,6 +236,12 @@ func (r Runner) resolveEndpointRefInput(input map[string]any) (bool, error) {
 	if !ok {
 		return false, fmt.Errorf("unknown endpoint_ref %q", ref)
 	}
+	if !inject {
+		return false, nil
+	}
+	if value, _ := input["url"].(string); strings.TrimSpace(value) != "" {
+		return false, nil
+	}
 	input["url"] = endpoint.URL
 	if endpoint.CredentialRef != "" {
 		input["credential_ref"] = endpoint.CredentialRef
@@ -223,6 +250,32 @@ func (r Runner) resolveEndpointRefInput(input map[string]any) (bool, error) {
 		input["endpoint_product"] = endpoint.Product
 	}
 	return true, nil
+}
+
+func (r Runner) operationInputSchemas(ctx context.Context, plugin string) map[string]json.RawMessage {
+	manifest, err := r.manifest(ctx, plugin)
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]json.RawMessage, len(manifest.Operations))
+	for _, operation := range manifest.Operations {
+		out[operation.Name] = operation.Input
+	}
+	return out
+}
+
+func schemaHasProperty(raw json.RawMessage, name string) bool {
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &schema) != nil {
+		return true
+	}
+	if len(schema.Properties) == 0 {
+		return true
+	}
+	_, ok := schema.Properties[name]
+	return ok
 }
 
 type IndexBuildResult struct {
@@ -563,9 +616,221 @@ func (r Runner) handleHostRequest(ctx context.Context, plugin, instance, grant s
 			return protocol.Fail("not_found", "unknown endpoint_ref "+input.EndpointRef)
 		}
 		return protocol.OK(endpoint.EndpointRef)
+	case protocol.HostCapabilityHTTPDo:
+		var input pluginbinding.HTTPRequest
+		if err := json.Unmarshal(frame.Payload, &input); err != nil {
+			return protocol.Fail("bad_payload", err.Error())
+		}
+		if err := r.State.ValidateCapabilityGrant(plugin, instance, grant, CapabilityGrant{Name: pluginbinding.CapabilityHTTP}); err != nil {
+			return protocol.Fail("forbidden", err.Error())
+		}
+		out, err := r.hostHTTP(ctx, plugin, instance, grant, input)
+		if err != nil {
+			return protocol.Fail("host_http", err.Error())
+		}
+		return protocol.OK(out)
+	case protocol.HostCapabilityBlobRead:
+		var input pluginbinding.BlobReadRequest
+		if err := json.Unmarshal(frame.Payload, &input); err != nil {
+			return protocol.Fail("bad_payload", err.Error())
+		}
+		if err := r.State.ValidateCapabilityGrant(plugin, instance, grant, CapabilityGrant{Name: pluginbinding.CapabilityBlobRead}); err != nil {
+			return protocol.Fail("forbidden", err.Error())
+		}
+		out, err := r.hostBlobRead(ctx, input)
+		if err != nil {
+			return protocol.Fail("host_blob", err.Error())
+		}
+		return protocol.OK(out)
+	case protocol.HostCapabilityBlobWrite:
+		var input pluginbinding.BlobWriteRequest
+		if err := json.Unmarshal(frame.Payload, &input); err != nil {
+			return protocol.Fail("bad_payload", err.Error())
+		}
+		if err := r.State.ValidateCapabilityGrant(plugin, instance, grant, CapabilityGrant{Name: pluginbinding.CapabilityBlobWrite}); err != nil {
+			return protocol.Fail("forbidden", err.Error())
+		}
+		out, err := r.hostBlobWrite(ctx, input)
+		if err != nil {
+			return protocol.Fail("host_blob", err.Error())
+		}
+		return protocol.OK(out)
+	case protocol.HostCapabilityBlobInfo:
+		var input pluginbinding.BlobInfoRequest
+		if err := json.Unmarshal(frame.Payload, &input); err != nil {
+			return protocol.Fail("bad_payload", err.Error())
+		}
+		if err := r.State.ValidateCapabilityGrant(plugin, instance, grant, CapabilityGrant{Name: pluginbinding.CapabilityBlobRead}); err != nil {
+			return protocol.Fail("forbidden", err.Error())
+		}
+		out, err := r.hostBlobInfo(ctx, input)
+		if err != nil {
+			return protocol.Fail("host_blob", err.Error())
+		}
+		return protocol.OK(out)
+	case protocol.HostCapabilityEnvLookup:
+		var input pluginbinding.EnvLookupRequest
+		if err := json.Unmarshal(frame.Payload, &input); err != nil {
+			return protocol.Fail("bad_payload", err.Error())
+		}
+		if err := r.State.ValidateCapabilityGrant(plugin, instance, grant, CapabilityGrant{Name: pluginbinding.CapabilityEnvLookup}); err != nil {
+			return protocol.Fail("forbidden", err.Error())
+		}
+		out, err := r.hostEnvLookup(ctx, input)
+		if err != nil {
+			return protocol.Fail("host_env", err.Error())
+		}
+		return protocol.OK(out)
+	case protocol.HostCapabilityProviderCall:
+		var input pluginbinding.ProviderCallRequest
+		if err := json.Unmarshal(frame.Payload, &input); err != nil {
+			return protocol.Fail("bad_payload", err.Error())
+		}
+		requested := CapabilityGrant{Name: pluginbinding.CapabilityProvider, Provider: input.Provider, Action: input.Action}
+		if err := r.State.ValidateCapabilityGrant(plugin, instance, grant, requested); err != nil {
+			return protocol.Fail("forbidden", err.Error())
+		}
+		out, err := r.hostProviderCall(ctx, plugin, instance, grant, input)
+		if err != nil {
+			return protocol.Fail("host_provider", err.Error())
+		}
+		return protocol.OK(out)
 	default:
 		return protocol.Fail("unknown_host_command", "unknown host command "+frame.Command)
 	}
+}
+
+func (r Runner) hostHTTP(ctx context.Context, plugin, instance, grant string, input pluginbinding.HTTPRequest) (pluginbinding.HTTPResponse, error) {
+	resolved, err := r.resolveHTTPRequest(ctx, plugin, instance, grant, input)
+	if err != nil {
+		return pluginbinding.HTTPResponse{}, err
+	}
+	input = resolved
+	return r.capabilityHost().HTTP(ctx, input)
+}
+
+func (r Runner) hostBlobRead(ctx context.Context, input pluginbinding.BlobReadRequest) (pluginbinding.BlobReadResponse, error) {
+	return r.capabilityHost().BlobRead(ctx, input)
+}
+
+func (r Runner) hostBlobWrite(ctx context.Context, input pluginbinding.BlobWriteRequest) (pluginbinding.BlobRef, error) {
+	return r.capabilityHost().BlobWrite(ctx, input)
+}
+
+func (r Runner) hostBlobInfo(ctx context.Context, input pluginbinding.BlobInfoRequest) (pluginbinding.BlobRef, error) {
+	return r.capabilityHost().BlobInfo(ctx, input)
+}
+
+func (r Runner) hostEnvLookup(ctx context.Context, input pluginbinding.EnvLookupRequest) (pluginbinding.EnvLookupResponse, error) {
+	key := strings.TrimSpace(input.Key)
+	if key == "" {
+		return pluginbinding.EnvLookupResponse{}, fmt.Errorf("environment key is empty")
+	}
+	return r.capabilityHost().EnvLookup(ctx, input)
+}
+
+func (r Runner) hostProviderCall(ctx context.Context, plugin, instance, grant string, input pluginbinding.ProviderCallRequest) (pluginbinding.ProviderCallResponse, error) {
+	if strings.TrimSpace(input.Provider) == "sql" {
+		return r.hostSQLProviderCall(ctx, plugin, instance, grant, input)
+	}
+	if strings.TrimSpace(input.Provider) == "docker" {
+		return r.hostDockerProviderCall(ctx, plugin, instance, grant, input)
+	}
+	if strings.TrimSpace(input.Provider) == "kubernetes" {
+		return r.hostKubernetesProviderCall(ctx, plugin, instance, grant, input)
+	}
+	return r.capabilityHost().ProviderCall(ctx, input)
+}
+
+func (r Runner) capabilityHost() CapabilityHost {
+	if r.Capabilities != nil {
+		return r.Capabilities
+	}
+	return NewLocalCapabilityHost("", r.Providers)
+}
+
+func (r Runner) resolveHTTPRequest(ctx context.Context, plugin, instance, grant string, input pluginbinding.HTTPRequest) (pluginbinding.HTTPRequest, error) {
+	if strings.TrimSpace(input.EndpointRef) != "" {
+		if strings.TrimSpace(input.URL) != "" {
+			return pluginbinding.HTTPRequest{}, fmt.Errorf("host HTTP request cannot include both endpoint_ref and url")
+		}
+		endpoint, ok, err := r.State.GetEndpoint(input.EndpointRef)
+		if err != nil {
+			return pluginbinding.HTTPRequest{}, err
+		}
+		if !ok {
+			return pluginbinding.HTTPRequest{}, fmt.Errorf("unknown endpoint_ref %q", input.EndpointRef)
+		}
+		input.URL = endpoint.URL
+	}
+	if input.Auth != nil {
+		headers, err := r.resolveHTTPAuth(ctx, plugin, instance, grant, input.Headers, *input.Auth)
+		if err != nil {
+			return pluginbinding.HTTPRequest{}, err
+		}
+		input.Headers = headers
+	}
+	return input, nil
+}
+
+func (r Runner) resolveHTTPAuth(ctx context.Context, plugin, instance, grant string, headers map[string]string, auth pluginbinding.HTTPAuthRequest) (map[string]string, error) {
+	if strings.TrimSpace(headers["Authorization"]) != "" {
+		return r.resolveHTTPHeaderPurposes(ctx, plugin, instance, grant, headers, auth.HeaderPurposes), nil
+	}
+	if tokenPurpose := strings.TrimSpace(auth.BearerTokenPurpose); tokenPurpose != "" {
+		material, err := r.State.ResolveSecret(ctx, plugin, instance, tokenPurpose, grant)
+		if err == nil && strings.TrimSpace(material.Value) != "" {
+			return r.resolveHTTPHeaderPurposes(ctx, plugin, instance, grant, withHTTPHeader(headers, "Authorization", "Bearer "+strings.TrimSpace(material.Value)), auth.HeaderPurposes), nil
+		}
+	}
+	usernamePurpose := strings.TrimSpace(auth.UsernamePurpose)
+	passwordPurpose := strings.TrimSpace(auth.PasswordPurpose)
+	if usernamePurpose == "" && passwordPurpose == "" {
+		return r.resolveHTTPHeaderPurposes(ctx, plugin, instance, grant, headers, auth.HeaderPurposes), nil
+	}
+	var username, password string
+	if usernamePurpose != "" {
+		material, err := r.State.ResolveSecret(ctx, plugin, instance, usernamePurpose, grant)
+		if err != nil {
+			return nil, err
+		}
+		username = strings.TrimSpace(material.Value)
+	}
+	if passwordPurpose != "" {
+		material, err := r.State.ResolveSecret(ctx, plugin, instance, passwordPurpose, grant)
+		if err != nil {
+			return nil, err
+		}
+		password = strings.TrimSpace(material.Value)
+	}
+	if username == "" && password == "" {
+		return r.resolveHTTPHeaderPurposes(ctx, plugin, instance, grant, headers, auth.HeaderPurposes), nil
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
+	return r.resolveHTTPHeaderPurposes(ctx, plugin, instance, grant, withHTTPHeader(headers, "Authorization", "Basic "+encoded), auth.HeaderPurposes), nil
+}
+
+func (r Runner) resolveHTTPHeaderPurposes(ctx context.Context, plugin, instance, grant string, headers map[string]string, headerPurposes map[string]string) map[string]string {
+	for header, purpose := range headerPurposes {
+		header = strings.TrimSpace(header)
+		purpose = strings.TrimSpace(purpose)
+		if header == "" || purpose == "" || strings.TrimSpace(headers[header]) != "" {
+			continue
+		}
+		material, err := r.State.ResolveSecret(ctx, plugin, instance, purpose, grant)
+		if err == nil && strings.TrimSpace(material.Value) != "" {
+			headers = withHTTPHeader(headers, header, strings.TrimSpace(material.Value))
+		}
+	}
+	return headers
+}
+
+func withHTTPHeader(headers map[string]string, key, value string) map[string]string {
+	if headers == nil {
+		headers = map[string]string{}
+	}
+	headers[key] = value
+	return headers
 }
 
 func rejectCrossPluginHostCall(plugin string, raw json.RawMessage) error {
@@ -779,10 +1044,10 @@ func dedupeStrings(values []string) []string {
 	return out
 }
 
-func (r Runner) operationGrantScope(ctx context.Context, plugin string, payload any) ([]string, []SecretPurpose) {
+func (r Runner) operationGrantScope(ctx context.Context, plugin string, payload any) ([]string, []SecretPurpose, []CapabilityGrant) {
 	manifest, err := r.manifest(ctx, plugin)
 	if err != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	byName := map[string]core.OperationSpec{}
 	for _, op := range manifest.Operations {
@@ -791,9 +1056,11 @@ func (r Runner) operationGrantScope(ctx context.Context, plugin string, payload 
 	authEnv := manifestAuthEnv(manifest)
 	var operations []string
 	purposeByName := map[string]SecretPurpose{}
+	var capabilities []CapabilityGrant
 	for _, call := range operationCalls(payload) {
 		operations = append(operations, call.Name)
 		if spec, ok := byName[call.Name]; ok {
+			capabilities = append(capabilities, operationCapabilityGrants(spec)...)
 			for _, purpose := range spec.SecretPurposes {
 				if purpose == "" {
 					continue
@@ -806,13 +1073,13 @@ func (r Runner) operationGrantScope(ctx context.Context, plugin string, payload 
 	for _, purpose := range purposeByName {
 		purposes = append(purposes, purpose)
 	}
-	return operations, purposes
+	return operations, purposes, normalizeCapabilityGrants(capabilities)
 }
 
-func (r Runner) datasourceGrantScope(ctx context.Context, plugin, command string, payload any) ([]string, []SecretPurpose) {
+func (r Runner) datasourceGrantScope(ctx context.Context, plugin, command string, payload any) ([]string, []SecretPurpose, []CapabilityGrant) {
 	manifest, err := r.manifest(ctx, plugin)
 	if err != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	authEnv := manifestAuthEnv(manifest)
 	capability := datasourceCommandCapability(command)
@@ -831,6 +1098,7 @@ func (r Runner) datasourceGrantScope(ctx context.Context, plugin, command string
 		datasourceName = getPayloadDatasource(payload)
 	}
 	purposeByName := map[string]SecretPurpose{}
+	var capabilities []CapabilityGrant
 	for _, datasource := range manifest.Datasources {
 		if datasourceName != "" && datasource.Name != datasourceName {
 			continue
@@ -841,6 +1109,7 @@ func (r Runner) datasourceGrantScope(ctx context.Context, plugin, command string
 		if capability != "" && !containsString(datasource.Capabilities, capability) {
 			continue
 		}
+		capabilities = append(capabilities, datasourceCapabilityGrants(datasource)...)
 		for _, purpose := range datasource.SecretPurposes {
 			if strings.TrimSpace(purpose) == "" {
 				continue
@@ -852,7 +1121,65 @@ func (r Runner) datasourceGrantScope(ctx context.Context, plugin, command string
 	for _, purpose := range purposeByName {
 		purposes = append(purposes, purpose)
 	}
-	return []string{command}, purposes
+	return []string{command}, purposes, normalizeCapabilityGrants(capabilities)
+}
+
+func operationCapabilityGrants(spec core.OperationSpec) []CapabilityGrant {
+	var out []CapabilityGrant
+	hasProviderAccess := operationHasAccess(spec, core.OperationAccessProvider)
+	for _, access := range spec.Access {
+		switch access {
+		case core.OperationAccessNetwork:
+			if !hasProviderAccess {
+				out = append(out, CapabilityGrant{Name: pluginbinding.CapabilityHTTP})
+			}
+		case core.OperationAccessProvider:
+			out = append(out, CapabilityGrant{Name: pluginbinding.CapabilityProvider, Provider: operationProvider(spec.Name), Action: "*"})
+		case core.OperationAccessFilesystem:
+			if spec.ReadOnly || operationHasEffect(spec, core.OperationEffectRead) || !operationHasEffect(spec, core.OperationEffectWrite) {
+				out = append(out, CapabilityGrant{Name: pluginbinding.CapabilityBlobRead})
+			}
+			if !spec.ReadOnly && operationHasEffect(spec, core.OperationEffectWrite) {
+				out = append(out, CapabilityGrant{Name: pluginbinding.CapabilityBlobWrite})
+			}
+		case core.OperationAccessProcess, core.OperationAccessBrowser:
+			out = append(out, CapabilityGrant{Name: pluginbinding.CapabilityProvider, Provider: "*", Action: "*"})
+		}
+	}
+	return out
+}
+
+func operationHasAccess(spec core.OperationSpec, access core.OperationAccess) bool {
+	for _, candidate := range spec.Access {
+		if candidate == access {
+			return true
+		}
+	}
+	return false
+}
+
+func operationProvider(name string) string {
+	provider, _, ok := strings.Cut(strings.TrimSpace(name), ".")
+	if !ok || strings.TrimSpace(provider) == "" {
+		return "*"
+	}
+	return strings.TrimSpace(provider)
+}
+
+func operationHasEffect(spec core.OperationSpec, effect core.OperationEffect) bool {
+	for _, candidate := range spec.Effects {
+		if candidate == effect {
+			return true
+		}
+	}
+	return false
+}
+
+func datasourceCapabilityGrants(spec core.DatasourceSpec) []CapabilityGrant {
+	if len(spec.SecretPurposes) == 0 {
+		return nil
+	}
+	return []CapabilityGrant{{Name: pluginbinding.CapabilityHTTP}}
 }
 
 func manifestAuthEnv(manifest core.PluginManifest) map[string][]string {

@@ -3,31 +3,28 @@ package confluence
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"testing"
 
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding/plugintest"
-	"github.com/fluxplane/fluxplane-dex/internal/atlassian"
 )
 
-func TestServiceBuildsClientFromResolvedSecrets(t *testing.T) {
+func TestServiceBuildsClientFromEndpointRef(t *testing.T) {
 	client := &fakeClient{user: User{AccountID: "acct-1", DisplayName: "Ada"}}
-	var captured atlassian.Credentials
+	var capturedEndpointRef string
 	plugin := NewPluginWithService(Service{
-		SecretGetter: testSecretGetter,
-		ClientFactory: func(credentials atlassian.Credentials) (Client, error) {
-			captured = credentials
+		ClientFactory: func(_ pluginbinding.Context, endpointRef string) (Client, error) {
+			capturedEndpointRef = endpointRef
 			return client, nil
 		},
 	})
 
-	out := plugintest.RunOK[AuthTestResult](t, plugin, OperationAuthTest, map[string]any{})
+	out := plugintest.RunOK[AuthTestResult](t, plugin, OperationAuthTest, map[string]any{"endpoint_ref": "confluence-dev"})
 	if out.Status != "ok" || out.User.AccountID != "acct-1" {
 		t.Fatalf("auth output = %#v", out)
 	}
-	if captured.BaseURL != "https://api.atlassian.com/ex/confluence/cloud-123" || captured.CloudID.Value != "cloud-123" || captured.Token.Value != "token" {
-		t.Fatalf("credentials = %#v", captured)
+	if capturedEndpointRef != "confluence-dev" {
+		t.Fatalf("endpoint_ref = %q", capturedEndpointRef)
 	}
 }
 
@@ -149,18 +146,7 @@ func TestPageMutationOperations(t *testing.T) {
 }
 
 func testPlugin(client Client) *pluginbinding.Plugin {
-	return NewPluginWithService(Service{SecretGetter: testSecretGetter, ClientFactory: func(atlassian.Credentials) (Client, error) { return client, nil }})
-}
-
-func testSecretGetter(_ pluginbinding.Context, purpose string) (pluginbinding.SecretMaterial, error) {
-	switch purpose {
-	case AuthPurposeAPIToken:
-		return pluginbinding.SecretMaterial{Value: "token"}, nil
-	case AuthPurposeCloudID:
-		return pluginbinding.SecretMaterial{Value: "cloud-123"}, nil
-	default:
-		return pluginbinding.SecretMaterial{}, errors.New("unexpected purpose")
-	}
+	return NewPluginWithService(Service{ClientFactory: func(pluginbinding.Context, string) (Client, error) { return client, nil }})
 }
 
 type fakeClient struct {

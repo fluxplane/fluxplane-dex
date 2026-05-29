@@ -11,7 +11,6 @@ func NewPlugin() *pluginbinding.Plugin {
 
 func NewPluginWithService(service Service) *pluginbinding.Plugin {
 	return pluginbinding.Define(manifestSpec(),
-		pluginbinding.WithSecretGetter(service.SecretGetter),
 		pluginbinding.WithAuthTestOperation(OperationAuthTest),
 		pluginbinding.WithIndexBuildOperation(OperationIndexBuild),
 		pluginbinding.WithHostOwnedIndexStatus("Slack"),

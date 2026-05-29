@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"mime"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -25,37 +24,13 @@ type AttachmentUploadRequest struct {
 }
 
 // BuildAttachmentUploadRequest validates and normalizes an attachment upload.
-// Exactly one of filePath / contentBytes must be set. Filename defaults to the
-// file base name; ContentType defaults to the mime type guessed from the
-// extension.
-func BuildAttachmentUploadRequest(filePath string, contentBytes []byte, filename, contentType string) (AttachmentUploadRequest, error) {
-	filePath = strings.TrimSpace(filePath)
-	hasFile := filePath != ""
-	hasBytes := len(contentBytes) > 0
-	if hasFile == hasBytes {
-		return AttachmentUploadRequest{}, errors.New("provide exactly one of file_path or content_bytes")
+// ContentType defaults to the mime type guessed from the extension.
+func BuildAttachmentUploadRequest(contentBytes []byte, filename, contentType string) (AttachmentUploadRequest, error) {
+	if len(contentBytes) == 0 {
+		return AttachmentUploadRequest{}, errors.New("content_bytes is required")
 	}
-	var data []byte
-	if hasFile {
-		info, err := os.Stat(filePath)
-		if err != nil {
-			return AttachmentUploadRequest{}, err
-		}
-		if info.Size() > MaxAttachmentUploadBytes {
-			return AttachmentUploadRequest{}, fmt.Errorf("attachment %s exceeds %d byte cap", filePath, MaxAttachmentUploadBytes)
-		}
-		data, err = os.ReadFile(filePath)
-		if err != nil {
-			return AttachmentUploadRequest{}, err
-		}
-		if strings.TrimSpace(filename) == "" {
-			filename = filepath.Base(filePath)
-		}
-	} else {
-		if int64(len(contentBytes)) > MaxAttachmentUploadBytes {
-			return AttachmentUploadRequest{}, fmt.Errorf("content_bytes exceeds %d byte cap", MaxAttachmentUploadBytes)
-		}
-		data = append([]byte(nil), contentBytes...)
+	if int64(len(contentBytes)) > MaxAttachmentUploadBytes {
+		return AttachmentUploadRequest{}, fmt.Errorf("content_bytes exceeds %d byte cap", MaxAttachmentUploadBytes)
 	}
 	filename = strings.TrimSpace(filename)
 	if filename == "" {
@@ -65,27 +40,7 @@ func BuildAttachmentUploadRequest(filePath string, contentBytes []byte, filename
 	if contentType == "" {
 		contentType = mime.TypeByExtension(filepath.Ext(filename))
 	}
-	return AttachmentUploadRequest{Filename: filename, ContentType: contentType, Data: data}, nil
-}
-
-// WriteAttachment writes downloaded attachment bytes to outputPath. If
-// outputPath is an existing directory, filename is appended; otherwise
-// outputPath is treated as the destination file. Parent directories are
-// created with mode 0o755 and the file is written with mode 0o600.
-func WriteAttachment(outputPath, filename string, data []byte) (string, error) {
-	info, err := os.Stat(outputPath)
-	if err == nil && info.IsDir() {
-		outputPath = filepath.Join(outputPath, filename)
-	}
-	if dir := filepath.Dir(outputPath); dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return "", err
-		}
-	}
-	if err := os.WriteFile(outputPath, data, 0o600); err != nil {
-		return "", err
-	}
-	return outputPath, nil
+	return AttachmentUploadRequest{Filename: filename, ContentType: contentType, Data: append([]byte(nil), contentBytes...)}, nil
 }
 
 // FirstNonEmpty returns the first value that has non-whitespace content,

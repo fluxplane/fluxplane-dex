@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"context"
 	"strings"
 
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
@@ -10,13 +9,10 @@ import (
 
 const defaultVisionModel = "gpt-4.1-mini"
 
-type Service struct {
-	Client       Client
-	SecretGetter pluginbinding.SecretGetter
-}
+type Service struct{}
 
 func NewService() Service {
-	return Service{Client: NewClient()}
+	return Service{}
 }
 
 func (s Service) ImageGenerate(ctx pluginbinding.Context, input ImageGenerateInput) (ImageGenerateResult, error) {
@@ -24,7 +20,7 @@ func (s Service) ImageGenerate(ctx pluginbinding.Context, input ImageGenerateInp
 	if prompt == "" {
 		return ImageGenerateResult{}, pluginbinding.Fail("bad_input", "prompt is required")
 	}
-	client, err := s.authedClient(ctx)
+	client, err := s.client(ctx, input.OpenAITargetInput)
 	if err != nil {
 		return ImageGenerateResult{}, err
 	}
@@ -63,7 +59,7 @@ func (s Service) ImageGenerate(ctx pluginbinding.Context, input ImageGenerateInp
 		body["user"] = input.User
 	}
 	var out ImageGenerateResult
-	if err := client.post(context.Background(), "/images/generations", body, &out); err != nil {
+	if err := client.post("/images/generations", body, &out); err != nil {
 		return ImageGenerateResult{}, pluginbinding.Errorf("openai", "%s", err)
 	}
 	return out, nil
@@ -73,7 +69,7 @@ func (s Service) VisionAnalyze(ctx pluginbinding.Context, input vision.AnalyzeIn
 	if err := vision.ValidateImages(input.Images); err != nil {
 		return vision.AnalyzeOutput{}, err
 	}
-	client, err := s.authedClient(ctx)
+	client, err := s.client(ctx, OpenAITargetInput{EndpointRef: input.EndpointRef})
 	if err != nil {
 		return vision.AnalyzeOutput{}, err
 	}
@@ -84,7 +80,7 @@ func (s Service) VisionAnalyze(ctx pluginbinding.Context, input vision.AnalyzeIn
 			"content": nil,
 		}},
 	}
-	content, err := openAIVisionContent(input)
+	content, err := openAIVisionContent(ctx, input)
 	if err != nil {
 		return vision.AnalyzeOutput{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
@@ -96,7 +92,7 @@ func (s Service) VisionAnalyze(ctx pluginbinding.Context, input vision.AnalyzeIn
 		body["temperature"] = *input.Temperature
 	}
 	var out responsesOutput
-	if err := client.post(context.Background(), "/responses", body, &out); err != nil {
+	if err := client.post("/responses", body, &out); err != nil {
 		return vision.AnalyzeOutput{}, pluginbinding.Errorf("openai", "%s", err)
 	}
 	text := responseOutputText(out)
@@ -111,39 +107,35 @@ func (s Service) VisionAnalyze(ctx pluginbinding.Context, input vision.AnalyzeIn
 	}}}, nil
 }
 
-func (s Service) ModelList(ctx pluginbinding.Context, _ ModelListInput) (pluginbinding.ListResult[Model], error) {
-	client, err := s.authedClient(ctx)
+func (s Service) ModelList(ctx pluginbinding.Context, input ModelListInput) (pluginbinding.ListResult[Model], error) {
+	client, err := s.client(ctx, input.OpenAITargetInput)
 	if err != nil {
 		return pluginbinding.ListResult[Model]{}, err
 	}
 	var resp struct {
 		Data []Model `json:"data"`
 	}
-	if err := client.get(context.Background(), "/models", &resp); err != nil {
+	if err := client.get("/models", &resp); err != nil {
 		return pluginbinding.ListResult[Model]{}, pluginbinding.Errorf("openai", "%s", err)
 	}
 	return pluginbinding.NewListResult(resp.Data), nil
 }
 
-func (s Service) authedClient(ctx pluginbinding.Context) (Client, error) {
-	client := s.Client
-	if strings.TrimSpace(client.APIKey) == "" {
-		key, err := ctx.RequiredSecret(AuthPurposeAPIKey)
-		if err != nil {
-			return Client{}, err
-		}
-		client.APIKey = strings.TrimSpace(key.Value)
+func (s Service) client(ctx pluginbinding.Context, target OpenAITargetInput) (Client, error) {
+	endpointRef := strings.TrimSpace(target.EndpointRef)
+	if endpointRef == "" {
+		return Client{}, pluginbinding.Fail("bad_input", "endpoint_ref is required")
 	}
-	return client, nil
+	return Client{EndpointRef: endpointRef, Host: ctx.Host}, nil
 }
 
-func openAIVisionContent(input vision.AnalyzeInput) ([]map[string]any, error) {
+func openAIVisionContent(ctx pluginbinding.Context, input vision.AnalyzeInput) ([]map[string]any, error) {
 	content := []map[string]any{{
 		"type": "input_text",
 		"text": vision.NormalizePrompt(input.Prompt),
 	}}
 	for _, image := range input.Images {
-		imageURL, err := vision.DataURL(image)
+		imageURL, err := openAIVisionImageURL(ctx, image)
 		if err != nil {
 			return nil, err
 		}
@@ -157,6 +149,19 @@ func openAIVisionContent(input vision.AnalyzeInput) ([]map[string]any, error) {
 		content = append(content, item)
 	}
 	return content, nil
+}
+
+func openAIVisionImageURL(ctx pluginbinding.Context, image vision.ImageInput) (string, error) {
+	if strings.TrimSpace(image.BlobRef) == "" {
+		return vision.DataURL(image)
+	}
+	blob, err := ctx.Host.BlobRead(pluginbinding.BlobReadRequest{Ref: image.BlobRef})
+	if err != nil {
+		return "", err
+	}
+	filename := firstNonEmpty(image.Filename, blob.Blob.Filename, blob.Blob.Path)
+	mediaType := firstNonEmpty(image.MediaType, blob.Blob.MediaType)
+	return vision.DataURLFromBytes(blob.Content, mediaType, filename), nil
 }
 
 func responseOutputText(out responsesOutput) string {

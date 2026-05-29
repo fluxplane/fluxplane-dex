@@ -2,7 +2,6 @@ package gitlab
 
 import (
 	"encoding/json"
-	"errors"
 	"testing"
 
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
@@ -13,7 +12,7 @@ func TestServiceProjectListUsesClient(t *testing.T) {
 	client := &fakeClient{
 		projects: []Project{{ID: 1, Name: "dex", PathWithNamespace: "group/dex"}},
 	}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[pluginbinding.ListResult[Project]](t, plugin, OperationProjectList, map[string]any{
 		"limit":  5,
@@ -29,7 +28,7 @@ func TestServiceProjectListUsesClient(t *testing.T) {
 
 func TestServiceProjectShowParsesNumericID(t *testing.T) {
 	client := &fakeClient{project: Project{ID: 42, Name: "dex", PathWithNamespace: "group/dex", WebURL: "https://gitlab.example.com/group/dex"}}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[Project](t, plugin, OperationProjectShow, map[string]any{"id": 42})
 	if client.projectID != int64(42) {
@@ -42,7 +41,7 @@ func TestServiceProjectShowParsesNumericID(t *testing.T) {
 
 func TestServiceMRShowParsesReference(t *testing.T) {
 	client := &fakeClient{mergeRequest: MergeRequest{IID: 7, ProjectID: 42, Title: "Update"}}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[pluginbinding.ShowResult[MergeRequest]](t, plugin, OperationMRShow, map[string]any{"ref": "group/dex!7"})
 	if client.mrProject != "group/dex" || client.mrIID != 7 {
@@ -57,7 +56,7 @@ func TestServiceMRListUsesProjectPathAndOptions(t *testing.T) {
 	client := &fakeClient{
 		mergeRequests: []MergeRequest{{IID: 11, ProjectID: 42, Title: "Ship"}},
 	}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[pluginbinding.ListResult[MergeRequest]](t, plugin, OperationMRList, map[string]any{
 		"project":  "group/dex",
@@ -80,7 +79,7 @@ func TestServiceMRListUsesProjectPathAndOptions(t *testing.T) {
 
 func TestServiceMRListDefaultsAndNumericProject(t *testing.T) {
 	client := &fakeClient{}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	plugintest.RunOK[pluginbinding.ListResult[MergeRequest]](t, plugin, OperationMRList, map[string]any{"project": "42"})
 	if client.mrListOptions.Project != "42" || client.mrListOptions.State != "opened" || client.mrListOptions.Limit != 20 {
@@ -93,7 +92,7 @@ func TestServiceMRListDefaultsAndNumericProject(t *testing.T) {
 
 func TestServiceMRCreateUsesClient(t *testing.T) {
 	client := &fakeClient{mergeRequest: MergeRequest{IID: 12, ProjectID: 42, Title: "Ship"}}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[MergeRequest](t, plugin, OperationMRCreate, map[string]any{
 		"project":              "group/dex",
@@ -125,7 +124,7 @@ func TestServiceMRCreateUsesClient(t *testing.T) {
 
 func TestServiceMRApproveUsesRefAndSHA(t *testing.T) {
 	client := &fakeClient{approval: MergeRequestApproval{IID: 12, ProjectID: 42, Approved: true}}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[MergeRequestApproval](t, plugin, OperationMRApprove, map[string]any{"ref": "group/dex!12", "sha": "abc"})
 	if client.mrApproveProject != "group/dex" || client.mrApproveIID != 12 || client.mrApproveOptions.SHA != "abc" {
@@ -138,7 +137,7 @@ func TestServiceMRApproveUsesRefAndSHA(t *testing.T) {
 
 func TestServiceMRMergeUsesProjectIIDAndOptions(t *testing.T) {
 	client := &fakeClient{mergeRequest: MergeRequest{IID: 12, ProjectID: 42, State: "merged"}}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[MergeRequest](t, plugin, OperationMRMerge, map[string]any{
 		"project":               "group/dex",
@@ -166,7 +165,7 @@ func TestServiceMRMergeUsesProjectIIDAndOptions(t *testing.T) {
 
 func TestServiceBranchCreateUsesClient(t *testing.T) {
 	client := &fakeClient{branch: Branch{Name: "feature/x", WebURL: "https://gitlab.example.com/group/dex/-/tree/feature/x"}}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[Branch](t, plugin, OperationBranchCreate, map[string]any{
 		"project": "group/dex",
@@ -186,7 +185,7 @@ func TestServiceBranchCreateUsesClient(t *testing.T) {
 
 func TestServiceBranchCreateValidatesInput(t *testing.T) {
 	client := &fakeClient{}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 	plugintest.RunError(t, plugin, OperationBranchCreate, map[string]any{"branch": "x", "ref": "main"})
 	plugintest.RunError(t, plugin, OperationBranchCreate, map[string]any{"project": "p", "ref": "main"})
 	plugintest.RunError(t, plugin, OperationBranchCreate, map[string]any{"project": "p", "branch": "x"})
@@ -194,7 +193,7 @@ func TestServiceBranchCreateValidatesInput(t *testing.T) {
 
 func TestServiceBranchDeleteUsesClient(t *testing.T) {
 	client := &fakeClient{}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[BranchActionResult](t, plugin, OperationBranchDelete, map[string]any{
 		"project": "group/dex",
@@ -210,7 +209,7 @@ func TestServiceBranchDeleteUsesClient(t *testing.T) {
 
 func TestServiceBranchDeleteMergedUsesClient(t *testing.T) {
 	client := &fakeClient{}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	plugintest.RunOK[BranchActionResult](t, plugin, OperationBranchDeleteMerged, map[string]any{"project": "group/dex"})
 	if client.mergedBranchProject != "group/dex" {
@@ -220,7 +219,7 @@ func TestServiceBranchDeleteMergedUsesClient(t *testing.T) {
 
 func TestServiceRepoFileCreateUsesClient(t *testing.T) {
 	client := &fakeClient{repoFile: RepoFile{FilePath: "README.md", Branch: "main"}}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[RepoFile](t, plugin, OperationRepoFileCreate, map[string]any{
 		"project":        "group/dex",
@@ -242,7 +241,7 @@ func TestServiceRepoFileCreateUsesClient(t *testing.T) {
 
 func TestServiceRepoFileCreateRequiresContent(t *testing.T) {
 	client := &fakeClient{}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 	plugintest.RunError(t, plugin, OperationRepoFileCreate, map[string]any{
 		"project":        "group/dex",
 		"file_path":      "README.md",
@@ -253,7 +252,7 @@ func TestServiceRepoFileCreateRequiresContent(t *testing.T) {
 
 func TestServiceRepoFileUpdateUsesClient(t *testing.T) {
 	client := &fakeClient{repoFile: RepoFile{FilePath: "README.md", Branch: "main"}}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	plugintest.RunOK[RepoFile](t, plugin, OperationRepoFileUpdate, map[string]any{
 		"project":        "group/dex",
@@ -270,7 +269,7 @@ func TestServiceRepoFileUpdateUsesClient(t *testing.T) {
 
 func TestServiceRepoFileDeleteUsesClient(t *testing.T) {
 	client := &fakeClient{}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[RepoFileActionResult](t, plugin, OperationRepoFileDelete, map[string]any{
 		"project":        "group/dex",
@@ -288,7 +287,7 @@ func TestServiceRepoFileDeleteUsesClient(t *testing.T) {
 
 func TestServiceCommitCreateUsesClient(t *testing.T) {
 	client := &fakeClient{commit: Commit{ID: "deadbeef", ShortID: "dead", Title: "init"}}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[Commit](t, plugin, OperationCommitCreate, map[string]any{
 		"project":        "group/dex",
@@ -312,7 +311,7 @@ func TestServiceCommitCreateUsesClient(t *testing.T) {
 
 func TestServiceCommitCreateValidatesActions(t *testing.T) {
 	client := &fakeClient{}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 	plugintest.RunError(t, plugin, OperationCommitCreate, map[string]any{
 		"project":        "group/dex",
 		"branch":         "main",
@@ -338,7 +337,7 @@ func TestServiceCommitCreateValidatesActions(t *testing.T) {
 
 func TestServiceCIVariableCreateUsesClient(t *testing.T) {
 	client := &fakeClient{ciVariable: CIVariable{Key: "K", Value: "V", EnvironmentScope: "*"}}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[CIVariable](t, plugin, OperationCIVariableCreate, map[string]any{
 		"project":           "group/dex",
@@ -357,7 +356,7 @@ func TestServiceCIVariableCreateUsesClient(t *testing.T) {
 
 func TestServiceCIVariableUpdateUsesClient(t *testing.T) {
 	client := &fakeClient{ciVariable: CIVariable{Key: "K", Value: "V2"}}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	plugintest.RunOK[CIVariable](t, plugin, OperationCIVariableUpdate, map[string]any{
 		"project": "group/dex",
@@ -371,7 +370,7 @@ func TestServiceCIVariableUpdateUsesClient(t *testing.T) {
 
 func TestServiceCIVariableDeleteUsesClient(t *testing.T) {
 	client := &fakeClient{}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	plugintest.RunOK[CIVariableActionResult](t, plugin, OperationCIVariableDelete, map[string]any{
 		"project":           "group/dex",
@@ -385,7 +384,7 @@ func TestServiceCIVariableDeleteUsesClient(t *testing.T) {
 
 func TestServicePipelineCreateUsesClient(t *testing.T) {
 	client := &fakeClient{pipeline: Pipeline{ID: 5, Ref: "main", Status: "pending"}}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[Pipeline](t, plugin, OperationPipelineCreate, map[string]any{
 		"project": "group/dex",
@@ -407,7 +406,7 @@ func TestServicePipelineCreateUsesClient(t *testing.T) {
 
 func TestServicePipelineRetryAndCancelUseClient(t *testing.T) {
 	client := &fakeClient{pipeline: Pipeline{ID: 7, Status: "running"}}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	plugintest.RunOK[Pipeline](t, plugin, OperationPipelineRetry, map[string]any{"project": "group/dex", "pipeline_id": 7})
 	if client.pipelineRetryProj != "group/dex" || client.pipelineRetryID != 7 {
@@ -422,13 +421,13 @@ func TestServicePipelineRetryAndCancelUseClient(t *testing.T) {
 
 func TestServicePipelineRetryRequiresID(t *testing.T) {
 	client := &fakeClient{}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 	plugintest.RunError(t, plugin, OperationPipelineRetry, map[string]any{"project": "group/dex"})
 }
 
 func TestServiceSnippetCreateUsesClient(t *testing.T) {
 	client := &fakeClient{snippet: Snippet{ID: 99, Title: "Note"}}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[Snippet](t, plugin, OperationSnippetCreate, map[string]any{
 		"title":      "Note",
@@ -450,7 +449,7 @@ func TestServiceSnippetCreateUsesClient(t *testing.T) {
 
 func TestServiceSnippetCreateRejectsInvalidVisibility(t *testing.T) {
 	client := &fakeClient{}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 	plugintest.RunError(t, plugin, OperationSnippetCreate, map[string]any{
 		"title":      "Note",
 		"visibility": "secret",
@@ -462,7 +461,7 @@ func TestServiceSnippetCreateRejectsInvalidVisibility(t *testing.T) {
 
 func TestServiceSnippetDeleteUsesClient(t *testing.T) {
 	client := &fakeClient{}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	plugintest.RunOK[SnippetActionResult](t, plugin, OperationSnippetDelete, map[string]any{"snippet_id": 99})
 	if client.snippetDeleted != 99 {
@@ -472,7 +471,7 @@ func TestServiceSnippetDeleteUsesClient(t *testing.T) {
 
 func TestServiceRepositoryTagCreateUsesClient(t *testing.T) {
 	client := &fakeClient{repositoryTag: RepositoryTag{Name: "v1.2.3", Target: "abc"}}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[RepositoryTag](t, plugin, OperationTagCreate, map[string]any{
 		"project":  "group/dex",
@@ -501,7 +500,7 @@ func TestServiceIndexBuildReturnsNormalizedRecords(t *testing.T) {
 			ID: 5, IID: 6, ProjectID: 1, Title: "Ship", WebURL: "https://gitlab.example.com/group/dex/-/merge_requests/6", Reference: "group/dex!6",
 		}},
 	}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[struct {
 		Index   string          `json:"index"`
@@ -544,7 +543,7 @@ func TestServiceIndexBuildCanTargetOneIndex(t *testing.T) {
 	client := &fakeClient{
 		groups: []Group{{ID: 2, Name: "group", FullPath: "group", WebURL: "https://gitlab.example.com/group"}},
 	}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.RunOK[struct {
 		Indexes []struct {
@@ -567,7 +566,7 @@ func TestServiceLookupUsesSharedDatasourceShape(t *testing.T) {
 		mergeRequest:  MergeRequest{ID: 5, IID: 6, ProjectID: 1, Title: "Ship", WebURL: "https://gitlab.example.com/group/dex/-/merge_requests/6", Reference: "group/dex!6"},
 		mergeRequests: []MergeRequest{{ID: 7, IID: 8, ProjectID: 1, Title: "Timo change", WebURL: "https://gitlab.example.com/group/dex/-/merge_requests/8", Reference: "group/dex!8"}},
 	}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.DatasourceLookupOK[LookupResult](t, plugin, map[string]any{"text": "look at https://gitlab.example.com/group/dex/-/merge_requests/6 with timo", "limit": 10}, plugintest.WithInstance("work"))
 	if out.Source != PluginName || out.Count < 3 {
@@ -589,7 +588,7 @@ func TestServiceLookupCanFilterEntity(t *testing.T) {
 		projects: []Project{{ID: 1, Name: "timo", PathWithNamespace: "group/timo", WebURL: "https://gitlab.example.com/group/timo"}},
 		users:    []User{{ID: 9, Username: "timo", Name: "Timo Friedl", WebURL: "https://gitlab.example.com/timo"}},
 	}
-	plugin := testPlugin(client, nil)
+	plugin := testPlugin(client)
 
 	out := plugintest.DatasourceLookupOK[LookupResult](t, plugin, map[string]any{"text": "timo", "entity": EntityUser})
 	if out.Count != 1 || out.Matches[0].Entity != EntityUser || out.Matches[0].ID != "timo" {
@@ -600,39 +599,24 @@ func TestServiceLookupCanFilterEntity(t *testing.T) {
 	}
 }
 
-func TestServiceBuildsClientFromResolvedSecrets(t *testing.T) {
+func TestServiceBuildsClientFromHostContext(t *testing.T) {
 	client := &fakeClient{user: User{ID: 9, Username: "timo"}}
-	var captured SecretSet
+	var captured pluginbinding.Context
 	plugin := NewPluginWithService(Service{
-		SecretGetter: func(_ pluginbinding.Context, purpose string) (pluginbinding.SecretMaterial, error) {
-			switch purpose {
-			case "access_token":
-				return pluginbinding.SecretMaterial{Value: "token", Source: "store"}, nil
-			case "gitlab_url":
-				return pluginbinding.SecretMaterial{Kind: "config", Value: "https://gitlab.example.com", Source: "store"}, nil
-			default:
-				return pluginbinding.SecretMaterial{}, errors.New("unexpected purpose")
-			}
-		},
-		ClientFactory: func(secrets SecretSet) (Client, error) {
-			captured = secrets
+		ClientFactory: func(ctx pluginbinding.Context) (Client, error) {
+			captured = ctx
 			return client, nil
 		},
 	})
 
 	plugintest.RunOK[AuthTestResult](t, plugin, OperationAuthTest, map[string]any{}, plugintest.WithInstance("work"))
-	if captured.AccessToken.Value != "token" || captured.GitLabURL.Value != "https://gitlab.example.com" {
-		t.Fatalf("captured secrets = %#v", captured)
+	if captured.Request.Instance != "work" || captured.Host == nil {
+		t.Fatalf("captured context = %#v", captured)
 	}
 }
 
-func testPlugin(client Client, get pluginbinding.SecretGetter) *pluginbinding.Plugin {
-	if get == nil {
-		get = func(_ pluginbinding.Context, purpose string) (pluginbinding.SecretMaterial, error) {
-			return pluginbinding.SecretMaterial{Value: purpose}, nil
-		}
-	}
-	return NewPluginWithService(Service{SecretGetter: get, ClientFactory: func(SecretSet) (Client, error) { return client, nil }})
+func testPlugin(client Client) *pluginbinding.Plugin {
+	return NewPluginWithService(Service{ClientFactory: func(pluginbinding.Context) (Client, error) { return client, nil }})
 }
 
 type fakeClient struct {

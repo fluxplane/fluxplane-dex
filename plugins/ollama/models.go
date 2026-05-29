@@ -51,18 +51,30 @@ type ModelInfo struct {
 	Capabilities []string       `json:"capabilities,omitempty"`
 }
 
-type InfoInput struct{}
+type OllamaTargetInput struct {
+	EndpointRef string `json:"endpoint_ref,omitempty" jsonschema:"required,description=Registered Ollama endpoint ref resolved by the host."`
+}
 
-type ModelListInput struct{}
+type InfoInput struct {
+	OllamaTargetInput
+}
+
+type ModelListInput struct {
+	OllamaTargetInput
+}
 
 type ModelShowInput struct {
+	OllamaTargetInput
 	Name    string `json:"name,omitempty" jsonschema:"required,description=Model name (e.g. llama3:8b)."`
 	Verbose bool   `json:"verbose,omitempty" jsonschema:"description=Include verbose model info."`
 }
 
-type PsInput struct{}
+type PsInput struct {
+	OllamaTargetInput
+}
 
 type GenerateInput struct {
+	OllamaTargetInput
 	Model     string             `json:"model,omitempty" jsonschema:"required,description=Model name (e.g. llama3:8b)."`
 	Prompt    string             `json:"prompt,omitempty" jsonschema:"required,description=User prompt."`
 	System    string             `json:"system,omitempty" jsonschema:"description=Optional system instruction."`
@@ -95,6 +107,7 @@ type ChatMessage struct {
 }
 
 type ChatInput struct {
+	OllamaTargetInput
 	Model     string             `json:"model,omitempty" jsonschema:"required,description=Model name."`
 	Messages  []ChatMessage      `json:"messages,omitempty" jsonschema:"required,description=Chat message history."`
 	Format    string             `json:"format,omitempty" jsonschema:"description=Response format. Use 'json' to force a JSON object."`
@@ -117,6 +130,7 @@ type ChatResult struct {
 }
 
 type EmbedInput struct {
+	OllamaTargetInput
 	Model     string             `json:"model,omitempty" jsonschema:"required,description=Embedding model name."`
 	Input     []string           `json:"input,omitempty" jsonschema:"required,description=Input text(s) to embed."`
 	Truncate  *bool              `json:"truncate,omitempty" jsonschema:"description=Truncate inputs to the model's context length. Default true."`

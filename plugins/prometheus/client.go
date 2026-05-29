@@ -4,16 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"strings"
-	"time"
+
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 )
 
 type Client struct {
-	BaseURL    string
-	HTTPClient *http.Client
+	EndpointRef string
+	Host        pluginbinding.HostClient
 }
 
 type promResponse struct {
@@ -24,33 +23,28 @@ type promResponse struct {
 }
 
 func (c Client) get(ctx context.Context, path string, values url.Values) (json.RawMessage, error) {
-	base := strings.TrimRight(c.BaseURL, "/")
-	if base == "" {
-		return nil, fmt.Errorf("prometheus url is required")
+	_ = ctx
+	endpointRef := strings.TrimSpace(c.EndpointRef)
+	if endpointRef == "" {
+		return nil, fmt.Errorf("prometheus endpoint_ref is required")
 	}
-	endpoint := base + path
-	if len(values) > 0 {
-		endpoint += "?" + values.Encode()
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	resp, err := c.Host.HTTP(pluginbinding.HTTPRequest{
+		EndpointRef: endpointRef,
+		Path:        path,
+		Query:       map[string][]string(values),
+		Method:      "GET",
+		TimeoutMS:   30000,
+		MaxBytes:    32 * 1024 * 1024,
+		UserAgent:   "fluxplane-dex/0.1",
+	})
 	if err != nil {
 		return nil, err
 	}
-	client := c.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("prometheus returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("prometheus returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(resp.Body)))
 	}
 	var envelope promResponse
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+	if err := json.Unmarshal(resp.Body, &envelope); err != nil {
 		return nil, err
 	}
 	if envelope.Status != "success" {
@@ -60,20 +54,19 @@ func (c Client) get(ctx context.Context, path string, values url.Values) (json.R
 }
 
 func (c Client) ready(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.BaseURL, "/")+"/-/ready", nil)
+	_ = ctx
+	resp, err := c.Host.HTTP(pluginbinding.HTTPRequest{
+		EndpointRef: c.EndpointRef,
+		Path:        "/-/ready",
+		Method:      "GET",
+		TimeoutMS:   5000,
+		MaxBytes:    64 * 1024,
+		UserAgent:   "fluxplane-dex/0.1",
+	})
 	if err != nil {
 		return err
 	}
-	client := c.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 5 * time.Second}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != 200 {
 		return fmt.Errorf("prometheus not ready, status %d", resp.StatusCode)
 	}
 	return nil

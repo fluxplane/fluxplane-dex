@@ -94,7 +94,7 @@ const MarketplaceJSON = `{
     },
     {
       "name": "kubernetes",
-      "description": "Kubernetes cluster discovery using kubeconfig and client-go.",
+      "description": "Kubernetes cluster discovery using kubeconfig and kubectl.",
       "binary": "dex-plugin-kubernetes",
       "go_install": "github.com/fluxplane/fluxplane-dex/plugins/kubernetes/cmd/dex-plugin-kubernetes@latest",
       "local_path": "plugins/kubernetes"

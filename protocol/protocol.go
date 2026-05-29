@@ -34,6 +34,13 @@ const (
 	CommandEndpointsDiscover = "endpoints.discover"
 	CommandIndexBuild        = "index.build"
 	CommandIndexStatus       = "index.status"
+
+	HostCapabilityHTTPDo       = "host.capability.http.do"
+	HostCapabilityBlobRead     = "host.capability.blob.read"
+	HostCapabilityBlobWrite    = "host.capability.blob.write"
+	HostCapabilityBlobInfo     = "host.capability.blob.info"
+	HostCapabilityEnvLookup    = "host.capability.env.lookup"
+	HostCapabilityProviderCall = "host.capability.provider.call"
 )
 
 type Request struct {

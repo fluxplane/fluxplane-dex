@@ -28,10 +28,7 @@ func TestManifestDeclaresSharedAtlassianEnvFallbacks(t *testing.T) {
 	if got := fields[AuthPurposeAPIToken].Env; len(got) != 2 || got[0] != EnvJiraAPIToken || got[1] != EnvAtlassianAPIToken {
 		t.Fatalf("token env = %#v", got)
 	}
-	if got := fields[AuthPurposeCloudID].Env; len(got) != 2 || got[0] != EnvJiraCloudID || got[1] != EnvAtlassianCloudID {
-		t.Fatalf("cloud id env = %#v", got)
-	}
-	if len(fields) != 2 {
+	if len(fields) != 1 {
 		t.Fatalf("auth fields = %#v", fields)
 	}
 	byEntity := map[string]core.DatasourceSpec{}
@@ -63,7 +60,7 @@ func TestManifestDeclaresJiraWriteOperations(t *testing.T) {
 		if !hasOperationEffect(operation, core.OperationEffectWrite) || !hasOperationEffect(operation, core.OperationEffectNetwork) {
 			t.Fatalf("%s effects = %#v", name, operation.Effects)
 		}
-		if len(operation.SecretPurposes) != 2 || operation.SecretPurposes[0] != AuthPurposeAPIToken || operation.SecretPurposes[1] != AuthPurposeCloudID {
+		if len(operation.SecretPurposes) != 1 || operation.SecretPurposes[0] != AuthPurposeAPIToken {
 			t.Fatalf("%s secret purposes = %#v", name, operation.SecretPurposes)
 		}
 	}

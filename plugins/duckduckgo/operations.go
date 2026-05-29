@@ -1,14 +1,10 @@
 package duckduckgo
 
 import (
-	"context"
 	"fmt"
 	"html"
-	"io"
-	"net/http"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/internal/websearch"
@@ -16,20 +12,15 @@ import (
 
 const defaultEndpointTemplate = "https://html.duckduckgo.com/html/?q={query}"
 
-type HTTPDoer interface {
-	Do(*http.Request) (*http.Response, error)
-}
-
 type Service struct {
-	HTTPClient       HTTPDoer
 	EndpointTemplate string
 }
 
 func NewService() Service {
-	return Service{HTTPClient: http.DefaultClient, EndpointTemplate: defaultEndpointTemplate}
+	return Service{EndpointTemplate: defaultEndpointTemplate}
 }
 
-func (s Service) Search(_ pluginbinding.Context, input websearch.SearchInput) (websearch.SearchOutput, error) {
+func (s Service) Search(ctx pluginbinding.Context, input websearch.SearchInput) (websearch.SearchOutput, error) {
 	queries := websearch.NormalizeQueries(input)
 	if len(queries) == 0 {
 		return websearch.SearchOutput{}, pluginbinding.Fail("bad_input", "at least one query is required")
@@ -37,7 +28,7 @@ func (s Service) Search(_ pluginbinding.Context, input websearch.SearchInput) (w
 	max := websearch.NormalizeMax(input)
 	output := websearch.SearchOutput{}
 	for _, query := range queries {
-		set, err := s.searchOne(context.Background(), query, max)
+		set, err := s.searchOne(ctx, query, max)
 		if err != nil {
 			output.Errors = append(output.Errors, websearch.SearchError{Provider: PluginName, Query: query, Message: err.Error()})
 			continue
@@ -50,37 +41,25 @@ func (s Service) Search(_ pluginbinding.Context, input websearch.SearchInput) (w
 	return output, nil
 }
 
-func (s Service) searchOne(ctx context.Context, query string, max int) (websearch.ResultSet, error) {
+func (s Service) searchOne(ctx pluginbinding.Context, query string, max int) (websearch.ResultSet, error) {
 	template := strings.TrimSpace(s.EndpointTemplate)
 	if template == "" {
 		template = defaultEndpointTemplate
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL(template, query), nil)
-	if err != nil {
-		return websearch.ResultSet{}, err
-	}
-	req.Header.Set("User-Agent", "fluxplane-dex/0.1")
-	client := s.HTTPClient
-	if client == nil {
-		client = http.DefaultClient
-	}
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	if client == http.DefaultClient {
-		client = httpClient
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return websearch.ResultSet{}, err
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	resp, err := ctx.Host.HTTP(pluginbinding.HTTPRequest{
+		URL:       searchURL(template, query),
+		Method:    "GET",
+		UserAgent: "fluxplane-dex/0.1",
+		TimeoutMS: 30000,
+		MaxBytes:  512 * 1024,
+	})
 	if err != nil {
 		return websearch.ResultSet{}, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return websearch.ResultSet{}, fmt.Errorf("duckduckgo search failed: %s", resp.Status)
+		return websearch.ResultSet{}, fmt.Errorf("duckduckgo search failed: %s", responseStatus(resp))
 	}
-	return websearch.ResultSet{Provider: PluginName, Query: query, Results: parseResults(string(data), max)}, nil
+	return websearch.ResultSet{Provider: PluginName, Query: query, Results: parseResults(string(resp.Body), max)}, nil
 }
 
 func searchURL(template, query string) string {
@@ -211,6 +190,16 @@ func firstSearchError(output websearch.SearchOutput, fallback string) string {
 		return output.Errors[0].Message
 	}
 	return fallback
+}
+
+func responseStatus(resp pluginbinding.HTTPResponse) string {
+	if strings.TrimSpace(resp.Status) != "" {
+		return strings.TrimSpace(resp.Status)
+	}
+	if resp.StatusCode != 0 {
+		return fmt.Sprintf("%d", resp.StatusCode)
+	}
+	return "unknown status"
 }
 
 func minInt(a, b int) int {

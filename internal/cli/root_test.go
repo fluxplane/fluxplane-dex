@@ -1716,7 +1716,6 @@ func TestSecretGetRejectsMissingGrant(t *testing.T) {
 
 func TestAuthConnectAutoGitLabStoresEnvWithoutPrintingValues(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("GITLAB_URL", "https://gitlab.example.com")
 	t.Setenv("GITLAB_PERSONAL_TOKEN", "super-secret-token")
 	t.Setenv("GITLAB_ACCESS_TOKEN", "")
 	t.Setenv("GITLAB_TOKEN", "")
@@ -1743,7 +1742,7 @@ func TestAuthConnectAutoGitLabStoresEnvWithoutPrintingValues(t *testing.T) {
 	if result.Plugin != "gitlab" || result.Instance != "work" {
 		t.Fatalf("unexpected result: %#v", result)
 	}
-	if !containsString(result.Saved, "access_token") || !containsString(result.Saved, "gitlab_url") {
+	if !containsString(result.Saved, "access_token") {
 		t.Fatalf("saved fields = %#v", result.Saved)
 	}
 
@@ -1751,18 +1750,17 @@ func TestAuthConnectAutoGitLabStoresEnvWithoutPrintingValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	status := state.SecretStatus("gitlab", "work", []runtime.SecretPurpose{{Name: "access_token"}, {Name: "gitlab_url"}})
-	if status["access_token"] != "stored" || status["gitlab_url"] != "stored" {
+	status := state.SecretStatus("gitlab", "work", []runtime.SecretPurpose{{Name: "access_token"}})
+	if status["access_token"] != "stored" {
 		t.Fatalf("work status = %#v", status)
 	}
-	defaultStatus := state.SecretStatus("gitlab", "default", []runtime.SecretPurpose{{Name: "access_token"}, {Name: "gitlab_url"}})
-	if defaultStatus["access_token"] == "stored" || defaultStatus["gitlab_url"] == "stored" {
+	defaultStatus := state.SecretStatus("gitlab", "default", []runtime.SecretPurpose{{Name: "access_token"}})
+	if defaultStatus["access_token"] == "stored" {
 		t.Fatalf("default instance should not receive work secrets: %#v", defaultStatus)
 	}
 }
 
 func TestAuthConnectAutoGitLabReportsMissingFields(t *testing.T) {
-	t.Setenv("GITLAB_URL", "https://gitlab.example.com")
 	t.Setenv("GITLAB_PERSONAL_TOKEN", "")
 	t.Setenv("GITLAB_ACCESS_TOKEN", "")
 	t.Setenv("GITLAB_TOKEN", "")
@@ -1782,7 +1780,7 @@ func TestAuthConnectAutoGitLabReportsMissingFields(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if !containsString(result.Saved, "gitlab_url") {
+	if len(result.Saved) != 0 {
 		t.Fatalf("saved fields = %#v", result.Saved)
 	}
 	if !containsString(result.Missing, "access_token") {
@@ -1796,7 +1794,7 @@ func TestAuthConnectPartialDoesNotMarkPluginAvailable(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--dex-home", home, "--dev-plugin", "gitlab=../../plugins/gitlab", "auth", "connect", "gitlab", "--field", "gitlab_url=https://gitlab.example.com", "-o", "json"})
+	cmd.SetArgs([]string{"--dex-home", home, "--dev-plugin", "slack=../../plugins/slack", "auth", "connect", "slack", "--field", "bot_token=xoxb-test", "-o", "json"})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected partial required auth to fail")
 	}
@@ -1804,7 +1802,7 @@ func TestAuthConnectPartialDoesNotMarkPluginAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	installed, err := state.IsPluginInstalled("gitlab")
+	installed, err := state.IsPluginInstalled("slack")
 	if err != nil {
 		t.Fatal(err)
 	}

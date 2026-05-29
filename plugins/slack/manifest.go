@@ -8,7 +8,7 @@ import (
 
 const (
 	PluginName        = "slack"
-	PluginVersion     = "0.9.0"
+	PluginVersion     = "0.10.0"
 	PluginDescription = "Slack token info, messaging, file upload, search, thread, channel member, and reverse lookup operations."
 
 	AuthMethodTokenSet = "token_set"
@@ -192,7 +192,7 @@ func channelMarkSpec() core.OperationSpec {
 }
 
 func downloadSpec() core.OperationSpec {
-	return slackFileDownloadOperation(OperationDownload, "Download a Slack file to a local path.")
+	return slackFileDownloadOperation(OperationDownload, "Download a Slack file to a host blob.")
 }
 
 func emojiListSpec() core.OperationSpec {
@@ -208,7 +208,7 @@ func fileDeleteSpec() core.OperationSpec {
 }
 
 func fileDownloadSpec() core.OperationSpec {
-	return slackFileDownloadOperation(OperationFileDownload, "Download a Slack file to a local path.")
+	return slackFileDownloadOperation(OperationFileDownload, "Download a Slack file to a host blob.")
 }
 
 func fileInfoSpec() core.OperationSpec {

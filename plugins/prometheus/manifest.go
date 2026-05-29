@@ -7,10 +7,8 @@ import (
 
 const (
 	PluginName        = "prometheus"
-	PluginVersion     = "0.9.0"
+	PluginVersion     = "0.10.0"
 	PluginDescription = "Prometheus endpoint discovery, health checks, PromQL queries, labels, targets, and alerts."
-
-	EnvPrometheusURL = "PROMETHEUS_URL"
 
 	OperationTest       = "prometheus.test"
 	OperationQuery      = "prometheus.query"
@@ -56,15 +54,6 @@ func manifestSpec() pluginbinding.ManifestSpec {
 			targetsDatasourceSpec(),
 			alertsDatasourceSpec(),
 		},
-		Auth: []core.AuthMethod{{
-			Name:        "endpoint",
-			Kind:        "config",
-			Description: "Prometheus endpoint URL.",
-			Env:         []string{EnvPrometheusURL},
-			Fields: []core.AuthField{
-				pluginbinding.AuthField("url", "Prometheus base URL", false, false, EnvPrometheusURL),
-			},
-		}},
 	}
 }
 

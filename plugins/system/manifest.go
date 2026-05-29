@@ -3,11 +3,12 @@ package system
 import (
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
+	"github.com/fluxplane/fluxplane-dex/protocol"
 )
 
 const (
 	PluginName        = "system"
-	PluginVersion     = "0.9.0"
+	PluginVersion     = "0.10.0"
 	PluginDescription = "Local system information across OS, runtime, user, paths, CPU, time, environment, and network categories."
 
 	OperationInfo = "system.info"
@@ -24,6 +25,7 @@ func manifestSpec() pluginbinding.ManifestSpec {
 		Version:     PluginVersion,
 		Description: PluginDescription,
 		Aliases:     []string{"sys", PluginName},
+		Metadata:    map[string]string{pluginbinding.ManifestProtocolKey: protocol.Version},
 		Operations:  []core.OperationSpec{infoSpec()},
 		Context:     []core.ContextSpec{contextSpec()},
 	}
@@ -40,7 +42,7 @@ func infoSpec() core.OperationSpec {
 		pluginbinding.ReadOnly(),
 		pluginbinding.Compact(),
 		pluginbinding.Effects(core.OperationEffectRead, core.OperationEffectLocalSystem),
-		pluginbinding.Access(core.OperationAccessLocalSystem),
+		pluginbinding.Access(core.OperationAccessProvider),
 		pluginbinding.Risk(core.OperationRiskLow),
 		pluginbinding.Idempotency(core.OperationIdempotent),
 	)

@@ -137,13 +137,13 @@ type AttachmentListResult struct {
 }
 
 type AttachmentGetResult struct {
-	ID           string     `json:"id"`
-	Filename     string     `json:"filename,omitempty"`
-	MimeType     string     `json:"mime_type,omitempty"`
-	Size         int        `json:"size"`
-	ContentBytes []byte     `json:"content_bytes,omitempty"`
-	OutputPath   string     `json:"output_path,omitempty"`
-	Attachment   Attachment `json:"attachment,omitempty"`
+	ID           string                `json:"id"`
+	Filename     string                `json:"filename,omitempty"`
+	MimeType     string                `json:"mime_type,omitempty"`
+	Size         int                   `json:"size"`
+	ContentBytes []byte                `json:"content_bytes,omitempty"`
+	Blob         pluginbinding.BlobRef `json:"blob,omitempty"`
+	Attachment   Attachment            `json:"attachment,omitempty"`
 }
 
 type AttachmentDeleteResult struct {

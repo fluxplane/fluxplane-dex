@@ -83,6 +83,7 @@ const (
 	OperationAccessAuth        OperationAccess = "auth"
 	OperationAccessSecret      OperationAccess = "secret"
 	OperationAccessNetwork     OperationAccess = "network"
+	OperationAccessProvider    OperationAccess = "provider"
 	OperationAccessProcess     OperationAccess = "process"
 	OperationAccessBrowser     OperationAccess = "browser"
 	OperationAccessFilesystem  OperationAccess = "filesystem"

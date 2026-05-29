@@ -1,10 +1,12 @@
 package gitlab
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	gitlabapi "gitlab.com/gitlab-org/api/client-go/v2"
 )
 
@@ -38,22 +40,51 @@ type Client interface {
 	DeleteSnippet(int64) error
 }
 
-type ClientFactory func(reqSecretSet SecretSet) (Client, error)
+type ClientFactory func(pluginbinding.Context) (Client, error)
 
-func NewLiveClient(secrets SecretSet) (Client, error) {
-	baseURL := strings.TrimSpace(secrets.GitLabURL.Value)
-	token := strings.TrimSpace(secrets.AccessToken.Value)
-	if baseURL == "" {
-		return nil, fmt.Errorf("gitlab_url is empty")
+const gitLabHostHTTPBaseURL = "https://gitlab.endpoint.local"
+
+func NewLiveClient(ctx pluginbinding.Context) (Client, error) {
+	endpointRef, err := gitLabEndpointRef(ctx)
+	if err != nil {
+		return nil, err
 	}
-	if token == "" {
-		return nil, fmt.Errorf("access_token is empty")
-	}
-	client, err := gitlabapi.NewClient(token, gitlabapi.WithBaseURL(baseURL))
+	client, err := gitlabapi.NewClient("",
+		gitlabapi.WithBaseURL(gitLabHostHTTPBaseURL),
+		gitlabapi.WithHTTPClient(pluginbinding.HostHTTPClient(ctx.Host,
+			pluginbinding.HostHTTPClientEndpointRef(endpointRef),
+			pluginbinding.HostHTTPClientAuth(pluginbinding.HTTPAuthRequest{BearerTokenPurpose: AuthPurposeAccessToken}),
+			pluginbinding.HostHTTPClientTimeout(30000),
+			pluginbinding.HostHTTPClientMaxBytes(32*1024*1024),
+		)),
+	)
 	if err != nil {
 		return nil, err
 	}
 	return liveClient{client: client}, nil
+}
+
+func gitLabEndpointRef(ctx pluginbinding.Context) (string, error) {
+	for _, raw := range []json.RawMessage{ctx.Call.Input, ctx.Request.Payload} {
+		endpointRef := endpointRefFromRaw(raw)
+		if endpointRef != "" {
+			return endpointRef, nil
+		}
+	}
+	return "", fmt.Errorf("endpoint_ref is required")
+}
+
+func endpointRefFromRaw(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var input struct {
+		EndpointRef string `json:"endpoint_ref"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(input.EndpointRef)
 }
 
 type liveClient struct {

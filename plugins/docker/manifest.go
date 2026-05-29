@@ -3,11 +3,12 @@ package docker
 import (
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
+	"github.com/fluxplane/fluxplane-dex/protocol"
 )
 
 const (
 	PluginName        = "docker"
-	PluginVersion     = "0.9.0"
+	PluginVersion     = "0.10.0"
 	PluginDescription = "Local Docker Engine inspection for containers, images, networks, volumes, and daemon info."
 
 	OperationInfo                = "docker.info"
@@ -76,6 +77,7 @@ func manifestSpec() pluginbinding.ManifestSpec {
 		Version:     PluginVersion,
 		Description: PluginDescription,
 		Aliases:     []string{"dock", PluginName},
+		Metadata:    map[string]string{pluginbinding.ManifestProtocolKey: protocol.Version},
 		Operations: []core.OperationSpec{
 			infoSpec(),
 			containerListSpec(),
@@ -359,7 +361,7 @@ func dockerReadOptions() []pluginbinding.OperationSpecOption {
 	return []pluginbinding.OperationSpecOption{
 		pluginbinding.ReadOnly(),
 		pluginbinding.Effects(core.OperationEffectRead, core.OperationEffectNetwork, core.OperationEffectFilesystem, core.OperationEffectLocalSystem),
-		pluginbinding.Access(core.OperationAccessNetwork, core.OperationAccessFilesystem, core.OperationAccessLocalSystem),
+		pluginbinding.Access(core.OperationAccessProvider),
 		pluginbinding.Risk(core.OperationRiskLow),
 		pluginbinding.Idempotency(core.OperationIdempotent),
 	}
@@ -373,7 +375,7 @@ func dockerCompactReadOptions() []pluginbinding.OperationSpecOption {
 func dockerWriteOptions(idempotency core.OperationIdempotency) []pluginbinding.OperationSpecOption {
 	return []pluginbinding.OperationSpecOption{
 		pluginbinding.Effects(core.OperationEffectWrite, core.OperationEffectProcess, core.OperationEffectNetwork, core.OperationEffectLocalSystem),
-		pluginbinding.Access(core.OperationAccessProcess, core.OperationAccessNetwork, core.OperationAccessLocalSystem),
+		pluginbinding.Access(core.OperationAccessProvider),
 		pluginbinding.Risk(core.OperationRiskMedium),
 		pluginbinding.Idempotency(idempotency),
 	}
@@ -382,7 +384,7 @@ func dockerWriteOptions(idempotency core.OperationIdempotency) []pluginbinding.O
 func dockerHighRiskWriteOptions(idempotency core.OperationIdempotency) []pluginbinding.OperationSpecOption {
 	return []pluginbinding.OperationSpecOption{
 		pluginbinding.Effects(core.OperationEffectWrite, core.OperationEffectProcess, core.OperationEffectNetwork, core.OperationEffectLocalSystem),
-		pluginbinding.Access(core.OperationAccessProcess, core.OperationAccessNetwork, core.OperationAccessLocalSystem),
+		pluginbinding.Access(core.OperationAccessProvider),
 		pluginbinding.Risk(core.OperationRiskHigh),
 		pluginbinding.Idempotency(idempotency),
 	}
@@ -391,7 +393,7 @@ func dockerHighRiskWriteOptions(idempotency core.OperationIdempotency) []pluginb
 func dockerBuildOptions() []pluginbinding.OperationSpecOption {
 	return []pluginbinding.OperationSpecOption{
 		pluginbinding.Effects(core.OperationEffectRead, core.OperationEffectWrite, core.OperationEffectFilesystem, core.OperationEffectNetwork, core.OperationEffectLocalSystem),
-		pluginbinding.Access(core.OperationAccessFilesystem, core.OperationAccessNetwork, core.OperationAccessLocalSystem),
+		pluginbinding.Access(core.OperationAccessProvider),
 		pluginbinding.Risk(core.OperationRiskHigh),
 		pluginbinding.Idempotency(core.OperationNonIdempotent),
 	}
@@ -400,7 +402,7 @@ func dockerBuildOptions() []pluginbinding.OperationSpecOption {
 func dockerHighRiskFilesystemOptions(idempotency core.OperationIdempotency) []pluginbinding.OperationSpecOption {
 	return []pluginbinding.OperationSpecOption{
 		pluginbinding.Effects(core.OperationEffectRead, core.OperationEffectWrite, core.OperationEffectFilesystem, core.OperationEffectLocalSystem),
-		pluginbinding.Access(core.OperationAccessFilesystem, core.OperationAccessLocalSystem),
+		pluginbinding.Access(core.OperationAccessProvider),
 		pluginbinding.Risk(core.OperationRiskHigh),
 		pluginbinding.Idempotency(idempotency),
 	}
@@ -409,7 +411,7 @@ func dockerHighRiskFilesystemOptions(idempotency core.OperationIdempotency) []pl
 func dockerDestructiveOptions() []pluginbinding.OperationSpecOption {
 	return []pluginbinding.OperationSpecOption{
 		pluginbinding.Effects(core.OperationEffectWrite, core.OperationEffectProcess, core.OperationEffectFilesystem, core.OperationEffectLocalSystem),
-		pluginbinding.Access(core.OperationAccessProcess, core.OperationAccessFilesystem, core.OperationAccessLocalSystem),
+		pluginbinding.Access(core.OperationAccessProvider),
 		pluginbinding.Risk(core.OperationRiskDestructive),
 		pluginbinding.Idempotency(core.OperationNonIdempotent),
 	}

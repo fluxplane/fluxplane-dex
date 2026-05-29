@@ -1,14 +1,9 @@
 package tavily
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
-	"time"
 
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/internal/websearch"
@@ -16,18 +11,12 @@ import (
 
 const defaultEndpoint = "https://api.tavily.com/search"
 
-type HTTPDoer interface {
-	Do(*http.Request) (*http.Response, error)
-}
-
 type Service struct {
-	SecretGetter pluginbinding.SecretGetter
-	HTTPClient   HTTPDoer
-	Endpoint     string
+	Endpoint string
 }
 
 func NewService() Service {
-	return Service{HTTPClient: http.DefaultClient, Endpoint: defaultEndpoint}
+	return Service{Endpoint: defaultEndpoint}
 }
 
 func (s Service) Search(ctx pluginbinding.Context, input websearch.SearchInput) (websearch.SearchOutput, error) {
@@ -36,13 +25,9 @@ func (s Service) Search(ctx pluginbinding.Context, input websearch.SearchInput) 
 		return websearch.SearchOutput{}, pluginbinding.Fail("bad_input", "at least one query is required")
 	}
 	max := websearch.NormalizeMax(input)
-	key, err := ctx.RequiredSecret(AuthPurposeAPIKey)
-	if err != nil {
-		return websearch.SearchOutput{}, err
-	}
 	output := websearch.SearchOutput{}
 	for _, query := range queries {
-		set, err := s.searchOne(context.Background(), strings.TrimSpace(key.Value), query, max)
+		set, err := s.searchOne(ctx, query, max)
 		if err != nil {
 			output.Errors = append(output.Errors, websearch.SearchError{Provider: PluginName, Query: query, Message: err.Error()})
 			continue
@@ -55,7 +40,7 @@ func (s Service) Search(ctx pluginbinding.Context, input websearch.SearchInput) 
 	return output, nil
 }
 
-func (s Service) searchOne(ctx context.Context, apiKey, query string, max int) (websearch.ResultSet, error) {
+func (s Service) searchOne(ctx pluginbinding.Context, query string, max int) (websearch.ResultSet, error) {
 	body, err := json.Marshal(tavilySearchRequest{
 		Query:             query,
 		SearchDepth:       "basic",
@@ -72,35 +57,28 @@ func (s Service) searchOne(ctx context.Context, apiKey, query string, max int) (
 	if endpoint == "" {
 		endpoint = defaultEndpoint
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return websearch.ResultSet{}, err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "fluxplane-dex/0.1")
-	client := s.HTTPClient
-	if client == nil {
-		client = http.DefaultClient
-	}
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	if client == http.DefaultClient {
-		client = httpClient
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return websearch.ResultSet{}, err
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	resp, err := ctx.Host.HTTP(pluginbinding.HTTPRequest{
+		URL:    endpoint,
+		Method: "POST",
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+		},
+		Auth: &pluginbinding.HTTPAuthRequest{
+			BearerTokenPurpose: AuthPurposeAPIKey,
+		},
+		Body:      body,
+		UserAgent: "fluxplane-dex/0.1",
+		TimeoutMS: 30000,
+		MaxBytes:  1024 * 1024,
+	})
 	if err != nil {
 		return websearch.ResultSet{}, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return websearch.ResultSet{}, fmt.Errorf("tavily search failed: %s: %s", resp.Status, tavilyErrorMessage(data))
+		return websearch.ResultSet{}, fmt.Errorf("tavily search failed: %s: %s", responseStatus(resp), tavilyErrorMessage(resp.Body))
 	}
 	var decoded tavilySearchResponse
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	if err := json.Unmarshal(resp.Body, &decoded); err != nil {
 		return websearch.ResultSet{}, fmt.Errorf("decode tavily response: %w", err)
 	}
 	results := make([]websearch.Result, 0, len(decoded.Results))
@@ -165,6 +143,16 @@ func firstSearchError(output websearch.SearchOutput, fallback string) string {
 		return output.Errors[0].Message
 	}
 	return fallback
+}
+
+func responseStatus(resp pluginbinding.HTTPResponse) string {
+	if strings.TrimSpace(resp.Status) != "" {
+		return strings.TrimSpace(resp.Status)
+	}
+	if resp.StatusCode != 0 {
+		return fmt.Sprintf("%d", resp.StatusCode)
+	}
+	return "unknown status"
 }
 
 func firstNonEmpty(values ...string) string {

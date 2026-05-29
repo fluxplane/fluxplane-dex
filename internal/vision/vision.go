@@ -2,10 +2,7 @@ package vision
 
 import (
 	"encoding/base64"
-	"fmt"
 	"mime"
-	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -21,6 +18,7 @@ const (
 )
 
 type AnalyzeInput struct {
+	EndpointRef string            `json:"endpoint_ref,omitempty" jsonschema:"description=Registered provider endpoint ref resolved by the host."`
 	Prompt      string            `json:"prompt,omitempty" jsonschema:"description=Text instruction for the image analysis. Defaults to a concise description and OCR request."`
 	Images      []ImageInput      `json:"images,omitempty" jsonschema:"required,description=Images to analyze. Provide either url or base64 data for each image."`
 	Providers   []string          `json:"providers,omitempty" jsonschema:"description=Optional provider names declared by vision provider plugins."`
@@ -31,10 +29,12 @@ type AnalyzeInput struct {
 }
 
 type ImageInput struct {
-	URL       string `json:"url,omitempty" jsonschema:"description=Fully qualified image URL or data URL."`
-	FilePath  string `json:"file_path,omitempty" jsonschema:"description=Local image file path readable by the provider plugin."`
-	MediaType string `json:"media_type,omitempty" jsonschema:"description=Media type for raw base64 data, for example image/jpeg.,enum=image/jpeg,enum=image/png,enum=image/webp,enum=image/gif"`
-	Detail    string `json:"detail,omitempty" jsonschema:"description=Optional provider detail hint.,enum=auto,enum=low,enum=high"`
+	URL          string `json:"url,omitempty" jsonschema:"description=Fully qualified image URL or data URL."`
+	BlobRef      string `json:"blob_ref,omitempty" jsonschema:"description=Host-provided image blob reference."`
+	ContentBytes []byte `json:"content_bytes,omitempty" jsonschema:"description=Base64-encoded inline image bytes."`
+	Filename     string `json:"filename,omitempty" jsonschema:"description=Filename hint for media type detection."`
+	MediaType    string `json:"media_type,omitempty" jsonschema:"description=Media type for raw base64 data, for example image/jpeg.,enum=image/jpeg,enum=image/png,enum=image/webp,enum=image/gif"`
+	Detail       string `json:"detail,omitempty" jsonschema:"description=Optional provider detail hint.,enum=auto,enum=low,enum=high"`
 }
 
 type AnalyzeOutput struct {
@@ -111,8 +111,8 @@ func ProviderOperationSpec(spec ProviderSpec) core.OperationSpec {
 	options := []pluginbinding.OperationSpecOption{
 		pluginbinding.ReadOnly(),
 		pluginbinding.Compact(),
-		pluginbinding.Effects(core.OperationEffectRead, core.OperationEffectNetwork),
-		pluginbinding.Access(core.OperationAccessNetwork),
+		pluginbinding.Effects(core.OperationEffectRead, core.OperationEffectNetwork, core.OperationEffectFilesystem),
+		pluginbinding.Access(core.OperationAccessNetwork, core.OperationAccessFilesystem),
 		pluginbinding.Risk(core.OperationRiskLow),
 		pluginbinding.Idempotency(core.OperationIdempotent),
 	}
@@ -206,36 +206,33 @@ func ValidateImages(images []ImageInput) error {
 		return pluginbinding.Fail("bad_input", "at least one image is required")
 	}
 	for i, image := range images {
-		if strings.TrimSpace(image.URL) == "" && strings.TrimSpace(image.FilePath) == "" {
-			return pluginbinding.Errorf("bad_input", "image %d requires url or file_path", i)
+		if strings.TrimSpace(image.URL) == "" && strings.TrimSpace(image.BlobRef) == "" && len(image.ContentBytes) == 0 {
+			return pluginbinding.Errorf("bad_input", "image %d requires url, blob_ref, or content_bytes", i)
 		}
 	}
 	return nil
 }
 
 func DataURL(image ImageInput) (string, error) {
-	if path := strings.TrimSpace(image.FilePath); path != "" {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return "", fmt.Errorf("read image file %q: %w", path, err)
-		}
-		mediaType := strings.TrimSpace(image.MediaType)
-		if mediaType == "" {
-			mediaType = mediaTypeByExtension(path)
-		}
-		if mediaType == "" {
-			mediaType = detectMediaType(data)
-		}
-		return "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(data), nil
+	if len(image.ContentBytes) > 0 {
+		return DataURLFromBytes(image.ContentBytes, image.MediaType, image.Filename), nil
 	}
 	return strings.TrimSpace(image.URL), nil
 }
 
-func NormalizeMediaType(mediaType, path string) string {
+func DataURLFromBytes(data []byte, mediaType, filename string) string {
+	mediaType = NormalizeMediaType(mediaType, filename, data)
+	return "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(data)
+}
+
+func NormalizeMediaType(mediaType, path string, data []byte) string {
 	if mediaType = strings.TrimSpace(mediaType); mediaType != "" {
 		return mediaType
 	}
 	if detected := mediaTypeByExtension(path); detected != "" {
+		return detected
+	}
+	if detected := detectMediaType(data); detected != "" {
 		return detected
 	}
 	return "image/jpeg"
@@ -251,18 +248,17 @@ func mediaTypeByExtension(path string) string {
 }
 
 func detectMediaType(data []byte) string {
-	if len(data) == 0 {
+	switch {
+	case len(data) >= 8 && string(data[:8]) == "\x89PNG\r\n\x1a\n":
+		return "image/png"
+	case len(data) >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff:
 		return "image/jpeg"
+	case len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP":
+		return "image/webp"
+	case len(data) >= 6 && (string(data[:6]) == "GIF87a" || string(data[:6]) == "GIF89a"):
+		return "image/gif"
 	}
-	limit := len(data)
-	if limit > 512 {
-		limit = 512
-	}
-	detected := http.DetectContentType(data[:limit])
-	if strings.HasPrefix(detected, "image/") {
-		return detected
-	}
-	return "image/jpeg"
+	return ""
 }
 
 func firstNonEmpty(values ...string) string {

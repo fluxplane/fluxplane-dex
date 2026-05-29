@@ -93,10 +93,11 @@ Operations have names, descriptions, input schemas, output schemas, read-only
 flags, compact-output hints, and secret purposes. The roadmap expands this with
 effect, risk, idempotency, access, auth-scope, and render metadata.
 
-Every operation input schema includes the host-level `endpoint_ref` convenience
-field. When present, the host resolves the registered endpoint before plugin
-invocation and injects resolved fields such as `url`, `credential_ref`, and
-`endpoint_product` into the operation payload.
+Operation input schemas can include the host-level `endpoint_ref` convenience
+field. Host-native plugins keep that value opaque and use host protocol calls
+with relative paths, allowing the runtime to resolve endpoint URLs and
+credentials inside the host boundary. Legacy operation inputs that still declare
+`url` or `credential_ref` are resolved by the runtime as a migration bridge.
 
 ## Batch Operation
 

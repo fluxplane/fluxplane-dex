@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -26,7 +24,7 @@ func TestServiceIndexBuildUsesUserTokenFirst(t *testing.T) {
 			},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.RunOK[struct {
 		Indexes []struct {
@@ -62,7 +60,7 @@ func TestServiceIndexBuildFallsBackToBotToken(t *testing.T) {
 			},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.RunOK[struct {
 		Indexes []struct {
@@ -84,13 +82,7 @@ func TestServiceIndexBuildFallsBackWhenUserTokenMissing(t *testing.T) {
 			"bot_token": {users: []User{{ID: "U1", Name: "timo"}}},
 		},
 	}
-	get := func(_ pluginbinding.Context, purpose string) (pluginbinding.SecretMaterial, error) {
-		if purpose == "user_token" {
-			return pluginbinding.SecretMaterial{}, errors.New("missing user token")
-		}
-		return pluginbinding.SecretMaterial{Purpose: purpose, Value: purpose}, nil
-	}
-	plugin := testPlugin(factory, get)
+	plugin := testPlugin(factory)
 
 	plugintest.RunOK[map[string]any](t, plugin, OperationIndexBuild, map[string]any{"entity": "slack.user"})
 	if factory.created["bot_token"] != 1 {
@@ -105,7 +97,7 @@ func TestServiceIndexBuildDoesNotFallbackOnNetworkError(t *testing.T) {
 			"bot_token":  {users: []User{{ID: "U1"}}},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	plugintest.RunError(t, plugin, OperationIndexBuild, map[string]any{"entity": "slack.user"})
 	if factory.created["bot_token"] != 0 {
@@ -119,7 +111,7 @@ func TestServiceIndexBuildCanTargetOneIndex(t *testing.T) {
 			"user_token": {channels: []Channel{{ID: "C1", Name: "general", IsChannel: true}}},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.RunOK[struct {
 		Indexes []struct {
@@ -144,7 +136,7 @@ func TestServiceLookupUsersAndChannels(t *testing.T) {
 			},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.DatasourceLookupOK[LookupResult](t, plugin, map[string]any{"text": "ask #engineering and timo", "limit": 10}, plugintest.WithInstance("work"))
 	if out.Source != PluginName || out.Count != 2 {
@@ -170,7 +162,7 @@ func TestServiceLookupCanFilterEntity(t *testing.T) {
 			},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.DatasourceLookupOK[LookupResult](t, plugin, map[string]any{"text": "timo", "entity": EntityUser})
 	if out.Count != 1 || out.Matches[0].Entity != EntityUser || out.Matches[0].ID != "U1" {
@@ -192,7 +184,7 @@ func TestServiceInfoReportsTokenIdentities(t *testing.T) {
 			},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.RunOK[InfoResult](t, plugin, OperationInfo, map[string]any{})
 	if out.Status != "ok" || out.Count != 2 || len(out.Tokens) != 2 {
@@ -220,7 +212,7 @@ func TestServiceAuthTestReportsTokenIdentities(t *testing.T) {
 			},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.RunOK[AuthTestResult](t, plugin, OperationAuthTest, map[string]any{})
 	if out.Status != "ok" || out.Count != 2 || len(out.Tokens) != 2 {
@@ -241,7 +233,7 @@ func TestServiceInfoReportsPartialTokenFailure(t *testing.T) {
 			"bot_token":  {authInfo: AuthInfo{Team: "Example", TeamID: "T1", UserID: "Ubot", BotID: "B1"}},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.RunOK[InfoResult](t, plugin, OperationInfo, map[string]any{})
 	if out.Status != "partial" || out.Count != 2 {
@@ -262,7 +254,7 @@ func TestServiceAuthTestReportsPartialTokenFailure(t *testing.T) {
 			"bot_token":  {authInfo: AuthInfo{Team: "Example", TeamID: "T1", UserID: "Ubot", BotID: "B1"}},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.RunOK[AuthTestResult](t, plugin, OperationAuthTest, map[string]any{})
 	if out.Status != "partial" || out.Count != 2 {
@@ -276,15 +268,13 @@ func TestServiceAuthTestReportsPartialTokenFailure(t *testing.T) {
 	}
 }
 
-func TestServiceInfoFailsWhenNoUserOrBotTokenConfigured(t *testing.T) {
+func TestServiceInfoReportsUnavailableAuthPurposes(t *testing.T) {
 	factory := &capturingFactory{clients: map[string]*fakeClient{}}
-	get := func(_ pluginbinding.Context, purpose string) (pluginbinding.SecretMaterial, error) {
-		return pluginbinding.SecretMaterial{}, errors.New("missing " + purpose)
-	}
-	plugin := testPlugin(factory, get)
+	plugin := testPlugin(factory)
 
-	if err := plugintest.RunError(t, plugin, OperationInfo, map[string]any{}); err == nil || err.Code != "secret" {
-		t.Fatalf("missing token err = %#v", err)
+	out := plugintest.RunOK[InfoResult](t, plugin, OperationInfo, map[string]any{})
+	if out.Status != "error" || out.Count != 2 {
+		t.Fatalf("info = %#v", out)
 	}
 }
 
@@ -323,7 +313,7 @@ func TestServiceSendSearchAndThreadUseLiveClient(t *testing.T) {
 			},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	send := plugintest.RunOK[MessageSendResult](t, plugin, OperationMessageSend, map[string]any{"channel": "C1", "text": "hello"})
 	if !send.OK || send.Role != SlackRoleBot || send.TS != "1710000000.123456" || factory.clients["bot_token"].sendCalls != 1 {
@@ -367,7 +357,7 @@ func TestServiceSearchExtractsTicketsAndMentionsClassifyStatus(t *testing.T) {
 			"bot_token": {authInfo: AuthInfo{UserID: "Ubot"}},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	search := plugintest.RunOK[SearchResult](t, plugin, OperationSearch, map[string]any{"query": "DEV-", "tickets": true, "ticket_keys": []string{"DEV", "TEL"}})
 	if search.Count != 1 || len(search.Messages) != 1 || len(search.Messages[0].Tickets) != 2 {
@@ -401,7 +391,7 @@ func TestServiceSendMessageResolvesChannelAndMentions(t *testing.T) {
 			"bot_token": {sendTS: "1710000000.123456"},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.RunOK[MessageSendResult](t, plugin, OperationMessageSend, map[string]any{"channel": "#engineering", "text": "hi @timo in #engineering, already <@U2>, mail a@b"}, withHost(factory))
 	if !out.OK || out.Channel != "C1" {
@@ -420,7 +410,7 @@ func TestServiceSendMessageCanUseUserRole(t *testing.T) {
 			"bot_token":  {sendTS: "1710000001.123456"},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.RunOK[MessageSendResult](t, plugin, OperationMessageSend, map[string]any{"channel": "C1", "text": "hello", "role": "user"})
 	if !out.OK || out.Role != SlackRoleUser || out.TS != "1710000000.123456" {
@@ -441,7 +431,7 @@ func TestServiceSendAndEditRichMessages(t *testing.T) {
 			"bot_token": {sendTS: "1710000000.123456", editTS: "1710000000.123456"},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	send := plugintest.RunOK[MessageSendResult](t, plugin, OperationMessageSend, map[string]any{"channel": "#engineering", "markdown": "hi @timo in #engineering"}, withHost(factory))
 	if !send.OK || send.Channel != "C1" {
@@ -465,7 +455,7 @@ func TestServiceSendAndEditRichMessages(t *testing.T) {
 }
 
 func TestServiceRichMessagesValidateContentPaths(t *testing.T) {
-	plugin := testPlugin(&capturingFactory{clients: map[string]*fakeClient{"bot_token": {}}}, nil)
+	plugin := testPlugin(&capturingFactory{clients: map[string]*fakeClient{"bot_token": {}}})
 
 	if err := plugintest.RunError(t, plugin, OperationMessageSend, map[string]any{"channel": "C1", "text": "hello", "markdown": "hello"}); err == nil || err.Code != "bad_input" {
 		t.Fatalf("conflicting content err = %#v", err)
@@ -479,7 +469,7 @@ func TestServiceRichMessagesValidateContentPaths(t *testing.T) {
 }
 
 func TestServiceSendMessageRejectsInvalidRole(t *testing.T) {
-	plugin := testPlugin(&capturingFactory{clients: map[string]*fakeClient{"bot_token": {}}}, nil)
+	plugin := testPlugin(&capturingFactory{clients: map[string]*fakeClient{"bot_token": {}}})
 
 	if err := plugintest.RunError(t, plugin, OperationMessageSend, map[string]any{"channel": "C1", "text": "hello", "role": "admin"}); err == nil || err.Code != "bad_input" {
 		t.Fatalf("invalid role err = %#v", err)
@@ -492,15 +482,9 @@ func TestServiceSendMessageDoesNotFallbackFromMissingDefaultRole(t *testing.T) {
 			"user_token": {sendTS: "1710000000.123456"},
 		},
 	}
-	get := func(_ pluginbinding.Context, purpose string) (pluginbinding.SecretMaterial, error) {
-		if purpose == AuthPurposeBot {
-			return pluginbinding.SecretMaterial{}, errors.New("missing bot token")
-		}
-		return pluginbinding.SecretMaterial{Purpose: purpose, Value: purpose}, nil
-	}
-	plugin := testPlugin(factory, get)
+	plugin := testPlugin(factory)
 
-	if err := plugintest.RunError(t, plugin, OperationMessageSend, map[string]any{"channel": "C1", "text": "hello"}); err == nil || err.Code != "secret" {
+	if err := plugintest.RunError(t, plugin, OperationMessageSend, map[string]any{"channel": "C1", "text": "hello"}); err == nil || err.Code != "slack" {
 		t.Fatalf("missing default role err = %#v", err)
 	}
 	if factory.created[AuthPurposeUser] != 0 {
@@ -515,7 +499,7 @@ func TestServiceSendMessageFailsUnknownTargetChannel(t *testing.T) {
 			"bot_token":  {sendTS: "1710000000.123456"},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	if err := plugintest.RunError(t, plugin, OperationMessageSend, map[string]any{"channel": "#missing", "text": "hello"}, withHost(factory)); err == nil || err.Code != "bad_input" {
 		t.Fatalf("unknown channel err = %#v", err)
@@ -535,7 +519,7 @@ func TestServiceEditDeleteReactAndJoinUseResolvedReferences(t *testing.T) {
 			"bot_token": {editTS: "1769777574.026209"},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	edit := plugintest.RunOK[MessageEditResult](t, plugin, OperationMessageEdit, map[string]any{"ref": "#engineering:p1769777574026209", "text": "updated for @timo"}, withHost(factory))
 	if !edit.OK || edit.Channel != "C1" || edit.TS != "1769777574.026209" || edit.Role != SlackRoleBot {
@@ -583,7 +567,7 @@ func TestServiceListPresenceBookmarksEmojiAndMarkRead(t *testing.T) {
 			"bot_token": {},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	users := plugintest.RunOK[UserListResult](t, plugin, OperationUserList, map[string]any{"query": "tim"})
 	if users.Count != 1 || users.Users[0].ID != "U1" {
@@ -632,7 +616,7 @@ func TestServiceListEmojiModes(t *testing.T) {
 			},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	custom := plugintest.RunOK[EmojiListResult](t, plugin, OperationEmojiList, map[string]any{})
 	if custom.Count != 1 || custom.Emojis[0].Name != "shipit" || custom.Emojis[0].Source != "custom" || custom.Emojis[0].URL == "" {
@@ -665,7 +649,7 @@ func TestServiceMarkReadLatest(t *testing.T) {
 			},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	mark := plugintest.RunOK[ChannelMarkResult](t, plugin, OperationChannelMark, map[string]any{"ref": "#engineering:latest"}, withHost(factory))
 	if !mark.OK || mark.TS != "1710000000.123456" || factory.clients["user_token"].latestCalls != 1 || factory.clients["user_token"].lastMarkRead.TS != "1710000000.123456" {
@@ -675,7 +659,7 @@ func TestServiceMarkReadLatest(t *testing.T) {
 
 func TestServiceMarkReadLatestEmptyChannel(t *testing.T) {
 	factory := &capturingFactory{clients: map[string]*fakeClient{"user_token": {}}}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	if err := plugintest.RunError(t, plugin, OperationChannelMark, map[string]any{"channel": "C1", "ts": "latest"}); err == nil || err.Code != "empty_channel" {
 		t.Fatalf("empty channel err = %#v", err)
@@ -693,12 +677,12 @@ func TestServiceFileLifecycleAndBookmarkWrites(t *testing.T) {
 					{ID: "F2", Name: "chart.png", Title: "Chart", User: "U2", Size: 456},
 				},
 				file:           FileRecord{ID: "F1", Name: "runbook.md", Title: "Runbook", Size: 123},
-				downloadResult: FileDownloadResult{OK: true, FileID: "F1", Path: "/tmp/runbook.md", Size: 123},
+				downloadResult: FileDownloadResult{OK: true, FileID: "F1", Size: 123},
 			},
 			"bot_token": {},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	files := plugintest.RunOK[FileListResult](t, plugin, OperationFileList, map[string]any{"channel": "#engineering", "user": "@timo", "query": "runbook", "limit": 1}, withHost(factory))
 	if files.Count != 1 || files.Files[0].ID != "F1" {
@@ -713,12 +697,12 @@ func TestServiceFileLifecycleAndBookmarkWrites(t *testing.T) {
 		t.Fatalf("file info = %#v calls=%d", info, factory.clients["user_token"].fileInfoCalls)
 	}
 
-	download := plugintest.RunOK[FileDownloadResult](t, plugin, OperationFileDownload, map[string]any{"file_id": "F1", "output_path": "/tmp/runbook.md", "role": "user"})
+	download := plugintest.RunOK[FileDownloadResult](t, plugin, OperationFileDownload, map[string]any{"file_id": "F1", "role": "user"})
 	if !download.OK || download.Role != SlackRoleUser || factory.clients["user_token"].downloadCalls != 1 || factory.clients["bot_token"].downloadCalls != 0 {
 		t.Fatalf("download = %#v user calls=%d bot calls=%d", download, factory.clients["user_token"].downloadCalls, factory.clients["bot_token"].downloadCalls)
 	}
 
-	topLevelDownload := plugintest.RunOK[FileDownloadResult](t, plugin, OperationDownload, map[string]any{"file_id": "F1", "output_path": "/tmp/runbook.md", "role": "user"})
+	topLevelDownload := plugintest.RunOK[FileDownloadResult](t, plugin, OperationDownload, map[string]any{"file_id": "F1", "role": "user"})
 	if !topLevelDownload.OK || factory.clients["user_token"].downloadCalls != 2 {
 		t.Fatalf("top-level download = %#v calls=%d", topLevelDownload, factory.clients["user_token"].downloadCalls)
 	}
@@ -763,7 +747,7 @@ func TestServiceUnreadsUsesUserTokenAndResolvesChannel(t *testing.T) {
 			"bot_token": {},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.RunOK[UnreadsResult](t, plugin, OperationUnreads, map[string]any{"channel": "#engineering", "since": "1d", "limit": 10}, withHost(factory))
 	if out.Count != 1 || out.Channels[0].ID != "C1" || out.Since != "1d" {
@@ -784,7 +768,7 @@ func TestServiceWriteActionsCanUseUserRole(t *testing.T) {
 			"bot_token":  {editTS: "1710000001.123456"},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	edit := plugintest.RunOK[MessageEditResult](t, plugin, OperationMessageEdit, map[string]any{"channel": "C1", "ts": "1710000000.123456", "text": "hello", "role": "user"})
 	if edit.Role != SlackRoleUser || factory.clients["user_token"].editCalls != 1 || factory.clients["bot_token"].editCalls != 0 {
@@ -808,7 +792,7 @@ func TestServiceWriteActionsCanUseUserRole(t *testing.T) {
 }
 
 func TestServiceWriteActionsValidateInputs(t *testing.T) {
-	plugin := testPlugin(&capturingFactory{clients: map[string]*fakeClient{"bot_token": {}}}, nil)
+	plugin := testPlugin(&capturingFactory{clients: map[string]*fakeClient{"bot_token": {}}})
 
 	if err := plugintest.RunError(t, plugin, OperationMessageEdit, map[string]any{"channel": "C1", "ts": "1710000000.123456"}); err == nil || err.Code != "bad_input" {
 		t.Fatalf("missing edit text err = %#v", err)
@@ -822,8 +806,8 @@ func TestServiceWriteActionsValidateInputs(t *testing.T) {
 	if err := plugintest.RunError(t, plugin, OperationPresenceSet, map[string]any{"presence": "active"}); err == nil || err.Code != "bad_input" {
 		t.Fatalf("bad presence err = %#v", err)
 	}
-	if err := plugintest.RunError(t, plugin, OperationFileDownload, map[string]any{"file_id": "F1"}); err == nil || err.Code != "bad_input" {
-		t.Fatalf("missing output path err = %#v", err)
+	if err := plugintest.RunError(t, plugin, OperationFileDownload, map[string]any{}); err == nil || err.Code != "bad_input" {
+		t.Fatalf("missing file id err = %#v", err)
 	}
 	if err := plugintest.RunError(t, plugin, OperationBookmarkAdd, map[string]any{"channel": "C1", "link": "https://example/runbook"}); err == nil || err.Code != "bad_input" {
 		t.Fatalf("missing bookmark title err = %#v", err)
@@ -833,12 +817,7 @@ func TestServiceWriteActionsValidateInputs(t *testing.T) {
 	}
 }
 
-func TestServiceUploadFileUsesBotTokenAndFilePath(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "chart.png")
-	if err := os.WriteFile(path, []byte("png bytes"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+func TestServiceUploadFileUsesBotTokenAndBlobRef(t *testing.T) {
 	factory := &capturingFactory{
 		clients: map[string]*fakeClient{
 			"bot_token": {
@@ -846,9 +825,16 @@ func TestServiceUploadFileUsesBotTokenAndFilePath(t *testing.T) {
 			},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
+	host := hostForFactory(factory)
+	host.blobs = map[string]pluginbinding.BlobReadResponse{
+		"blob://chart": {
+			Blob:    pluginbinding.BlobRef{Ref: "blob://chart", Filename: "chart.png"},
+			Content: []byte("png bytes"),
+		},
+	}
 
-	out := plugintest.RunOK[FileUploadResult](t, plugin, OperationFileUpload, map[string]any{"channel": "C1", "thread_ts": "1710000000.123456", "file_path": path, "initial_comment": "graph", "alt_text": "Latency chart"})
+	out := plugintest.RunOK[FileUploadResult](t, plugin, OperationFileUpload, map[string]any{"channel": "C1", "thread_ts": "1710000000.123456", "blob_ref": "blob://chart", "initial_comment": "graph", "alt_text": "Latency chart"}, plugintest.WithHost(host))
 	if !out.OK || out.Role != SlackRoleBot || out.FileID != "F1" || factory.clients["bot_token"].uploadCalls != 1 {
 		t.Fatalf("upload result = %#v calls=%d", out, factory.clients["bot_token"].uploadCalls)
 	}
@@ -872,7 +858,7 @@ func TestServiceUploadFileResolvesChannelThreadAndComment(t *testing.T) {
 			"bot_token": {uploadResult: FileUploadResult{OK: true, FileID: "F1"}},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.RunOK[FileUploadResult](t, plugin, OperationFileUpload, map[string]any{"channel": "engineering", "thread_ts": "p1769777574026209", "filename": "chart.png", "content_bytes": "cG5n", "initial_comment": "for @timo"}, withHost(factory))
 	if !out.OK || out.Channel != "C1" || out.ThreadTS != "1769777574.026209" {
@@ -891,7 +877,7 @@ func TestServiceUploadFileCanUseUserRole(t *testing.T) {
 			"bot_token":  {uploadResult: FileUploadResult{OK: true, FileID: "F1"}},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.RunOK[FileUploadResult](t, plugin, OperationFileUpload, map[string]any{"channel": "C1", "filename": "chart.png", "content_bytes": "cG5nIGJ5dGVz", "role": "user"})
 	if !out.OK || out.Role != SlackRoleUser || out.FileID != "F2" {
@@ -903,7 +889,7 @@ func TestServiceUploadFileCanUseUserRole(t *testing.T) {
 }
 
 func TestServiceUploadFileRejectsInvalidRole(t *testing.T) {
-	plugin := testPlugin(&capturingFactory{clients: map[string]*fakeClient{"bot_token": {}}}, nil)
+	plugin := testPlugin(&capturingFactory{clients: map[string]*fakeClient{"bot_token": {}}})
 
 	if err := plugintest.RunError(t, plugin, OperationFileUpload, map[string]any{"channel": "C1", "filename": "chart.png", "content_bytes": "cG5n", "role": "admin"}); err == nil || err.Code != "bad_input" {
 		t.Fatalf("invalid role err = %#v", err)
@@ -916,7 +902,7 @@ func TestServiceUploadFileAcceptsBase64ContentBytes(t *testing.T) {
 			"bot_token": {uploadResult: FileUploadResult{OK: true, FileID: "F2"}},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.RunOK[FileUploadResult](t, plugin, OperationFileUpload, map[string]any{"channel": "C1", "filename": "chart.png", "content_bytes": "cG5nIGJ5dGVz"})
 	if !out.OK || out.FileID != "F2" {
@@ -928,12 +914,12 @@ func TestServiceUploadFileAcceptsBase64ContentBytes(t *testing.T) {
 }
 
 func TestServiceUploadFileRequiresExactlyOneContentSource(t *testing.T) {
-	plugin := testPlugin(&capturingFactory{clients: map[string]*fakeClient{"bot_token": {}}}, nil)
+	plugin := testPlugin(&capturingFactory{clients: map[string]*fakeClient{"bot_token": {}}})
 
 	if err := plugintest.RunError(t, plugin, OperationFileUpload, map[string]any{"channel": "C1", "filename": "chart.png"}); err == nil || err.Code != "bad_input" {
 		t.Fatalf("missing content err = %#v", err)
 	}
-	if err := plugintest.RunError(t, plugin, OperationFileUpload, map[string]any{"channel": "C1", "file_path": "chart.png", "filename": "chart.png", "content_bytes": "cG5n"}); err == nil || err.Code != "bad_input" {
+	if err := plugintest.RunError(t, plugin, OperationFileUpload, map[string]any{"channel": "C1", "blob_ref": "blob://chart", "filename": "chart.png", "content_bytes": "cG5n"}); err == nil || err.Code != "bad_input" {
 		t.Fatalf("ambiguous content err = %#v", err)
 	}
 }
@@ -950,7 +936,7 @@ func TestServiceThreadLimitsTotalMessages(t *testing.T) {
 			},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	thread := plugintest.RunOK[ThreadResult](t, plugin, OperationThread, map[string]any{"channel": "C1", "ts": "1710000000.123456", "limit": 2})
 	if thread.Count != 2 || len(thread.Messages) != 2 {
@@ -969,7 +955,7 @@ func TestServiceThreadAcceptsSlackURLRef(t *testing.T) {
 			},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	thread := plugintest.RunOK[ThreadResult](t, plugin, OperationThread, map[string]any{"ref": "https://example.slack.com/archives/C1/p1769777574026209"})
 	if thread.Channel != "C1" || thread.TS != "1769777574.026209" || thread.Count != 1 {
@@ -986,7 +972,7 @@ func TestServiceMessagesDatasourceReturnsRecords(t *testing.T) {
 			},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.DatasourceSearchOK[MessageDatasourceResult](t, plugin, map[string]any{"datasource": DatasourceMessages, "query": "incident", "limit": 5}, plugintest.WithInstance("work"))
 	if out.Source != DatasourceMessages || out.Query != "incident" || out.Count != 1 {
@@ -1002,7 +988,7 @@ func TestServiceMessagesDatasourceReturnsRecords(t *testing.T) {
 }
 
 func TestServiceThreadMessagesDatasourceRequiresChannelAndTS(t *testing.T) {
-	plugin := testPlugin(&capturingFactory{clients: map[string]*fakeClient{"user_token": {}}}, nil)
+	plugin := testPlugin(&capturingFactory{clients: map[string]*fakeClient{"user_token": {}}})
 
 	if err := plugintest.DatasourceSearchError(t, plugin, map[string]any{"datasource": DatasourceThreadMessages, "ts": "1710000000.123456"}); err == nil || err.Code != "bad_input" {
 		t.Fatalf("missing channel err = %#v", err)
@@ -1024,7 +1010,7 @@ func TestServiceThreadMessagesDatasourceReturnsThreadRecords(t *testing.T) {
 			},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.DatasourceSearchOK[ThreadMessagesDatasourceResult](t, plugin, map[string]any{"datasource": DatasourceThreadMessages, "channel": "C1", "ts": "1710000000.123456", "limit": 2})
 	if out.Source != DatasourceThreadMessages || out.Query != "1710000000.123456" || out.Count != 2 {
@@ -1051,7 +1037,7 @@ func TestServiceThreadMessagesDatasourceAcceptsNameRef(t *testing.T) {
 			},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.DatasourceSearchOK[ThreadMessagesDatasourceResult](t, plugin, map[string]any{"datasource": DatasourceThreadMessages, "ref": "#engineering:p1769777574026209"}, withHost(factory))
 	if out.Query != "1769777574.026209" || out.Count != 1 || out.Records[0].Channel != "C1" {
@@ -1070,7 +1056,7 @@ func TestServiceChannelMembersDatasourceRequiresChannelAndFilters(t *testing.T) 
 			},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	if err := plugintest.DatasourceSearchError(t, plugin, map[string]any{"datasource": DatasourceChannelMembers, "query": "timo"}); err == nil || err.Code != "bad_input" {
 		t.Fatalf("missing channel err = %#v", err)
@@ -1098,7 +1084,7 @@ func TestServiceChannelMembersDatasourceResolvesChannelName(t *testing.T) {
 			},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.DatasourceSearchOK[ChannelMembersDatasourceResult](t, plugin, map[string]any{"datasource": DatasourceChannelMembers, "channel": "#engineering"}, withHost(factory))
 	if out.Count != 1 || out.Records[0].Channel != "C1" || out.Records[0].ID != "C1:U1" {
@@ -1113,7 +1099,7 @@ func TestServiceChannelMembersDatasourceFallsBackToBotToken(t *testing.T) {
 			"bot_token":  {channelMembers: []User{{ID: "U1", Name: "timo"}}},
 		},
 	}
-	plugin := testPlugin(factory, nil)
+	plugin := testPlugin(factory)
 
 	out := plugintest.DatasourceSearchOK[ChannelMembersDatasourceResult](t, plugin, map[string]any{"datasource": DatasourceChannelMembers, "channel": "C1", "limit": 1})
 	if out.Count != 1 || out.Records[0].ID != "C1:U1" {
@@ -1124,13 +1110,8 @@ func TestServiceChannelMembersDatasourceFallsBackToBotToken(t *testing.T) {
 	}
 }
 
-func testPlugin(factory *capturingFactory, get pluginbinding.SecretGetter) *pluginbinding.Plugin {
-	if get == nil {
-		get = func(_ pluginbinding.Context, purpose string) (pluginbinding.SecretMaterial, error) {
-			return pluginbinding.SecretMaterial{Purpose: purpose, Value: purpose}, nil
-		}
-	}
-	return NewPluginWithService(Service{SecretGetter: get, ClientFactory: factory.newClient})
+func testPlugin(factory *capturingFactory) *pluginbinding.Plugin {
+	return NewPluginWithService(Service{ClientFactory: factory.newClient})
 }
 
 type capturingFactory struct {
@@ -1138,14 +1119,14 @@ type capturingFactory struct {
 	created map[string]int
 }
 
-func (f *capturingFactory) newClient(material pluginbinding.SecretMaterial) (Client, error) {
+func (f *capturingFactory) newClient(_ pluginbinding.Context, purpose string) (Client, error) {
 	if f.created == nil {
 		f.created = map[string]int{}
 	}
-	f.created[material.Purpose]++
-	client := f.clients[material.Purpose]
+	f.created[purpose]++
+	client := f.clients[purpose]
 	if client == nil {
-		return nil, errors.New("unexpected token " + material.Purpose)
+		return nil, errors.New("unexpected token " + purpose)
 	}
 	return client, nil
 }
@@ -1247,6 +1228,7 @@ type fakeClient struct {
 type fakeHostClient struct {
 	users    []User
 	channels []Channel
+	blobs    map[string]pluginbinding.BlobReadResponse
 }
 
 func hostForFactory(factory *capturingFactory) *fakeHostClient {
@@ -1306,6 +1288,34 @@ func (h *fakeHostClient) Get(input pluginbinding.DatasourceGetInput) (pluginbind
 
 func (h *fakeHostClient) ResolveEndpoint(string) (core.EndpointRef, error) {
 	return core.EndpointRef{}, nil
+}
+
+func (h *fakeHostClient) HTTP(pluginbinding.HTTPRequest) (pluginbinding.HTTPResponse, error) {
+	return pluginbinding.HTTPResponse{}, errors.New("http capability is not configured")
+}
+
+func (h *fakeHostClient) BlobRead(input pluginbinding.BlobReadRequest) (pluginbinding.BlobReadResponse, error) {
+	ref := strings.TrimSpace(input.Ref)
+	if blob, ok := h.blobs[ref]; ok {
+		return blob, nil
+	}
+	return pluginbinding.BlobReadResponse{}, errors.New("blob read capability is not configured")
+}
+
+func (h *fakeHostClient) BlobWrite(pluginbinding.BlobWriteRequest) (pluginbinding.BlobRef, error) {
+	return pluginbinding.BlobRef{}, errors.New("blob write capability is not configured")
+}
+
+func (h *fakeHostClient) BlobInfo(pluginbinding.BlobInfoRequest) (pluginbinding.BlobRef, error) {
+	return pluginbinding.BlobRef{}, errors.New("blob info capability is not configured")
+}
+
+func (h *fakeHostClient) EnvLookup(string) (pluginbinding.EnvLookupResponse, error) {
+	return pluginbinding.EnvLookupResponse{}, errors.New("env capability is not configured")
+}
+
+func (h *fakeHostClient) CapabilityCall(pluginbinding.ProviderCallRequest) (pluginbinding.ProviderCallResponse, error) {
+	return pluginbinding.ProviderCallResponse{}, errors.New("provider capability is not configured")
 }
 
 func (c *fakeClient) AuthTest(_ context.Context) (AuthInfo, error) {
@@ -1450,9 +1460,6 @@ func (c *fakeClient) DownloadFile(_ context.Context, request FileDownloadRequest
 	result := c.downloadResult
 	if result.FileID == "" {
 		result.FileID = request.FileID
-	}
-	if result.Path == "" {
-		result.Path = request.OutputPath
 	}
 	result.OK = true
 	return result, c.downloadErr

@@ -299,7 +299,7 @@ type NetworkGetResult = pluginbinding.DatasourceGetResult[NetworkRecord]
 type VolumeGetResult = pluginbinding.DatasourceGetResult[VolumeRecord]
 
 func (s Service) Info(ctx pluginbinding.Context, input InfoInput) (DockerInfo, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return DockerInfo{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -312,7 +312,7 @@ func (s Service) Info(ctx pluginbinding.Context, input InfoInput) (DockerInfo, e
 }
 
 func (s Service) ContainerList(ctx pluginbinding.Context, input ContainerListInput) (pluginbinding.ListResult[Container], error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return pluginbinding.ListResult[Container]{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -325,7 +325,7 @@ func (s Service) ContainerList(ctx pluginbinding.Context, input ContainerListInp
 }
 
 func (s Service) ContainerShow(ctx pluginbinding.Context, input ShowInput) (pluginbinding.ShowResult[Container], error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return pluginbinding.ShowResult[Container]{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -338,7 +338,7 @@ func (s Service) ContainerShow(ctx pluginbinding.Context, input ShowInput) (plug
 }
 
 func (s Service) ContainerLogs(ctx pluginbinding.Context, input ContainerLogsInput) (ContainerLogsResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ContainerLogsResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -351,7 +351,7 @@ func (s Service) ContainerLogs(ctx pluginbinding.Context, input ContainerLogsInp
 }
 
 func (s Service) ContainerStats(ctx pluginbinding.Context, input ContainerStatsInput) (ContainerStatsResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ContainerStatsResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -364,7 +364,7 @@ func (s Service) ContainerStats(ctx pluginbinding.Context, input ContainerStatsI
 }
 
 func (s Service) ContainerTop(ctx pluginbinding.Context, input ContainerTopInput) (ContainerTopResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ContainerTopResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -377,7 +377,7 @@ func (s Service) ContainerTop(ctx pluginbinding.Context, input ContainerTopInput
 }
 
 func (s Service) ContainerExec(ctx pluginbinding.Context, input ContainerExecInput) (ContainerExecResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ContainerExecResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -390,7 +390,7 @@ func (s Service) ContainerExec(ctx pluginbinding.Context, input ContainerExecInp
 }
 
 func (s Service) ContainerCopyFrom(ctx pluginbinding.Context, input ContainerCopyFromInput) (ContainerCopyResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ContainerCopyResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -403,7 +403,7 @@ func (s Service) ContainerCopyFrom(ctx pluginbinding.Context, input ContainerCop
 }
 
 func (s Service) ContainerCopyTo(ctx pluginbinding.Context, input ContainerCopyToInput) (ContainerCopyResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ContainerCopyResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -416,7 +416,7 @@ func (s Service) ContainerCopyTo(ctx pluginbinding.Context, input ContainerCopyT
 }
 
 func (s Service) ContainerCreate(ctx pluginbinding.Context, input ContainerCreateInput) (ContainerCreateResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ContainerCreateResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -429,7 +429,7 @@ func (s Service) ContainerCreate(ctx pluginbinding.Context, input ContainerCreat
 }
 
 func (s Service) ContainerRun(ctx pluginbinding.Context, input ContainerCreateInput) (ContainerCreateResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ContainerCreateResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -442,7 +442,7 @@ func (s Service) ContainerRun(ctx pluginbinding.Context, input ContainerCreateIn
 }
 
 func (s Service) ContainerStart(ctx pluginbinding.Context, input ContainerStartInput) (ContainerActionResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ContainerActionResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -455,7 +455,7 @@ func (s Service) ContainerStart(ctx pluginbinding.Context, input ContainerStartI
 }
 
 func (s Service) ContainerStop(ctx pluginbinding.Context, input ContainerStopInput) (ContainerActionResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ContainerActionResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -468,7 +468,7 @@ func (s Service) ContainerStop(ctx pluginbinding.Context, input ContainerStopInp
 }
 
 func (s Service) ContainerRestart(ctx pluginbinding.Context, input ContainerRestartInput) (ContainerActionResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ContainerActionResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -481,7 +481,7 @@ func (s Service) ContainerRestart(ctx pluginbinding.Context, input ContainerRest
 }
 
 func (s Service) ContainerRemove(ctx pluginbinding.Context, input ContainerRemoveInput) (ContainerActionResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ContainerActionResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -494,7 +494,7 @@ func (s Service) ContainerRemove(ctx pluginbinding.Context, input ContainerRemov
 }
 
 func (s Service) ContainerInspectRaw(ctx pluginbinding.Context, input RawInspectInput) (RawInspectResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return RawInspectResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -507,7 +507,7 @@ func (s Service) ContainerInspectRaw(ctx pluginbinding.Context, input RawInspect
 }
 
 func (s Service) ContainerPrune(ctx pluginbinding.Context, input PruneInput) (PruneResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return PruneResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -520,7 +520,7 @@ func (s Service) ContainerPrune(ctx pluginbinding.Context, input PruneInput) (Pr
 }
 
 func (s Service) ImageList(ctx pluginbinding.Context, input ImageListInput) (pluginbinding.ListResult[Image], error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return pluginbinding.ListResult[Image]{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -533,7 +533,7 @@ func (s Service) ImageList(ctx pluginbinding.Context, input ImageListInput) (plu
 }
 
 func (s Service) ImageShow(ctx pluginbinding.Context, input ShowInput) (pluginbinding.ShowResult[Image], error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return pluginbinding.ShowResult[Image]{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -546,7 +546,7 @@ func (s Service) ImageShow(ctx pluginbinding.Context, input ShowInput) (pluginbi
 }
 
 func (s Service) ImagePull(ctx pluginbinding.Context, input ImagePullInput) (ImagePullResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ImagePullResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -559,7 +559,7 @@ func (s Service) ImagePull(ctx pluginbinding.Context, input ImagePullInput) (Ima
 }
 
 func (s Service) ImageTag(ctx pluginbinding.Context, input ImageTagInput) (ResourceActionResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ResourceActionResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -572,7 +572,7 @@ func (s Service) ImageTag(ctx pluginbinding.Context, input ImageTagInput) (Resou
 }
 
 func (s Service) ImagePush(ctx pluginbinding.Context, input ImagePushInput) (ImagePushResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ImagePushResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -585,7 +585,7 @@ func (s Service) ImagePush(ctx pluginbinding.Context, input ImagePushInput) (Ima
 }
 
 func (s Service) ImageBuild(ctx pluginbinding.Context, input ImageBuildInput) (ImageBuildResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ImageBuildResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -598,7 +598,7 @@ func (s Service) ImageBuild(ctx pluginbinding.Context, input ImageBuildInput) (I
 }
 
 func (s Service) ImageRemove(ctx pluginbinding.Context, input ImageRemoveInput) (ImageRemoveResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ImageRemoveResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -611,7 +611,7 @@ func (s Service) ImageRemove(ctx pluginbinding.Context, input ImageRemoveInput) 
 }
 
 func (s Service) ImageInspectRaw(ctx pluginbinding.Context, input RawInspectInput) (RawInspectResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return RawInspectResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -624,7 +624,7 @@ func (s Service) ImageInspectRaw(ctx pluginbinding.Context, input RawInspectInpu
 }
 
 func (s Service) ImagePrune(ctx pluginbinding.Context, input ImagePruneInput) (ImagePruneResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ImagePruneResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -637,7 +637,7 @@ func (s Service) ImagePrune(ctx pluginbinding.Context, input ImagePruneInput) (I
 }
 
 func (s Service) NetworkList(ctx pluginbinding.Context, input NetworkListInput) (pluginbinding.ListResult[Network], error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return pluginbinding.ListResult[Network]{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -650,7 +650,7 @@ func (s Service) NetworkList(ctx pluginbinding.Context, input NetworkListInput) 
 }
 
 func (s Service) NetworkShow(ctx pluginbinding.Context, input ShowInput) (pluginbinding.ShowResult[Network], error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return pluginbinding.ShowResult[Network]{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -663,7 +663,7 @@ func (s Service) NetworkShow(ctx pluginbinding.Context, input ShowInput) (plugin
 }
 
 func (s Service) NetworkCreate(ctx pluginbinding.Context, input NetworkCreateInput) (ResourceActionResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ResourceActionResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -676,7 +676,7 @@ func (s Service) NetworkCreate(ctx pluginbinding.Context, input NetworkCreateInp
 }
 
 func (s Service) NetworkRemove(ctx pluginbinding.Context, input NetworkRemoveInput) (ResourceActionResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ResourceActionResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -689,7 +689,7 @@ func (s Service) NetworkRemove(ctx pluginbinding.Context, input NetworkRemoveInp
 }
 
 func (s Service) NetworkInspectRaw(ctx pluginbinding.Context, input RawInspectInput) (RawInspectResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return RawInspectResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -702,7 +702,7 @@ func (s Service) NetworkInspectRaw(ctx pluginbinding.Context, input RawInspectIn
 }
 
 func (s Service) NetworkPrune(ctx pluginbinding.Context, input PruneInput) (PruneResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return PruneResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -715,7 +715,7 @@ func (s Service) NetworkPrune(ctx pluginbinding.Context, input PruneInput) (Prun
 }
 
 func (s Service) SystemDF(ctx pluginbinding.Context, input SystemDFInput) (SystemDFResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return SystemDFResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -728,7 +728,7 @@ func (s Service) SystemDF(ctx pluginbinding.Context, input SystemDFInput) (Syste
 }
 
 func (s Service) SystemPrune(ctx pluginbinding.Context, input SystemPruneInput) (SystemPruneResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return SystemPruneResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -741,7 +741,7 @@ func (s Service) SystemPrune(ctx pluginbinding.Context, input SystemPruneInput) 
 }
 
 func (s Service) Events(ctx pluginbinding.Context, input EventsInput) (EventsResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return EventsResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -754,7 +754,7 @@ func (s Service) Events(ctx pluginbinding.Context, input EventsInput) (EventsRes
 }
 
 func (s Service) VolumeList(ctx pluginbinding.Context, input VolumeListInput) (pluginbinding.ListResult[Volume], error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return pluginbinding.ListResult[Volume]{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -767,7 +767,7 @@ func (s Service) VolumeList(ctx pluginbinding.Context, input VolumeListInput) (p
 }
 
 func (s Service) VolumeShow(ctx pluginbinding.Context, input ShowInput) (pluginbinding.ShowResult[Volume], error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return pluginbinding.ShowResult[Volume]{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -780,7 +780,7 @@ func (s Service) VolumeShow(ctx pluginbinding.Context, input ShowInput) (pluginb
 }
 
 func (s Service) VolumeCreate(ctx pluginbinding.Context, input VolumeCreateInput) (Volume, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return Volume{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -793,7 +793,7 @@ func (s Service) VolumeCreate(ctx pluginbinding.Context, input VolumeCreateInput
 }
 
 func (s Service) VolumeRemove(ctx pluginbinding.Context, input VolumeRemoveInput) (ResourceActionResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ResourceActionResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -806,7 +806,7 @@ func (s Service) VolumeRemove(ctx pluginbinding.Context, input VolumeRemoveInput
 }
 
 func (s Service) VolumeInspectRaw(ctx pluginbinding.Context, input RawInspectInput) (RawInspectResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return RawInspectResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -819,7 +819,7 @@ func (s Service) VolumeInspectRaw(ctx pluginbinding.Context, input RawInspectInp
 }
 
 func (s Service) VolumePrune(ctx pluginbinding.Context, input PruneInput) (PruneResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return PruneResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -832,7 +832,7 @@ func (s Service) VolumePrune(ctx pluginbinding.Context, input PruneInput) (Prune
 }
 
 func (s Service) BuildCachePrune(ctx pluginbinding.Context, input BuildCachePruneInput) (PruneResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return PruneResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -845,7 +845,7 @@ func (s Service) BuildCachePrune(ctx pluginbinding.Context, input BuildCachePrun
 }
 
 func (s Service) ContextList(ctx pluginbinding.Context, input ContextListInput) (pluginbinding.ListResult[DockerContext], error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return pluginbinding.ListResult[DockerContext]{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -858,7 +858,7 @@ func (s Service) ContextList(ctx pluginbinding.Context, input ContextListInput) 
 }
 
 func (s Service) ContextShow(ctx pluginbinding.Context, input ContextShowInput) (pluginbinding.ShowResult[DockerContext], error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return pluginbinding.ShowResult[DockerContext]{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -949,7 +949,7 @@ func (s Service) Lookup(ctx pluginbinding.Context, input LookupInput) (LookupRes
 }
 
 func (s Service) ContainerGet(ctx pluginbinding.Context, input GetInput) (ContainerGetResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ContainerGetResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -966,7 +966,7 @@ func (s Service) ContainerGet(ctx pluginbinding.Context, input GetInput) (Contai
 }
 
 func (s Service) ImageGet(ctx pluginbinding.Context, input GetInput) (ImageGetResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return ImageGetResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -983,7 +983,7 @@ func (s Service) ImageGet(ctx pluginbinding.Context, input GetInput) (ImageGetRe
 }
 
 func (s Service) NetworkGet(ctx pluginbinding.Context, input GetInput) (NetworkGetResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return NetworkGetResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -1000,7 +1000,7 @@ func (s Service) NetworkGet(ctx pluginbinding.Context, input GetInput) (NetworkG
 }
 
 func (s Service) VolumeGet(ctx pluginbinding.Context, input GetInput) (VolumeGetResult, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return VolumeGetResult{}, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -1017,7 +1017,7 @@ func (s Service) VolumeGet(ctx pluginbinding.Context, input GetInput) (VolumeGet
 }
 
 func (s Service) containerRecords(ctx pluginbinding.Context, limit int) ([]ContainerRecord, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return nil, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -1036,7 +1036,7 @@ func (s Service) containerRecords(ctx pluginbinding.Context, limit int) ([]Conta
 }
 
 func (s Service) imageRecords(ctx pluginbinding.Context, limit int) ([]ImageRecord, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return nil, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -1055,7 +1055,7 @@ func (s Service) imageRecords(ctx pluginbinding.Context, limit int) ([]ImageReco
 }
 
 func (s Service) networkRecords(ctx pluginbinding.Context, limit int) ([]NetworkRecord, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return nil, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -1074,7 +1074,7 @@ func (s Service) networkRecords(ctx pluginbinding.Context, limit int) ([]Network
 }
 
 func (s Service) volumeRecords(ctx pluginbinding.Context, limit int) ([]VolumeRecord, error) {
-	client, err := s.client()
+	client, err := s.client(ctx)
 	if err != nil {
 		return nil, pluginbinding.Errorf("docker", "%s", err)
 	}
@@ -1092,12 +1092,12 @@ func (s Service) volumeRecords(ctx pluginbinding.Context, limit int) ([]VolumeRe
 	return records, nil
 }
 
-func (s Service) client() (Client, error) {
+func (s Service) client(ctx pluginbinding.Context) (Client, error) {
 	factory := s.ClientFactory
 	if factory == nil {
 		factory = NewLiveClient
 	}
-	return factory()
+	return factory(ctx)
 }
 
 func dockerError(err error) error {

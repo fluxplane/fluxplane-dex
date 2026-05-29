@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
@@ -17,20 +16,14 @@ import (
 )
 
 type Service struct {
-	HTTPClient *http.Client
 }
 
 func NewService() Service {
-	return Service{HTTPClient: &http.Client{Timeout: 30 * time.Second}}
+	return Service{}
 }
 
 type GrafanaTargetInput struct {
-	EndpointRef   string `json:"endpoint_ref,omitempty" jsonschema:"description=Registered Grafana endpoint ref resolved by the host."`
-	URL           string `json:"url,omitempty" jsonschema:"description=Grafana base URL. Defaults to GRAFANA_URL."`
-	CredentialRef string `json:"credential_ref,omitempty" jsonschema:"description=Credential reference associated with the endpoint."`
-	Token         string `json:"token,omitempty" jsonschema:"description=Grafana bearer token."`
-	Username      string `json:"username,omitempty" jsonschema:"description=Grafana basic auth username."`
-	Password      string `json:"password,omitempty" jsonschema:"description=Grafana basic auth password."`
+	EndpointRef string `json:"endpoint_ref,omitempty" jsonschema:"description=Registered Grafana endpoint ref resolved by the host."`
 }
 
 type DatasourceListInput struct {
@@ -340,11 +333,11 @@ type ProxyQueryResult struct {
 }
 
 func (s Service) DatasourceList(ctx pluginbinding.Context, input DatasourceListInput) (DatasourceListResult, error) {
-	target, err := s.target(ctx, input.GrafanaTargetInput)
+	target, client, err := s.client(ctx, input.GrafanaTargetInput)
 	if err != nil {
-		return DatasourceListResult{}, pluginbinding.Errorf("bad_input", "%s", err)
+		return DatasourceListResult{}, err
 	}
-	datasources, err := s.datasources(context.Background(), target)
+	datasources, err := s.datasources(context.Background(), client)
 	if err != nil {
 		return DatasourceListResult{}, pluginbinding.Errorf("grafana", "%s", err)
 	}
@@ -371,7 +364,7 @@ func (s Service) DatasourceHealth(ctx pluginbinding.Context, input DatasourceHea
 }
 
 func (s Service) datasourceHealthFallback(ctx context.Context, target target, client Client, uid string) (ProxyQueryResult, bool) {
-	datasources, err := s.datasources(ctx, target)
+	datasources, err := s.datasources(ctx, client)
 	if err != nil {
 		return ProxyQueryResult{}, false
 	}
@@ -749,7 +742,7 @@ func (s Service) client(ctx pluginbinding.Context, input GrafanaTargetInput) (ta
 	if err != nil {
 		return target, Client{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
-	return target, Client{BaseURL: target.URL, Token: target.Token, Username: target.Username, Password: target.Password, HTTPClient: s.HTTPClient}, nil
+	return target, Client{EndpointRef: target.EndpointRef, Host: ctx.Host}, nil
 }
 
 func (s Service) resolveDatasource(ctx pluginbinding.Context, input GrafanaTargetInput, datasourceType, cluster, explicitUID string) (target, Client, string, error) {
@@ -760,7 +753,7 @@ func (s Service) resolveDatasource(ctx pluginbinding.Context, input GrafanaTarge
 	if strings.TrimSpace(explicitUID) != "" {
 		return target, client, strings.TrimSpace(explicitUID), nil
 	}
-	datasources, err := s.datasources(context.Background(), target)
+	datasources, err := s.datasources(context.Background(), client)
 	if err != nil {
 		return target, Client{}, "", pluginbinding.Errorf("grafana", "%s", err)
 	}
@@ -771,8 +764,7 @@ func (s Service) resolveDatasource(ctx pluginbinding.Context, input GrafanaTarge
 	return target, client, uid, nil
 }
 
-func (s Service) datasources(ctx context.Context, target target) ([]Datasource, error) {
-	client := Client{BaseURL: target.URL, Token: target.Token, Username: target.Username, Password: target.Password, HTTPClient: s.HTTPClient}
+func (s Service) datasources(ctx context.Context, client Client) ([]Datasource, error) {
 	raw, err := client.get(ctx, "/api/datasources", nil)
 	if err != nil {
 		return nil, err

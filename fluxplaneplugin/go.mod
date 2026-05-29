@@ -3,8 +3,8 @@ module github.com/fluxplane/fluxplane-dex/fluxplaneplugin
 go 1.26.1
 
 require (
-	github.com/fluxplane/fluxplane-core v0.0.0-00010101000000-000000000000
-	github.com/fluxplane/fluxplane-dex v0.9.0
+	github.com/fluxplane/fluxplane-core v0.20.0
+	github.com/fluxplane/fluxplane-dex v0.10.0
 )
 
 require (
@@ -32,8 +32,8 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
-	github.com/fluxplane/fluxplane-dex/plugins/docker v0.9.0 // indirect
-	github.com/fluxplane/fluxplane-dex/plugins/kubernetes v0.9.0 // indirect
+	github.com/fluxplane/fluxplane-dex/plugins/docker v0.10.0 // indirect
+	github.com/fluxplane/fluxplane-dex/plugins/kubernetes v0.10.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -118,11 +118,4 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.0 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
-)
-
-replace (
-	github.com/fluxplane/fluxplane-core => ../../fluxplane-core
-	github.com/fluxplane/fluxplane-dex => ..
-	github.com/fluxplane/fluxplane-dex/plugins/docker => ../plugins/docker
-	github.com/fluxplane/fluxplane-dex/plugins/kubernetes => ../plugins/kubernetes
 )

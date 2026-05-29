@@ -3,6 +3,7 @@ package pluginbinding
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/fluxplane/fluxplane-dex/core"
@@ -137,5 +138,32 @@ func TestReadWithPreferredSecretsStopsOnNonFallbackError(t *testing.T) {
 	)
 	if err == nil || source != "user_token" {
 		t.Fatalf("source=%q err=%v", source, err)
+	}
+}
+
+func TestReadWithPreferredAuthPurposesDoesNotReadSecrets(t *testing.T) {
+	var opened []string
+	value, source, err := ReadWithPreferredAuthPurposes[string, string](
+		[]string{"user_token", "bot_token"},
+		func(purpose string) (string, error) {
+			opened = append(opened, purpose)
+			return purpose, nil
+		},
+		func(client string, _ string) (string, error) {
+			if client == "user_token" {
+				return "", errors.New("missing_scope")
+			}
+			return "ok", nil
+		},
+		func(error) bool { return true },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != "ok" || source != "bot_token" {
+		t.Fatalf("value=%q source=%q", value, source)
+	}
+	if strings.Join(opened, ",") != "user_token,bot_token" {
+		t.Fatalf("opened=%#v", opened)
 	}
 }

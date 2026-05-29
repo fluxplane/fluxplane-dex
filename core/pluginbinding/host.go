@@ -24,6 +24,12 @@ type HostClient interface {
 	Search(input DatasourceSearchInput) (DatasourceSearchResult[any], error)
 	Get(input DatasourceGetInput) (DatasourceGetResult[any], error)
 	ResolveEndpoint(ref string) (core.EndpointRef, error)
+	HTTP(input HTTPRequest) (HTTPResponse, error)
+	BlobRead(input BlobReadRequest) (BlobReadResponse, error)
+	BlobWrite(input BlobWriteRequest) (BlobRef, error)
+	BlobInfo(input BlobInfoRequest) (BlobRef, error)
+	EnvLookup(key string) (EnvLookupResponse, error)
+	CapabilityCall(input ProviderCallRequest) (ProviderCallResponse, error)
 }
 
 type hostClient struct {
@@ -72,6 +78,42 @@ func (h hostClient) ResolveEndpoint(ref string) (core.EndpointRef, error) {
 	return out, err
 }
 
+func (h hostClient) HTTP(input HTTPRequest) (HTTPResponse, error) {
+	var out HTTPResponse
+	err := h.call(protocol.HostCapabilityHTTPDo, input, &out)
+	return out, err
+}
+
+func (h hostClient) BlobRead(input BlobReadRequest) (BlobReadResponse, error) {
+	var out BlobReadResponse
+	err := h.call(protocol.HostCapabilityBlobRead, input, &out)
+	return out, err
+}
+
+func (h hostClient) BlobWrite(input BlobWriteRequest) (BlobRef, error) {
+	var out BlobRef
+	err := h.call(protocol.HostCapabilityBlobWrite, input, &out)
+	return out, err
+}
+
+func (h hostClient) BlobInfo(input BlobInfoRequest) (BlobRef, error) {
+	var out BlobRef
+	err := h.call(protocol.HostCapabilityBlobInfo, input, &out)
+	return out, err
+}
+
+func (h hostClient) EnvLookup(key string) (EnvLookupResponse, error) {
+	var out EnvLookupResponse
+	err := h.call(protocol.HostCapabilityEnvLookup, EnvLookupRequest{Key: strings.TrimSpace(key)}, &out)
+	return out, err
+}
+
+func (h hostClient) CapabilityCall(input ProviderCallRequest) (ProviderCallResponse, error) {
+	var out ProviderCallResponse
+	err := h.call(protocol.HostCapabilityProviderCall, input, &out)
+	return out, err
+}
+
 func (h hostClient) call(command string, input any, out any) error {
 	raw, err := h.caller.CallHost(command, input)
 	if err != nil {
@@ -101,4 +143,28 @@ func (unavailableHostClient) Get(DatasourceGetInput) (DatasourceGetResult[any], 
 
 func (unavailableHostClient) ResolveEndpoint(string) (core.EndpointRef, error) {
 	return core.EndpointRef{}, fmt.Errorf("host client is unavailable")
+}
+
+func (unavailableHostClient) HTTP(HTTPRequest) (HTTPResponse, error) {
+	return HTTPResponse{}, fmt.Errorf("host client is unavailable")
+}
+
+func (unavailableHostClient) BlobRead(BlobReadRequest) (BlobReadResponse, error) {
+	return BlobReadResponse{}, fmt.Errorf("host client is unavailable")
+}
+
+func (unavailableHostClient) BlobWrite(BlobWriteRequest) (BlobRef, error) {
+	return BlobRef{}, fmt.Errorf("host client is unavailable")
+}
+
+func (unavailableHostClient) BlobInfo(BlobInfoRequest) (BlobRef, error) {
+	return BlobRef{}, fmt.Errorf("host client is unavailable")
+}
+
+func (unavailableHostClient) EnvLookup(string) (EnvLookupResponse, error) {
+	return EnvLookupResponse{}, fmt.Errorf("host client is unavailable")
+}
+
+func (unavailableHostClient) CapabilityCall(ProviderCallRequest) (ProviderCallResponse, error) {
+	return ProviderCallResponse{}, fmt.Errorf("host client is unavailable")
 }

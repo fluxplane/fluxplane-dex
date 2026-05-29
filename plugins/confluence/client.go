@@ -12,13 +12,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"mime/multipart"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
-	"github.com/fluxplane/fluxplane-dex/internal/atlassian"
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 )
 
 type Client interface {
@@ -34,19 +35,24 @@ type Client interface {
 	SearchUsers(context.Context, UserSearchOptions) ([]User, error)
 }
 
-type ClientFactory func(atlassian.Credentials) (Client, error)
+type ClientFactory func(pluginbinding.Context, string) (Client, error)
 
-func NewLiveClient(credentials atlassian.Credentials) (Client, error) {
-	return liveClient{client: atlassian.NewClient(credentials)}, nil
+func NewLiveClient(ctx pluginbinding.Context, endpointRef string) (Client, error) {
+	endpointRef = strings.TrimSpace(endpointRef)
+	if endpointRef == "" {
+		return nil, fmt.Errorf("confluence endpoint_ref is required")
+	}
+	return liveClient{endpointRef: endpointRef, host: ctx.Host}, nil
 }
 
 type liveClient struct {
-	client atlassian.Client
+	endpointRef string
+	host        pluginbinding.HostClient
 }
 
 func (c liveClient) CurrentUser(ctx context.Context) (User, error) {
 	var out User
-	err := c.client.GetJSON(ctx, "/wiki/rest/api/user/current", nil, &out)
+	err := c.getJSON(ctx, "/wiki/rest/api/user/current", nil, &out)
 	return out, err
 }
 
@@ -75,7 +81,7 @@ func (c liveClient) listPages(ctx context.Context, input PageSearchOptions) ([]P
 	var out []Page
 	for {
 		var page pageListResponse
-		if err := c.client.GetJSON(ctx, "/wiki/rest/api/content", query, &page); err != nil {
+		if err := c.getJSON(ctx, "/wiki/rest/api/content", query, &page); err != nil {
 			return nil, err
 		}
 		out = append(out, page.Results...)
@@ -98,7 +104,7 @@ func (c liveClient) searchPages(ctx context.Context, input PageSearchOptions) ([
 	var out []Page
 	for {
 		var page searchResponse
-		if err := c.client.GetJSON(ctx, "/wiki/rest/api/search", query, &page); err != nil {
+		if err := c.getJSON(ctx, "/wiki/rest/api/search", query, &page); err != nil {
 			return nil, err
 		}
 		out = append(out, pagesFromSearch(page.Results)...)
@@ -114,7 +120,7 @@ func (c liveClient) GetPage(ctx context.Context, id string) (Page, error) {
 	query := url.Values{}
 	query.Set("expand", "body.storage,version,space,ancestors")
 	var out Page
-	err := c.client.GetJSON(ctx, "/wiki/rest/api/content/"+url.PathEscape(strings.TrimSpace(id)), query, &out)
+	err := c.getJSON(ctx, "/wiki/rest/api/content/"+url.PathEscape(strings.TrimSpace(id)), query, &out)
 	return out, err
 }
 
@@ -138,7 +144,7 @@ func (c liveClient) CreatePage(ctx context.Context, request PageCreateRequest) (
 		return PageMutationResult{}, err
 	}
 	var created Page
-	if err := c.client.DoJSON(ctx, http.MethodPost, "/wiki/rest/api/content", nil, bytes.NewReader(data), &created); err != nil {
+	if err := c.doJSON(ctx, "POST", "/wiki/rest/api/content", nil, bytes.NewReader(data), &created); err != nil {
 		return PageMutationResult{}, err
 	}
 	out := PageMutationResult{OK: true, ID: created.ID, Page: &created}
@@ -150,7 +156,7 @@ func (c liveClient) CreatePage(ctx context.Context, request PageCreateRequest) (
 
 func (c liveClient) DeletePage(ctx context.Context, id string) (PageMutationResult, error) {
 	id = strings.TrimSpace(id)
-	if err := c.client.DoJSON(ctx, http.MethodDelete, "/wiki/rest/api/content/"+url.PathEscape(id), nil, nil, nil); err != nil {
+	if err := c.doJSON(ctx, "DELETE", "/wiki/rest/api/content/"+url.PathEscape(id), nil, nil, nil); err != nil {
 		return PageMutationResult{}, err
 	}
 	return PageMutationResult{OK: true, ID: id}, nil
@@ -171,7 +177,7 @@ func (c liveClient) UploadPageAttachment(ctx context.Context, pageID string, req
 		return AttachmentUploadResult{}, err
 	}
 	var out attachmentUploadResponse
-	err = c.client.Do(ctx, http.MethodPost, "/wiki/rest/api/content/"+url.PathEscape(pageID)+"/child/attachment", nil, &body, map[string]string{
+	err = c.do(ctx, "POST", "/wiki/rest/api/content/"+url.PathEscape(pageID)+"/child/attachment", nil, &body, map[string]string{
 		"Accept":            "application/json",
 		"Content-Type":      writer.FormDataContentType(),
 		"X-Atlassian-Token": "no-check",
@@ -187,7 +193,7 @@ func (c liveClient) ListPageAttachments(ctx context.Context, pageID string) (Att
 	query := url.Values{}
 	query.Set("limit", "100")
 	var out attachmentListResponse
-	err := c.client.GetJSON(ctx, "/wiki/rest/api/content/"+url.PathEscape(pageID)+"/child/attachment", query, &out)
+	err := c.getJSON(ctx, "/wiki/rest/api/content/"+url.PathEscape(pageID)+"/child/attachment", query, &out)
 	if err != nil {
 		return AttachmentListResult{}, err
 	}
@@ -197,7 +203,7 @@ func (c liveClient) ListPageAttachments(ctx context.Context, pageID string) (Att
 func (c liveClient) GetAttachment(ctx context.Context, id, pageID string, downloadContent bool) (AttachmentGetResult, error) {
 	id = strings.TrimSpace(id)
 	var attachment Attachment
-	if err := c.client.GetJSON(ctx, "/wiki/rest/api/content/"+url.PathEscape(id), nil, &attachment); err != nil {
+	if err := c.getJSON(ctx, "/wiki/rest/api/content/"+url.PathEscape(id), nil, &attachment); err != nil {
 		return AttachmentGetResult{}, err
 	}
 	download := confluenceDownloadURL(attachment)
@@ -207,7 +213,7 @@ func (c liveClient) GetAttachment(ctx context.Context, id, pageID string, downlo
 	if parentID := firstNonEmpty(pageID, confluenceAttachmentPageID(attachment)); parentID != "" {
 		download = "/wiki/rest/api/content/" + url.PathEscape(parentID) + "/child/attachment/" + url.PathEscape(id) + "/download"
 	}
-	data, contentType, err := c.client.GetBytes(ctx, download, nil)
+	data, contentType, err := c.getBytes(ctx, download, nil)
 	if err != nil {
 		return AttachmentGetResult{}, err
 	}
@@ -216,7 +222,7 @@ func (c liveClient) GetAttachment(ctx context.Context, id, pageID string, downlo
 
 func (c liveClient) DeleteAttachment(ctx context.Context, id string) (AttachmentDeleteResult, error) {
 	id = strings.TrimSpace(id)
-	if err := c.client.DoJSON(ctx, http.MethodDelete, "/wiki/rest/api/content/"+url.PathEscape(id), nil, nil, nil); err != nil {
+	if err := c.doJSON(ctx, "DELETE", "/wiki/rest/api/content/"+url.PathEscape(id), nil, nil, nil); err != nil {
 		return AttachmentDeleteResult{}, err
 	}
 	return AttachmentDeleteResult{OK: true, AttachmentID: id}, nil
@@ -240,7 +246,7 @@ func (c liveClient) SearchUsers(ctx context.Context, input UserSearchOptions) ([
 	var out []User
 	for {
 		var page searchResponse
-		if err := c.client.GetJSON(ctx, "/wiki/rest/api/search", query, &page); err != nil {
+		if err := c.getJSON(ctx, "/wiki/rest/api/search", query, &page); err != nil {
 			return nil, err
 		}
 		out = append(out, usersFromSearch(page.Results)...)
@@ -250,6 +256,103 @@ func (c liveClient) SearchUsers(ctx context.Context, input UserSearchOptions) ([
 		}
 		query.Set("cursor", next)
 	}
+}
+
+func (c liveClient) getJSON(ctx context.Context, path string, query url.Values, out any) error {
+	return c.doJSON(ctx, "GET", path, query, nil, out)
+}
+
+func (c liveClient) doJSON(ctx context.Context, method, path string, query url.Values, body io.Reader, out any) error {
+	headers := map[string]string{"Accept": "application/json"}
+	if body != nil {
+		headers["Content-Type"] = "application/json"
+	}
+	return c.do(ctx, method, path, query, body, headers, out)
+}
+
+func (c liveClient) do(ctx context.Context, method, path string, query url.Values, body io.Reader, headers map[string]string, out any) error {
+	_ = ctx
+	if c.host == nil {
+		return fmt.Errorf("host client is unavailable")
+	}
+	var payload []byte
+	if body != nil {
+		data, err := io.ReadAll(io.LimitReader(body, 256*1024*1024))
+		if err != nil {
+			return err
+		}
+		payload = data
+	}
+	resp, err := c.host.HTTP(pluginbinding.HTTPRequest{
+		EndpointRef: c.endpointRef,
+		Path:        path,
+		Query:       map[string][]string(query),
+		Method:      method,
+		Headers:     headers,
+		Body:        payload,
+		Auth: &pluginbinding.HTTPAuthRequest{
+			BearerTokenPurpose: AuthPurposeAPIToken,
+		},
+		TimeoutMS: 30000,
+		MaxBytes:  64 * 1024 * 1024,
+		UserAgent: "fluxplane-dex/0.1",
+	})
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return confluenceHTTPError(resp.StatusCode, resp.Body)
+	}
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(resp.Body, out)
+}
+
+func (c liveClient) getBytes(ctx context.Context, path string, query url.Values) ([]byte, string, error) {
+	_ = ctx
+	if c.host == nil {
+		return nil, "", fmt.Errorf("host client is unavailable")
+	}
+	resp, err := c.host.HTTP(pluginbinding.HTTPRequest{
+		EndpointRef: c.endpointRef,
+		Path:        path,
+		Query:       map[string][]string(query),
+		Method:      "GET",
+		Auth: &pluginbinding.HTTPAuthRequest{
+			BearerTokenPurpose: AuthPurposeAPIToken,
+		},
+		TimeoutMS: 30000,
+		MaxBytes:  256 * 1024 * 1024,
+		UserAgent: "fluxplane-dex/0.1",
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, "", confluenceHTTPError(resp.StatusCode, resp.Body)
+	}
+	return resp.Body, resp.ContentType, nil
+}
+
+func confluenceHTTPError(status int, data []byte) error {
+	message := strings.TrimSpace(string(data))
+	var payload struct {
+		Message       string   `json:"message"`
+		ErrorMessages []string `json:"errorMessages"`
+	}
+	if err := json.Unmarshal(data, &payload); err == nil {
+		switch {
+		case strings.TrimSpace(payload.Message) != "":
+			message = strings.TrimSpace(payload.Message)
+		case len(payload.ErrorMessages) > 0:
+			message = strings.Join(payload.ErrorMessages, "; ")
+		}
+	}
+	if message == "" {
+		message = "request failed"
+	}
+	return fmt.Errorf("confluence returned status %d: %s", status, message)
 }
 
 func shouldUsePageList(input PageSearchOptions) bool {

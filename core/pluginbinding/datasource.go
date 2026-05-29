@@ -55,17 +55,19 @@ type DatasourceSearchInput struct {
 }
 
 type DatasourceLookupInput struct {
-	Datasource string   `json:"datasource,omitempty" jsonschema:"description=Exact datasource name."`
-	Text       string   `json:"text,omitempty" jsonschema:"description=Text to resolve into datasource references."`
-	Terms      []string `json:"terms,omitempty" jsonschema:"description=Explicit lookup terms."`
-	Limit      int      `json:"limit,omitempty" jsonschema:"description=Maximum matches to return."`
-	Entity     string   `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
+	Datasource  string   `json:"datasource,omitempty" jsonschema:"description=Exact datasource name."`
+	Text        string   `json:"text,omitempty" jsonschema:"description=Text to resolve into datasource references."`
+	Terms       []string `json:"terms,omitempty" jsonschema:"description=Explicit lookup terms."`
+	Limit       int      `json:"limit,omitempty" jsonschema:"description=Maximum matches to return."`
+	Entity      string   `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
+	EndpointRef string   `json:"endpoint_ref,omitempty" jsonschema:"description=Registered endpoint ref resolved by the host."`
 }
 
 type DatasourceGetInput struct {
-	Datasource string `json:"datasource,omitempty" jsonschema:"description=Exact datasource name."`
-	ID         string `json:"id,omitempty" jsonschema:"description=Record ID."`
-	Entity     string `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
+	Datasource  string `json:"datasource,omitempty" jsonschema:"description=Exact datasource name."`
+	ID          string `json:"id,omitempty" jsonschema:"description=Record ID."`
+	Entity      string `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
+	EndpointRef string `json:"endpoint_ref,omitempty" jsonschema:"description=Registered endpoint ref resolved by the host."`
 }
 
 type DatasourceSearchResult[T any] struct {

@@ -2,7 +2,7 @@ module github.com/fluxplane/fluxplane-dex/plugins/ollama
 
 go 1.26
 
-require github.com/fluxplane/fluxplane-dex v0.9.0
+require github.com/fluxplane/fluxplane-dex v0.10.0
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect

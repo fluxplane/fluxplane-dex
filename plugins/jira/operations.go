@@ -13,7 +13,6 @@ import (
 )
 
 type Service struct {
-	SecretGetter  pluginbinding.SecretGetter
 	ClientFactory ClientFactory
 }
 
@@ -21,20 +20,23 @@ func NewService() Service {
 	return Service{ClientFactory: NewLiveClient}
 }
 
-func (s Service) client(ctx pluginbinding.Context) (Client, atlassian.Credentials, error) {
-	credentials, err := resolveCredentials(ctx)
-	if err != nil {
-		return nil, atlassian.Credentials{}, err
-	}
+func (s Service) client(ctx pluginbinding.Context, input any) (Client, string, error) {
+	endpointRef := strings.TrimSpace(pluginbinding.StringFromInput(pluginbinding.InputMap(input), "endpoint_ref"))
 	factory := s.ClientFactory
 	if factory == nil {
 		factory = NewLiveClient
 	}
-	client, err := factory(credentials)
-	return client, credentials, err
+	client, err := factory(ctx, endpointRef)
+	return client, "", err
 }
 
-type NoInput struct{}
+type JiraTargetInput struct {
+	EndpointRef string `json:"endpoint_ref,omitempty" jsonschema:"description=Registered Jira endpoint ref resolved by the host."`
+}
+
+type AuthTestInput struct {
+	JiraTargetInput
+}
 
 type LookupInput = pluginbinding.DatasourceLookupInput
 type LookupResult = pluginbinding.DatasourceLookupResult[pluginbinding.LookupMatch[any]]
@@ -50,6 +52,7 @@ type AuthTestResult struct {
 }
 
 type IssueSearchInput struct {
+	JiraTargetInput
 	pluginbinding.DatasourceSearchInput
 	JQL     string   `json:"jql,omitempty" jsonschema:"description=Jira JQL query"`
 	Project string   `json:"project,omitempty" jsonschema:"description=Project key filter"`
@@ -59,21 +62,25 @@ type IssueSearchInput struct {
 }
 
 type IssueShowInput struct {
+	JiraTargetInput
 	Key string `json:"key,omitempty" jsonschema:"description=Issue key"`
 	ID  string `json:"id,omitempty" jsonschema:"description=Alias for key"`
 }
 
 type IssueCreateMetaInput struct {
+	JiraTargetInput
 	ProjectKey string `json:"project_key,omitempty" jsonschema:"description=Project key filter."`
 	IssueType  string `json:"issue_type,omitempty" jsonschema:"description=Issue type name filter."`
 }
 
 type IssueEditMetaInput struct {
+	JiraTargetInput
 	Key string `json:"key,omitempty" jsonschema:"required,description=Issue key."`
 	ID  string `json:"id,omitempty" jsonschema:"description=Alias for key."`
 }
 
 type IssueCreateInput struct {
+	JiraTargetInput
 	ProjectKey          string         `json:"project_key,omitempty" jsonschema:"required,description=Project key such as DEV."`
 	IssueType           string         `json:"issue_type,omitempty" jsonschema:"required,description=Issue type name such as Task or Bug."`
 	Summary             string         `json:"summary,omitempty" jsonschema:"required,description=Issue summary."`
@@ -88,6 +95,7 @@ type IssueCreateInput struct {
 }
 
 type IssueEditInput struct {
+	JiraTargetInput
 	Key                 string         `json:"key,omitempty" jsonschema:"required,description=Issue key."`
 	ID                  string         `json:"id,omitempty" jsonschema:"description=Alias for key."`
 	Summary             string         `json:"summary,omitempty" jsonschema:"description=Issue summary."`
@@ -100,17 +108,20 @@ type IssueEditInput struct {
 }
 
 type IssueDeleteInput struct {
+	JiraTargetInput
 	Key            string `json:"key,omitempty" jsonschema:"required,description=Issue key."`
 	ID             string `json:"id,omitempty" jsonschema:"description=Alias for key."`
 	DeleteSubtasks bool   `json:"delete_subtasks,omitempty" jsonschema:"description=Delete subtasks when deleting a parent issue."`
 }
 
 type IssueTransitionListInput struct {
+	JiraTargetInput
 	Key string `json:"key,omitempty" jsonschema:"required,description=Issue key."`
 	ID  string `json:"id,omitempty" jsonschema:"description=Alias for key."`
 }
 
 type IssueTransitionRunInput struct {
+	JiraTargetInput
 	Key            string `json:"key,omitempty" jsonschema:"required,description=Issue key."`
 	ID             string `json:"id,omitempty" jsonschema:"description=Alias for key."`
 	TransitionID   string `json:"transition_id,omitempty" jsonschema:"description=Jira transition ID to apply."`
@@ -121,12 +132,14 @@ type IssueTransitionRunInput struct {
 }
 
 type CommentAddInput struct {
+	JiraTargetInput
 	Key          string `json:"key,omitempty" jsonschema:"required,description=Issue key."`
 	ID           string `json:"id,omitempty" jsonschema:"description=Alias for key."`
 	BodyMarkdown string `json:"body_markdown,omitempty" jsonschema:"required,description=Comment body as Markdown converted to Jira ADF."`
 }
 
 type CommentEditInput struct {
+	JiraTargetInput
 	Key          string `json:"key,omitempty" jsonschema:"required,description=Issue key."`
 	ID           string `json:"id,omitempty" jsonschema:"description=Alias for key."`
 	CommentID    string `json:"comment_id,omitempty" jsonschema:"required,description=Jira comment ID."`
@@ -134,41 +147,48 @@ type CommentEditInput struct {
 }
 
 type CommentDeleteInput struct {
+	JiraTargetInput
 	Key       string `json:"key,omitempty" jsonschema:"required,description=Issue key."`
 	ID        string `json:"id,omitempty" jsonschema:"description=Alias for key."`
 	CommentID string `json:"comment_id,omitempty" jsonschema:"required,description=Jira comment ID."`
 }
 
 type AttachmentAddInput struct {
+	JiraTargetInput
 	Key          string `json:"key,omitempty" jsonschema:"required,description=Issue key."`
 	ID           string `json:"id,omitempty" jsonschema:"description=Alias for key."`
-	FilePath     string `json:"file_path,omitempty" jsonschema:"description=Local file path to upload. Mutually exclusive with content_bytes."`
-	ContentBytes []byte `json:"content_bytes,omitempty" jsonschema:"description=Base64-encoded inline bytes. Mutually exclusive with file_path."`
-	Filename     string `json:"filename,omitempty" jsonschema:"description=Filename shown in Jira. Defaults to file_path basename."`
+	BlobRef      string `json:"blob_ref,omitempty" jsonschema:"description=Host blob ref to upload. Mutually exclusive with content_bytes."`
+	ContentBytes []byte `json:"content_bytes,omitempty" jsonschema:"description=Base64-encoded inline bytes. Mutually exclusive with blob_ref."`
+	Filename     string `json:"filename,omitempty" jsonschema:"description=Filename shown in Jira. Defaults to host blob filename when using blob_ref."`
 	ContentType  string `json:"content_type,omitempty" jsonschema:"description=Attachment MIME type."`
 }
 
 type AttachmentListInput struct {
+	JiraTargetInput
 	Key string `json:"key,omitempty" jsonschema:"required,description=Issue key."`
 	ID  string `json:"id,omitempty" jsonschema:"description=Alias for key."`
 }
 
 type AttachmentGetInput struct {
+	JiraTargetInput
 	AttachmentID string `json:"attachment_id,omitempty" jsonschema:"required,description=Jira attachment ID."`
 	Filename     string `json:"filename,omitempty" jsonschema:"description=Optional filename metadata."`
 	MimeType     string `json:"mime_type,omitempty" jsonschema:"description=Optional MIME type metadata."`
-	OutputPath   string `json:"output_path,omitempty" jsonschema:"description=Local file path or directory to write the attachment. If omitted, content_bytes is returned."`
+	BlobRef      string `json:"blob_ref,omitempty" jsonschema:"description=Optional host blob ref for downloaded attachment bytes."`
 }
 
 type AttachmentDeleteInput struct {
+	JiraTargetInput
 	AttachmentID string `json:"attachment_id,omitempty" jsonschema:"required,description=Jira attachment ID."`
 }
 
 type UserSearchInput struct {
+	JiraTargetInput
 	pluginbinding.DatasourceSearchInput
 }
 
 type IndexBuildInput struct {
+	JiraTargetInput
 	pluginbinding.IndexBuildInput
 	IssueLimit int    `json:"issue_limit,omitempty" jsonschema:"description=Issue page size"`
 	IssueQuery string `json:"issue_query,omitempty" jsonschema:"description=Issue text query"`
@@ -179,10 +199,10 @@ type IndexBuildInput struct {
 	UserQuery  string `json:"user_query,omitempty" jsonschema:"description=User search query"`
 }
 
-func (s Service) AuthTest(ctx pluginbinding.Context, _ NoInput) (AuthTestResult, error) {
-	client, _, err := s.client(ctx)
+func (s Service) AuthTest(ctx pluginbinding.Context, input AuthTestInput) (AuthTestResult, error) {
+	client, _, err := s.client(ctx, input)
 	if err != nil {
-		return AuthTestResult{}, pluginbinding.Errorf("secret", "%s", err)
+		return AuthTestResult{}, pluginbinding.Errorf("jira", "%s", err)
 	}
 	user, err := client.CurrentUser(context.Background())
 	if err != nil {
@@ -192,7 +212,7 @@ func (s Service) AuthTest(ctx pluginbinding.Context, _ NoInput) (AuthTestResult,
 }
 
 func (s Service) IssueSearch(ctx pluginbinding.Context, input IssueSearchInput) (IssueSearchResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return IssueSearchResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -204,7 +224,7 @@ func (s Service) IssueSearch(ctx pluginbinding.Context, input IssueSearchInput) 
 }
 
 func (s Service) IssueShow(ctx pluginbinding.Context, input IssueShowInput) (pluginbinding.ShowResult[Issue], error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return pluginbinding.ShowResult[Issue]{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -220,7 +240,7 @@ func (s Service) IssueShow(ctx pluginbinding.Context, input IssueShowInput) (plu
 }
 
 func (s Service) CreateMeta(ctx pluginbinding.Context, input IssueCreateMetaInput) (IssueMetaResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return IssueMetaResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -232,7 +252,7 @@ func (s Service) CreateMeta(ctx pluginbinding.Context, input IssueCreateMetaInpu
 }
 
 func (s Service) EditMeta(ctx pluginbinding.Context, input IssueEditMetaInput) (IssueMetaResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return IssueMetaResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -248,7 +268,7 @@ func (s Service) EditMeta(ctx pluginbinding.Context, input IssueEditMetaInput) (
 }
 
 func (s Service) TransitionList(ctx pluginbinding.Context, input IssueTransitionListInput) (IssueTransitionListResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return IssueTransitionListResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -264,7 +284,7 @@ func (s Service) TransitionList(ctx pluginbinding.Context, input IssueTransition
 }
 
 func (s Service) TransitionRun(ctx pluginbinding.Context, input IssueTransitionRunInput) (IssueTransitionRunResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return IssueTransitionRunResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -344,7 +364,7 @@ func (s Service) TransitionRun(ctx pluginbinding.Context, input IssueTransitionR
 }
 
 func (s Service) IssueCreate(ctx pluginbinding.Context, input IssueCreateInput) (IssueMutationResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return IssueMutationResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -357,7 +377,7 @@ func (s Service) IssueCreate(ctx pluginbinding.Context, input IssueCreateInput) 
 		return IssueMutationResult{}, pluginbinding.Errorf("jira", "%s", err)
 	}
 	if strings.TrimSpace(input.DescriptionMarkdown) != "" && strings.TrimSpace(result.Key) != "" {
-		rewritten, uploadErr := uploadLocalMarkdownImages(context.Background(), client, result.Key, input.DescriptionMarkdown)
+		rewritten, uploadErr := uploadMarkdownBlobImages(ctx, client, result.Key, input.DescriptionMarkdown)
 		if uploadErr == nil && rewritten != input.DescriptionMarkdown {
 			editRequest, buildErr := issueEditRequest(IssueEditInput{DescriptionMarkdown: rewritten})
 			if buildErr != nil {
@@ -378,7 +398,7 @@ func (s Service) IssueCreate(ctx pluginbinding.Context, input IssueCreateInput) 
 }
 
 func (s Service) CommentAdd(ctx pluginbinding.Context, input CommentAddInput) (CommentResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return CommentResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -386,7 +406,7 @@ func (s Service) CommentAdd(ctx pluginbinding.Context, input CommentAddInput) (C
 	if key == "" {
 		return CommentResult{}, pluginbinding.Fail("bad_input", "issue key is required")
 	}
-	bodyMarkdown, err := uploadLocalMarkdownImages(context.Background(), client, key, input.BodyMarkdown)
+	bodyMarkdown, err := uploadMarkdownBlobImages(ctx, client, key, input.BodyMarkdown)
 	if err != nil {
 		return CommentResult{}, pluginbinding.Errorf("jira", "%s", err)
 	}
@@ -403,7 +423,7 @@ func (s Service) CommentAdd(ctx pluginbinding.Context, input CommentAddInput) (C
 }
 
 func (s Service) CommentEdit(ctx pluginbinding.Context, input CommentEditInput) (CommentResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return CommentResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -415,7 +435,7 @@ func (s Service) CommentEdit(ctx pluginbinding.Context, input CommentEditInput) 
 	if commentID == "" {
 		return CommentResult{}, pluginbinding.Fail("bad_input", "comment_id is required")
 	}
-	bodyMarkdown, err := uploadLocalMarkdownImages(context.Background(), client, key, input.BodyMarkdown)
+	bodyMarkdown, err := uploadMarkdownBlobImages(ctx, client, key, input.BodyMarkdown)
 	if err != nil {
 		return CommentResult{}, pluginbinding.Errorf("jira", "%s", err)
 	}
@@ -432,7 +452,7 @@ func (s Service) CommentEdit(ctx pluginbinding.Context, input CommentEditInput) 
 }
 
 func (s Service) CommentDelete(ctx pluginbinding.Context, input CommentDeleteInput) (CommentMutationResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return CommentMutationResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -452,7 +472,7 @@ func (s Service) CommentDelete(ctx pluginbinding.Context, input CommentDeleteInp
 }
 
 func (s Service) AttachmentAdd(ctx pluginbinding.Context, input AttachmentAddInput) (AttachmentUploadResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return AttachmentUploadResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -460,7 +480,7 @@ func (s Service) AttachmentAdd(ctx pluginbinding.Context, input AttachmentAddInp
 	if key == "" {
 		return AttachmentUploadResult{}, pluginbinding.Fail("bad_input", "issue key is required")
 	}
-	request, err := attachmentUploadRequest(input.FilePath, input.ContentBytes, input.Filename, input.ContentType)
+	request, err := attachmentUploadRequest(ctx, input.BlobRef, input.ContentBytes, input.Filename, input.ContentType)
 	if err != nil {
 		return AttachmentUploadResult{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
@@ -472,7 +492,7 @@ func (s Service) AttachmentAdd(ctx pluginbinding.Context, input AttachmentAddInp
 }
 
 func (s Service) AttachmentList(ctx pluginbinding.Context, input AttachmentListInput) (AttachmentListResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return AttachmentListResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -488,7 +508,7 @@ func (s Service) AttachmentList(ctx pluginbinding.Context, input AttachmentListI
 }
 
 func (s Service) AttachmentGet(ctx pluginbinding.Context, input AttachmentGetInput) (AttachmentGetResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return AttachmentGetResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -500,19 +520,28 @@ func (s Service) AttachmentGet(ctx pluginbinding.Context, input AttachmentGetInp
 	if err != nil {
 		return AttachmentGetResult{}, pluginbinding.Errorf("jira", "%s", err)
 	}
-	if outputPath := strings.TrimSpace(input.OutputPath); outputPath != "" {
-		path, err := atlassian.WriteAttachment(outputPath, firstNonEmpty(input.Filename, attachmentID), result.ContentBytes)
+	if strings.TrimSpace(input.BlobRef) != "" && len(result.ContentBytes) > 0 {
+		blob, err := ctx.Host.BlobWrite(pluginbinding.BlobWriteRequest{
+			Ref:       strings.TrimSpace(input.BlobRef),
+			Content:   result.ContentBytes,
+			Filename:  firstNonEmpty(input.Filename, result.Filename, attachmentID),
+			MediaType: result.MimeType,
+			Metadata: map[string]string{
+				"source":        "jira",
+				"attachment_id": attachmentID,
+			},
+		})
 		if err != nil {
-			return AttachmentGetResult{}, pluginbinding.Errorf("filesystem", "%s", err)
+			return AttachmentGetResult{}, pluginbinding.Errorf("blob", "%s", err)
 		}
-		result.OutputPath = path
+		result.Blob = blob
 		result.ContentBytes = nil
 	}
 	return result, nil
 }
 
 func (s Service) AttachmentDelete(ctx pluginbinding.Context, input AttachmentDeleteInput) (AttachmentDeleteResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return AttachmentDeleteResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -528,7 +557,7 @@ func (s Service) AttachmentDelete(ctx pluginbinding.Context, input AttachmentDel
 }
 
 func (s Service) IssueEdit(ctx pluginbinding.Context, input IssueEditInput) (IssueMutationResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return IssueMutationResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -536,7 +565,7 @@ func (s Service) IssueEdit(ctx pluginbinding.Context, input IssueEditInput) (Iss
 	if key == "" {
 		return IssueMutationResult{}, pluginbinding.Fail("bad_input", "issue key is required")
 	}
-	descriptionMarkdown, err := uploadLocalMarkdownImages(context.Background(), client, key, input.DescriptionMarkdown)
+	descriptionMarkdown, err := uploadMarkdownBlobImages(ctx, client, key, input.DescriptionMarkdown)
 	if err != nil {
 		return IssueMutationResult{}, pluginbinding.Errorf("jira", "%s", err)
 	}
@@ -553,7 +582,7 @@ func (s Service) IssueEdit(ctx pluginbinding.Context, input IssueEditInput) (Iss
 }
 
 func (s Service) IssueDelete(ctx pluginbinding.Context, input IssueDeleteInput) (IssueMutationResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return IssueMutationResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -569,7 +598,7 @@ func (s Service) IssueDelete(ctx pluginbinding.Context, input IssueDeleteInput) 
 }
 
 func (s Service) UserSearch(ctx pluginbinding.Context, input UserSearchInput) (UserSearchResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return UserSearchResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -581,7 +610,7 @@ func (s Service) UserSearch(ctx pluginbinding.Context, input UserSearchInput) (U
 }
 
 func (s Service) IssueDatasource(ctx pluginbinding.Context, input IssueSearchInput) (IssueDatasourceResult, error) {
-	client, credentials, err := s.client(ctx)
+	client, baseURL, err := s.client(ctx, input)
 	if err != nil {
 		return IssueDatasourceResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -589,12 +618,12 @@ func (s Service) IssueDatasource(ctx pluginbinding.Context, input IssueSearchInp
 	if err != nil {
 		return IssueDatasourceResult{}, pluginbinding.Errorf("jira", "%s", err)
 	}
-	records := issueRecords(ctx.DatasourceSource(), credentials.BaseURL, issues)
+	records := issueRecords(ctx.DatasourceSource(), baseURL, issues)
 	return pluginbinding.NewDatasourceSearchResult(DatasourceIssues, issueSearchDisplayQuery(pluginbinding.InputMap(input)), records), nil
 }
 
 func (s Service) UserDatasource(ctx pluginbinding.Context, input UserSearchInput) (UserDatasourceResult, error) {
-	client, _, err := s.client(ctx)
+	client, _, err := s.client(ctx, input)
 	if err != nil {
 		return UserDatasourceResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -607,7 +636,7 @@ func (s Service) UserDatasource(ctx pluginbinding.Context, input UserSearchInput
 }
 
 func (s Service) IndexBuild(ctx pluginbinding.Context, input IndexBuildInput) (pluginbinding.IndexBuildResult, error) {
-	client, credentials, err := s.client(ctx)
+	client, baseURL, err := s.client(ctx, input)
 	if err != nil {
 		return pluginbinding.IndexBuildResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -622,7 +651,7 @@ func (s Service) IndexBuild(ctx pluginbinding.Context, input IndexBuildInput) (p
 		pluginbinding.NewIndexJob(DatasourceIssues, EntityIssue, OperationIndexBuild, func() ([]Issue, error) {
 			return client.SearchIssues(context.Background(), issueOptions)
 		}, func(source pluginbinding.DatasourceSource, issue Issue) (IssueRecord, bool) {
-			return normalizeIssueRecord(source, credentials.BaseURL, issue)
+			return normalizeIssueRecord(source, baseURL, issue)
 		}, indexMetadata(EntityIssue, map[string]any{"jql": issueOptions.JQL, "query": issueOptions.Query, "project": issueOptions.Project, "status": issueOptions.Status, "limit": issueOptions.Limit})),
 		pluginbinding.NewIndexJob(DatasourceUsers, EntityUser, OperationIndexBuild, func() ([]User, error) {
 			return client.SearchUsers(context.Background(), userOptions)
@@ -631,7 +660,7 @@ func (s Service) IndexBuild(ctx pluginbinding.Context, input IndexBuildInput) (p
 }
 
 func (s Service) Lookup(ctx pluginbinding.Context, input LookupInput) (LookupResult, error) {
-	client, credentials, err := s.client(ctx)
+	client, baseURL, err := s.client(ctx, input)
 	if err != nil {
 		return LookupResult{}, pluginbinding.Errorf("secret", "%s", err)
 	}
@@ -639,7 +668,7 @@ func (s Service) Lookup(ctx pluginbinding.Context, input LookupInput) (LookupRes
 	if input.Entity == "" || input.Entity == EntityIssue {
 		for _, key := range lookupIssueKeys(input) {
 			if issue, err := client.GetIssue(context.Background(), key); err == nil {
-				record, ok := normalizeIssueRecord(ctx.DatasourceSource(), credentials.BaseURL, issue)
+				record, ok := normalizeIssueRecord(ctx.DatasourceSource(), baseURL, issue)
 				if ok {
 					candidates = append(candidates, pluginbinding.NewExactLookupCandidate(ctx.LookupSource(PluginName, DatasourceIssues), record.Entity, record.ID, 1200, []string{"key"}, record, issueLookupValues(record)))
 				}
@@ -651,7 +680,7 @@ func (s Service) Lookup(ctx pluginbinding.Context, input LookupInput) (LookupRes
 				return LookupResult{}, pluginbinding.Errorf("jira", "%s", err)
 			}
 			for _, issue := range issues {
-				record, ok := normalizeIssueRecord(ctx.DatasourceSource(), credentials.BaseURL, issue)
+				record, ok := normalizeIssueRecord(ctx.DatasourceSource(), baseURL, issue)
 				if ok {
 					candidates = append(candidates, pluginbinding.NewLookupCandidate(ctx.LookupSource(PluginName, DatasourceIssues), record.Entity, record.ID, record, issueLookupValues(record)))
 				}
@@ -881,12 +910,42 @@ func commentRequest(bodyMarkdown string) (CommentRequest, error) {
 	return CommentRequest{Body: md2adf.Convert(bodyMarkdown)}, nil
 }
 
-func attachmentUploadRequest(filePath string, contentBytes []byte, filename, contentType string) (AttachmentUploadRequest, error) {
-	out, err := atlassian.BuildAttachmentUploadRequest(filePath, contentBytes, filename, contentType)
+func attachmentUploadRequest(ctx pluginbinding.Context, blobRef string, contentBytes []byte, filename, contentType string) (AttachmentUploadRequest, error) {
+	blobRef = strings.TrimSpace(blobRef)
+	hasBlob := blobRef != ""
+	hasBytes := len(contentBytes) > 0
+	if hasBlob == hasBytes {
+		return AttachmentUploadRequest{}, fmt.Errorf("provide exactly one of blob_ref or content_bytes")
+	}
+	if hasBlob {
+		blob, err := ctx.Host.BlobRead(pluginbinding.BlobReadRequest{Ref: blobRef, MaxBytes: atlassian.MaxAttachmentUploadBytes})
+		if err != nil {
+			return AttachmentUploadRequest{}, err
+		}
+		if blob.Truncated {
+			return AttachmentUploadRequest{}, fmt.Errorf("blob %s exceeds %d byte cap", blobRef, atlassian.MaxAttachmentUploadBytes)
+		}
+		contentBytes = append([]byte(nil), blob.Content...)
+		filename = firstNonEmpty(filename, blob.Blob.Filename, blobPathFilename(blob.Blob.Path), blob.Blob.Ref)
+		contentType = firstNonEmpty(contentType, blob.Blob.MediaType)
+	}
+	out, err := atlassian.BuildAttachmentUploadRequest(contentBytes, filename, contentType)
 	if err != nil {
 		return AttachmentUploadRequest{}, err
 	}
 	return AttachmentUploadRequest{Filename: out.Filename, ContentType: out.ContentType, Data: out.Data}, nil
+}
+
+func blobPathFilename(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	path = strings.TrimRight(path, "/")
+	if index := strings.LastIndex(path, "/"); index >= 0 {
+		return strings.TrimSpace(path[index+1:])
+	}
+	return path
 }
 
 // markdownImagePattern matches ![alt](url) and ![alt](url "title"). The URL
@@ -895,7 +954,7 @@ func attachmentUploadRequest(filePath string, contentBytes []byte, filename, con
 // rare and would need a full markdown parser to handle correctly.
 var markdownImagePattern = regexp.MustCompile(`!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)`)
 
-func uploadLocalMarkdownImages(ctx context.Context, client Client, key, markdown string) (string, error) {
+func uploadMarkdownBlobImages(ctx pluginbinding.Context, client Client, key, markdown string) (string, error) {
 	if strings.TrimSpace(markdown) == "" || !strings.Contains(markdown, "![") {
 		return markdown, nil
 	}
@@ -910,15 +969,15 @@ func uploadLocalMarkdownImages(ctx context.Context, client Client, key, markdown
 		}
 		alt := parts[1]
 		target := strings.TrimSpace(parts[2])
-		if isRemoteURL(target) {
+		if !strings.HasPrefix(target, "blob:") {
 			return match
 		}
-		request, err := attachmentUploadRequest(target, nil, "", "")
+		request, err := attachmentUploadRequest(ctx, target, nil, "", "")
 		if err != nil {
 			firstErr = err
 			return match
 		}
-		result, err := client.UploadIssueAttachment(ctx, key, request)
+		result, err := client.UploadIssueAttachment(context.Background(), key, request)
 		if err != nil {
 			firstErr = err
 			return match

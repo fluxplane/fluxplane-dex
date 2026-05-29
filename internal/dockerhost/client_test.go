@@ -1,4 +1,4 @@
-package docker
+package dockerhost
 
 import (
 	"archive/tar"
@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/go-connections/nat"
+	. "github.com/fluxplane/fluxplane-dex/plugins/docker"
 )
 
 func TestContainerCreateConfigMapsDockerOptions(t *testing.T) {

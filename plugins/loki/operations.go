@@ -6,9 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/url"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,17 +16,18 @@ import (
 )
 
 type Service struct {
-	HTTPClient *http.Client
-	DefaultURL string
 }
 
 func NewService() Service {
-	return Service{HTTPClient: &http.Client{Timeout: 30 * time.Second}}
+	return Service{}
+}
+
+type LokiTargetInput struct {
+	EndpointRef string `json:"endpoint_ref,omitempty" jsonschema:"description=Registered Loki endpoint ref resolved by the host."`
 }
 
 type TestInput struct {
-	URL      string `json:"url,omitempty"`
-	TenantID string `json:"tenant_id,omitempty"`
+	LokiTargetInput
 }
 
 type TestResult struct {
@@ -39,8 +38,7 @@ type TestResult struct {
 }
 
 type QueryInput struct {
-	URL       string `json:"url,omitempty"`
-	TenantID  string `json:"tenant_id,omitempty"`
+	LokiTargetInput
 	Query     string `json:"query,omitempty" jsonschema:"required,description=LogQL query"`
 	Since     string `json:"since,omitempty"`
 	Until     string `json:"until,omitempty"`
@@ -64,10 +62,9 @@ type QueryResult struct {
 }
 
 type LabelsInput struct {
-	URL      string `json:"url,omitempty"`
-	TenantID string `json:"tenant_id,omitempty"`
-	Label    string `json:"label,omitempty"`
-	Query    string `json:"query,omitempty"`
+	LokiTargetInput
+	Label string `json:"label,omitempty"`
+	Query string `json:"query,omitempty"`
 }
 
 type LabelsResult struct {
@@ -77,8 +74,7 @@ type LabelsResult struct {
 }
 
 type RecentLogsInput struct {
-	URL       string `json:"url,omitempty"`
-	TenantID  string `json:"tenant_id,omitempty"`
+	LokiTargetInput
 	App       string `json:"app,omitempty"`
 	Namespace string `json:"namespace,omitempty"`
 	Pod       string `json:"pod,omitempty"`
@@ -89,8 +85,7 @@ type RecentLogsInput struct {
 }
 
 type LogEntriesInput struct {
-	URL       string `json:"url,omitempty"`
-	TenantID  string `json:"tenant_id,omitempty"`
+	LokiTargetInput
 	Query     string `json:"query,omitempty" jsonschema:"description=LogQL query. Plain text is used as a contains filter for recent logs."`
 	App       string `json:"app,omitempty"`
 	Namespace string `json:"namespace,omitempty"`
@@ -127,12 +122,12 @@ type LogEntriesDatasourceResult = pluginbinding.DatasourceSearchResult[LogEntryR
 type LabelDatasourceResult = pluginbinding.DatasourceSearchResult[LabelRecord]
 
 func (s Service) Test(ctx pluginbinding.Context, input TestInput) (TestResult, error) {
-	target, err := s.resolveURL(input.URL)
+	target, client, err := s.client(ctx, input.LokiTargetInput)
 	if err != nil {
 		return TestResult{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
 	start := time.Now()
-	err = s.client(target, input.TenantID).ready(context.Background())
+	err = client.ready(context.Background())
 	out := TestResult{URL: target, Ready: err == nil, LatencyMS: time.Since(start).Milliseconds()}
 	if err != nil {
 		out.Error = err.Error()
@@ -145,24 +140,24 @@ func (s Service) Query(ctx pluginbinding.Context, input QueryInput) (QueryResult
 	if query == "" {
 		return QueryResult{}, pluginbinding.Fail("bad_input", "query is required")
 	}
-	target, err := s.resolveURL(input.URL)
+	target, client, err := s.client(ctx, input.LokiTargetInput)
 	if err != nil {
 		return QueryResult{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
-	return s.query(context.Background(), target, input.TenantID, query, input.Since, input.Until, input.Limit, input.Direction)
+	return s.query(context.Background(), target, client, query, input.Since, input.Until, input.Limit, input.Direction)
 }
 
 func (s Service) RecentLogs(ctx pluginbinding.Context, input RecentLogsInput) (QueryResult, error) {
 	query := recentLogsQuery(input)
-	target, err := s.resolveURL(input.URL)
+	target, client, err := s.client(ctx, input.LokiTargetInput)
 	if err != nil {
 		return QueryResult{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
-	return s.query(context.Background(), target, input.TenantID, query, input.Since, "", input.Limit, "backward")
+	return s.query(context.Background(), target, client, query, input.Since, "", input.Limit, "backward")
 }
 
 func (s Service) Labels(ctx pluginbinding.Context, input LabelsInput) (LabelsResult, error) {
-	target, err := s.resolveURL(input.URL)
+	target, client, err := s.client(ctx, input.LokiTargetInput)
 	if err != nil {
 		return LabelsResult{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
@@ -179,7 +174,7 @@ func (s Service) Labels(ctx pluginbinding.Context, input LabelsInput) (LabelsRes
 		Status string   `json:"status"`
 		Data   []string `json:"data"`
 	}
-	if err := s.client(target, input.TenantID).get(context.Background(), path, values, &response); err != nil {
+	if err := client.get(context.Background(), path, values, &response); err != nil {
 		return LabelsResult{}, pluginbinding.Errorf("loki", "%s", err)
 	}
 	sort.Strings(response.Data)
@@ -191,10 +186,10 @@ func (s Service) LogEntriesDatasource(ctx pluginbinding.Context, input LogEntrie
 	var out QueryResult
 	var err error
 	if strings.HasPrefix(query, "{") || strings.HasPrefix(query, "(") {
-		out, err = s.Query(ctx, QueryInput{URL: input.URL, TenantID: input.TenantID, Query: query, Since: input.Since, Until: input.Until, Limit: input.Limit, Direction: input.Direction})
+		out, err = s.Query(ctx, QueryInput{LokiTargetInput: input.LokiTargetInput, Query: query, Since: input.Since, Until: input.Until, Limit: input.Limit, Direction: input.Direction})
 	} else {
 		contains := firstNonEmpty(input.Contains, query)
-		out, err = s.RecentLogs(ctx, RecentLogsInput{URL: input.URL, TenantID: input.TenantID, App: input.App, Namespace: input.Namespace, Pod: input.Pod, Container: input.Container, Contains: contains, Since: input.Since, Limit: input.Limit})
+		out, err = s.RecentLogs(ctx, RecentLogsInput{LokiTargetInput: input.LokiTargetInput, App: input.App, Namespace: input.Namespace, Pod: input.Pod, Container: input.Container, Contains: contains, Since: input.Since, Limit: input.Limit})
 	}
 	if err != nil {
 		return LogEntriesDatasourceResult{}, err
@@ -247,7 +242,7 @@ func (s Service) LabelsDatasource(ctx pluginbinding.Context, input LabelsInput) 
 	return pluginbinding.NewDatasourceSearchResult("live", firstNonEmpty(input.Label, input.Query), records), nil
 }
 
-func (s Service) query(ctx context.Context, target, tenantID, query, since, until string, limit int, direction string) (QueryResult, error) {
+func (s Service) query(ctx context.Context, target string, client Client, query, since, until string, limit int, direction string) (QueryResult, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -270,7 +265,7 @@ func (s Service) query(ctx context.Context, target, tenantID, query, since, unti
 	values.Set("limit", strconv.Itoa(limit))
 	values.Set("direction", direction)
 	var response lokiResponse
-	if err := s.client(target, tenantID).get(ctx, "/loki/api/v1/query_range", values, &response); err != nil {
+	if err := client.get(ctx, "/loki/api/v1/query_range", values, &response); err != nil {
 		return QueryResult{}, pluginbinding.Errorf("loki", "%s", err)
 	}
 	if response.Status != "success" {
@@ -291,33 +286,13 @@ func (s Service) query(ctx context.Context, target, tenantID, query, since, unti
 	return QueryResult{URL: target, NormalizedQuery: query, Entries: entries, Count: len(entries), Limit: limit}, nil
 }
 
-func (s Service) client(target, tenantID string) Client {
-	if strings.TrimSpace(tenantID) == "" {
-		tenantID = strings.TrimSpace(os.Getenv(EnvLokiTenantID))
+func (s Service) client(ctx pluginbinding.Context, input LokiTargetInput) (string, Client, error) {
+	_ = s
+	endpointRef := strings.TrimSpace(input.EndpointRef)
+	if endpointRef == "" {
+		return "", Client{}, fmt.Errorf("endpoint_ref is required")
 	}
-	client := s.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	return Client{BaseURL: target, TenantID: tenantID, HTTPClient: client}
-}
-
-func (s Service) resolveURL(value string) (string, error) {
-	target := strings.TrimSpace(value)
-	if target == "" {
-		target = strings.TrimSpace(s.DefaultURL)
-	}
-	if target == "" {
-		target = strings.TrimSpace(os.Getenv(EnvLokiURL))
-	}
-	if target == "" {
-		return "", fmt.Errorf("loki url is required")
-	}
-	parsed, err := url.Parse(target)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("invalid loki url %q", target)
-	}
-	return strings.TrimRight(target, "/"), nil
+	return endpointRef, Client{EndpointRef: endpointRef, Host: ctx.Host}, nil
 }
 
 func recentLogsQuery(input RecentLogsInput) string {

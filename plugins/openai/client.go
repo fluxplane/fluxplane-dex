@@ -1,132 +1,77 @@
 package openai
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"os"
 	"strings"
-)
 
-const (
-	DefaultBaseURL  = "https://api.openai.com/v1"
-	EnvBaseURL      = "OPENAI_BASE_URL"
-	EnvOrganization = "OPENAI_ORGANIZATION"
-	EnvProject      = "OPENAI_PROJECT"
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 )
-
-type HTTPDoer interface {
-	Do(*http.Request) (*http.Response, error)
-}
 
 type Client struct {
-	HTTPClient   HTTPDoer
-	BaseURL      string
-	APIKey       string
-	Organization string
-	Project      string
+	EndpointRef string
+	Host        pluginbinding.HostClient
 }
 
 func NewClient() Client {
-	return Client{
-		HTTPClient:   http.DefaultClient,
-		BaseURL:      baseURLFromEnv(),
-		Organization: strings.TrimSpace(os.Getenv(EnvOrganization)),
-		Project:      strings.TrimSpace(os.Getenv(EnvProject)),
-	}
+	return Client{}
 }
 
-func baseURLFromEnv() string {
-	if value := strings.TrimSpace(os.Getenv(EnvBaseURL)); value != "" {
-		return normalizeBaseURL(value)
-	}
-	return DefaultBaseURL
+func (c Client) get(path string, out any) error {
+	return c.do("GET", path, nil, out)
 }
 
-func normalizeBaseURL(value string) string {
-	value = strings.TrimRight(strings.TrimSpace(value), "/")
-	if value == "" {
-		return DefaultBaseURL
-	}
-	if !strings.HasPrefix(value, "http://") && !strings.HasPrefix(value, "https://") {
-		value = "https://" + value
-	}
-	return value
-}
-
-func (c Client) baseURL() string {
-	if strings.TrimSpace(c.BaseURL) == "" {
-		return baseURLFromEnv()
-	}
-	return strings.TrimRight(c.BaseURL, "/")
-}
-
-func (c Client) httpClient() HTTPDoer {
-	if c.HTTPClient != nil {
-		return c.HTTPClient
-	}
-	return http.DefaultClient
-}
-
-func (c Client) get(ctx context.Context, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL()+path, nil)
-	if err != nil {
-		return err
-	}
-	return c.do(req, out)
-}
-
-func (c Client) post(ctx context.Context, path string, body any, out any) error {
-	var reader io.Reader
+func (c Client) post(path string, body any, out any) error {
+	var raw []byte
 	if body != nil {
-		raw, err := json.Marshal(body)
+		var err error
+		raw, err = json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		reader = bytes.NewReader(raw)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+path, reader)
-	if err != nil {
-		return err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	return c.do(req, out)
+	return c.do("POST", path, raw, out)
 }
 
-func (c Client) do(req *http.Request, out any) error {
-	key := strings.TrimSpace(c.APIKey)
-	if key == "" {
-		return fmt.Errorf("openai: api key is required")
+func (c Client) do(method, path string, body []byte, out any) error {
+	endpointRef := strings.TrimSpace(c.EndpointRef)
+	if endpointRef == "" {
+		return fmt.Errorf("openai endpoint_ref is required")
 	}
-	req.Header.Set("Authorization", "Bearer "+key)
-	req.Header.Set("User-Agent", "fluxplane-dex/0.1")
-	if c.Organization != "" {
-		req.Header.Set("OpenAI-Organization", c.Organization)
+	if c.Host == nil {
+		return fmt.Errorf("host client is unavailable")
 	}
-	if c.Project != "" {
-		req.Header.Set("OpenAI-Project", c.Project)
+	headers := map[string]string{}
+	if len(body) > 0 {
+		headers["Content-Type"] = "application/json"
 	}
-	resp, err := c.httpClient().Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 32*1024*1024))
+	resp, err := c.Host.HTTP(pluginbinding.HTTPRequest{
+		EndpointRef: endpointRef,
+		Path:        path,
+		Method:      method,
+		Headers:     headers,
+		Body:        body,
+		Auth: &pluginbinding.HTTPAuthRequest{
+			BearerTokenPurpose: AuthPurposeAPIKey,
+			HeaderPurposes: map[string]string{
+				"OpenAI-Organization": AuthPurposeOrganization,
+				"OpenAI-Project":      AuthPurposeProject,
+			},
+		},
+		TimeoutMS: 30000,
+		MaxBytes:  32 * 1024 * 1024,
+		UserAgent: "fluxplane-dex/0.1",
+	})
 	if err != nil {
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("openai %s %s: %s: %s", req.Method, req.URL.Path, resp.Status, openaiErrorMessage(data))
+		return fmt.Errorf("openai %s %s: %s: %s", method, path, resp.Status, openaiErrorMessage(resp.Body))
 	}
-	if out == nil || len(data) == 0 {
+	if out == nil || len(resp.Body) == 0 {
 		return nil
 	}
-	if err := json.Unmarshal(data, out); err != nil {
+	if err := json.Unmarshal(resp.Body, out); err != nil {
 		return fmt.Errorf("decode openai response: %w", err)
 	}
 	return nil

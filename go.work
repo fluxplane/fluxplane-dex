@@ -1,7 +1,8 @@
-go 1.26.0
+go 1.26.1
 
 use (
 	.
+	./fluxplaneplugin
 	./plugins/confluence
 	./plugins/docker
 	./plugins/duckduckgo
@@ -18,5 +19,3 @@ use (
 	./plugins/system
 	./plugins/tavily
 )
-
-replace github.com/fluxplane/fluxplane-dex v0.9.0 => .

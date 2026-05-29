@@ -20,6 +20,9 @@ func (s Service) ImageGenerate(ctx pluginbinding.Context, input ImageGenerateInp
 	if prompt == "" {
 		return ImageGenerateResult{}, pluginbinding.Fail("bad_input", "prompt is required")
 	}
+	if err := validateImageGenerateInput(input); err != nil {
+		return ImageGenerateResult{}, err
+	}
 	client, err := s.client(ctx, input.OpenAITargetInput)
 	if err != nil {
 		return ImageGenerateResult{}, err
@@ -63,6 +66,19 @@ func (s Service) ImageGenerate(ctx pluginbinding.Context, input ImageGenerateInp
 		return ImageGenerateResult{}, pluginbinding.Errorf("openai", "%s", err)
 	}
 	return out, nil
+}
+
+func validateImageGenerateInput(input ImageGenerateInput) error {
+	if input.N < 0 || input.N > 10 {
+		return pluginbinding.Fail("bad_input", "n must be between 1 and 10 when set")
+	}
+	if input.OutputCompression < 0 || input.OutputCompression > 100 {
+		return pluginbinding.Fail("bad_input", "output_compression must be between 0 and 100 when set")
+	}
+	if len([]rune(input.Prompt)) > 32000 {
+		return pluginbinding.Fail("bad_input", "prompt must be at most 32000 characters")
+	}
+	return nil
 }
 
 func (s Service) VisionAnalyze(ctx pluginbinding.Context, input vision.AnalyzeInput) (vision.AnalyzeOutput, error) {

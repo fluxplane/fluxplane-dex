@@ -78,6 +78,49 @@ func TestImageGenerateRejectsEmptyPrompt(t *testing.T) {
 	}
 }
 
+func TestImageGenerateRejectsInvalidBounds(t *testing.T) {
+	plugin := newTestPlugin()
+	cases := []struct {
+		name  string
+		input ImageGenerateInput
+		want  string
+	}{
+		{
+			name:  "negative n",
+			input: ImageGenerateInput{OpenAITargetInput: testTarget(), Prompt: "hello", N: -1},
+			want:  "n must be between 1 and 10",
+		},
+		{
+			name:  "too many images",
+			input: ImageGenerateInput{OpenAITargetInput: testTarget(), Prompt: "hello", N: 11},
+			want:  "n must be between 1 and 10",
+		},
+		{
+			name:  "negative compression",
+			input: ImageGenerateInput{OpenAITargetInput: testTarget(), Prompt: "hello", OutputCompression: -1},
+			want:  "output_compression must be between 0 and 100",
+		},
+		{
+			name:  "too much compression",
+			input: ImageGenerateInput{OpenAITargetInput: testTarget(), Prompt: "hello", OutputCompression: 101},
+			want:  "output_compression must be between 0 and 100",
+		},
+		{
+			name:  "prompt too long",
+			input: ImageGenerateInput{OpenAITargetInput: testTarget(), Prompt: strings.Repeat("x", 32001)},
+			want:  "prompt must be at most 32000 characters",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := plugintest.RunError(t, plugin, OperationImageGenerate, tc.input)
+			if err == nil || err.Code != "bad_input" || !strings.Contains(err.Message, tc.want) {
+				t.Fatalf("err = %#v, want bad_input containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestImageGenerateRequiresEndpointRef(t *testing.T) {
 	plugin := newTestPlugin()
 	err := plugintest.RunError(t, plugin, OperationImageGenerate, ImageGenerateInput{Prompt: "hello"})

@@ -14,6 +14,30 @@ import (
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding/plugintest"
 )
 
+func TestManifestMarksCredentialsSensitive(t *testing.T) {
+	manifest := manifestSpec()
+	if len(manifest.Auth) != 1 {
+		t.Fatalf("auth methods = %d, want 1", len(manifest.Auth))
+	}
+
+	fields := map[string]core.AuthField{}
+	for _, field := range manifest.Auth[0].Fields {
+		fields[field.Name] = field
+	}
+	for _, purpose := range []string{AuthPurposeAPIToken, AuthPurposePassword} {
+		field, ok := fields[purpose]
+		if !ok {
+			t.Fatalf("missing auth field %q", purpose)
+		}
+		if !field.Secret || !field.Sensitive {
+			t.Fatalf("auth field %q should be secret and sensitive: %#v", purpose, field)
+		}
+	}
+	if fields[AuthPurposeUsername].Secret || fields[AuthPurposeUsername].Sensitive {
+		t.Fatalf("username should stay non-secret config: %#v", fields[AuthPurposeUsername])
+	}
+}
+
 func TestDatasourceListDerivesClusterAliases(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/datasources" {
@@ -172,6 +196,54 @@ func TestDatasourceHealthReturnsAlertmanagerProxyError(t *testing.T) {
 	out := plugintest.RunOK[ProxyQueryResult](t, plugin, OperationDatasourceHealth, map[string]any{"endpoint_ref": "grafana-dev", "uid": "alertmanager-alpha"}, plugintest.WithHost(host))
 	if out.UID != "alertmanager-alpha" || !strings.Contains(string(out.Data), `"status":"error"`) || !strings.Contains(string(out.Data), "alertmanager_status") {
 		t.Fatalf("result = %#v", out)
+	}
+}
+
+func TestGrafanaRejectsInvalidTimeRanges(t *testing.T) {
+	if _, err := queryRangeValues(`{app="api"}`, "0s", "1h", 0); err == nil || !strings.Contains(err.Error(), "since must be before until") {
+		t.Fatalf("queryRangeValues err = %v", err)
+	}
+
+	_, err := annotationPayload(AnnotationAddInput{
+		Time:    "2024-01-02T15:04:05Z",
+		TimeEnd: "2024-01-02T15:04:04Z",
+		Text:    "deploy",
+	})
+	if err == nil || !strings.Contains(err.Error(), "time_end must be after time") {
+		t.Fatalf("annotationPayload err = %v", err)
+	}
+
+	_, err = silencePayload(AlertSilenceCreateInput{
+		Matchers: []AlertSilenceMatcher{{Name: "alertname", Value: "HighLatency"}},
+		StartsAt: "2024-01-02T15:04:05Z",
+		EndsAt:   "2024-01-02T15:04:04Z",
+		Comment:  "maintenance",
+	})
+	if err == nil || !strings.Contains(err.Error(), "ends_at must be after starts_at") {
+		t.Fatalf("silencePayload err = %v", err)
+	}
+}
+
+func TestPrometheusRangeRejectsStartAfterEnd(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/datasources" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`[{"uid":"prometheus-alpha","name":"Prometheus Alpha","type":"prometheus"}]`))
+	}))
+	defer server.Close()
+	plugin := NewPluginWithService(NewService())
+	host := newGrafanaTestHost(server.URL, "")
+
+	err := plugintest.RunError(t, plugin, OperationPrometheusRange, map[string]any{
+		"endpoint_ref": "grafana-dev",
+		"cluster":      "alpha",
+		"query":        "up",
+		"start":        "0s",
+		"end":          "1h",
+	}, plugintest.WithHost(host))
+	if err == nil || err.Code != "bad_input" || !strings.Contains(err.Message, "start must be before end") {
+		t.Fatalf("err = %#v", err)
 	}
 }
 

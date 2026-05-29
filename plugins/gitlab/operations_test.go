@@ -599,6 +599,37 @@ func TestServiceLookupCanFilterEntity(t *testing.T) {
 	}
 }
 
+func TestServiceDatasourceSearchUsesProvider(t *testing.T) {
+	client := &fakeClient{
+		projects: []Project{{ID: 1, Name: "slack-bot", NameWithNamespace: "ai / agents / slack-bot", PathWithNamespace: "ai/agents/slack-bot", WebURL: "https://gitlab.example.com/ai/agents/slack-bot"}},
+	}
+	plugin := testPlugin(client)
+
+	out := plugintest.DatasourceSearchOK[ProjectSearchResult](t, plugin, map[string]any{"entity": EntityProject, "query": "slack-bot", "limit": 5}, plugintest.WithInstance("work"))
+	if out.Source != PluginName || out.Count != 1 || out.Records[0].ID != "ai/agents/slack-bot" {
+		t.Fatalf("search output = %#v", out)
+	}
+	if client.listOptions.Search != "slack-bot" || client.listOptions.Limit != 5 || client.listOptions.Membership == nil || !*client.listOptions.Membership {
+		t.Fatalf("project search options = %#v", client.listOptions)
+	}
+	if out.Records[0].Source.Instance != "work" {
+		t.Fatalf("record source = %#v", out.Records[0].Source)
+	}
+}
+
+func TestServiceDatasourceGetUsesProvider(t *testing.T) {
+	client := &fakeClient{project: Project{ID: 1, Name: "slack-bot", NameWithNamespace: "ai / agents / slack-bot", PathWithNamespace: "ai/agents/slack-bot"}}
+	plugin := testPlugin(client)
+
+	out := plugintest.DatasourceGetOK[ProjectGetResult](t, plugin, map[string]any{"entity": EntityProject, "id": "ai/agents/slack-bot"})
+	if out.Source != PluginName || out.Record.ID != "ai/agents/slack-bot" {
+		t.Fatalf("get output = %#v", out)
+	}
+	if client.projectID != "ai/agents/slack-bot" {
+		t.Fatalf("project id = %#v", client.projectID)
+	}
+}
+
 func TestServiceBuildsClientFromHostContext(t *testing.T) {
 	client := &fakeClient{user: User{ID: 9, Username: "timo"}}
 	var captured pluginbinding.Context

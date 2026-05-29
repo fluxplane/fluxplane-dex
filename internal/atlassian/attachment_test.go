@@ -29,6 +29,16 @@ func TestBuildAttachmentUploadRequestRejectsOversizeBytes(t *testing.T) {
 	}
 }
 
+func TestBuildAttachmentUploadRequestRejectsUnsafeFilenames(t *testing.T) {
+	for _, filename := range []string{"../secret.txt", `nested\\secret.txt`, "report\n.txt", ".", ".."} {
+		t.Run(filename, func(t *testing.T) {
+			if _, err := BuildAttachmentUploadRequest([]byte("hello"), filename, ""); err == nil {
+				t.Fatal("expected unsafe filename to be rejected")
+			}
+		})
+	}
+}
+
 func TestFirstNonEmpty(t *testing.T) {
 	if FirstNonEmpty("", "  ", "ok", "later") != "ok" {
 		t.Fatal("expected 'ok'")

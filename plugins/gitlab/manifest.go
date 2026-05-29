@@ -8,7 +8,7 @@ import (
 
 const (
 	PluginName        = "gitlab"
-	PluginVersion     = "0.14.0"
+	PluginVersion     = "0.16.0"
 	PluginDescription = "GitLab operations, datasources, indexes, and reverse lookups."
 
 	AuthMethodPersonalAccessToken = "personal_access_token"
@@ -285,6 +285,75 @@ func gitlabWriteOptions(idempotency core.OperationIdempotency, risk core.Operati
 		pluginbinding.Risk(risk),
 		pluginbinding.Idempotency(idempotency),
 	}
+}
+
+func gitlabProjectsDatasourceSpec() core.DatasourceSpec {
+	return gitlabSearchDatasourceSpec(DatasourceProjects, EntityProject, "GitLab projects.")
+}
+
+func gitlabProjectsDatasourceGetSpec() core.DatasourceSpec {
+	return gitlabGetDatasourceSpec(DatasourceProjects, EntityProject, "Get one GitLab project.")
+}
+
+func gitlabUsersDatasourceSpec() core.DatasourceSpec {
+	return gitlabSearchDatasourceSpec(DatasourceUsers, EntityUser, "GitLab users.")
+}
+
+func gitlabUsersDatasourceGetSpec() core.DatasourceSpec {
+	return gitlabGetDatasourceSpec(DatasourceUsers, EntityUser, "Get one GitLab user.")
+}
+
+func gitlabGroupsDatasourceSpec() core.DatasourceSpec {
+	return gitlabSearchDatasourceSpec(DatasourceGroups, EntityGroup, "GitLab groups and namespaces.")
+}
+
+func gitlabGroupsDatasourceGetSpec() core.DatasourceSpec {
+	return gitlabGetDatasourceSpec(DatasourceGroups, EntityGroup, "Get one GitLab group or namespace.")
+}
+
+func gitlabIssuesDatasourceSpec() core.DatasourceSpec {
+	return gitlabSearchDatasourceSpec(DatasourceIssues, EntityIssue, "GitLab issues.")
+}
+
+func gitlabIssuesDatasourceGetSpec() core.DatasourceSpec {
+	return gitlabGetDatasourceSpec(DatasourceIssues, EntityIssue, "Get one GitLab issue.")
+}
+
+func gitlabMergeRequestsDatasourceSpec() core.DatasourceSpec {
+	return gitlabSearchDatasourceSpec(DatasourceMergeRequests, EntityMergeRequest, "GitLab merge requests.")
+}
+
+func gitlabMergeRequestsDatasourceGetSpec() core.DatasourceSpec {
+	return gitlabGetDatasourceSpec(DatasourceMergeRequests, EntityMergeRequest, "Get one GitLab merge request.")
+}
+
+func gitlabSearchDatasourceSpec(name, entity, description string) core.DatasourceSpec {
+	return gitlabDatasourceSpec[pluginbinding.DatasourceSearchInput, pluginbinding.DatasourceSearchResult[any]](
+		name,
+		entity,
+		description,
+		pluginbinding.SearchableIndexCapabilities(),
+	)
+}
+
+func gitlabGetDatasourceSpec(name, entity, description string) core.DatasourceSpec {
+	return gitlabDatasourceSpec[pluginbinding.DatasourceGetInput, pluginbinding.DatasourceGetResult[any]](
+		name,
+		entity,
+		description,
+		[]string{pluginbinding.CapabilityGet},
+	)
+}
+
+func gitlabDatasourceSpec[I any, O any](name, entity, description string, capabilities []string) core.DatasourceSpec {
+	return pluginbinding.TypedDatasourceSpec[I, O](
+		name,
+		entity,
+		description,
+		capabilities,
+		pluginbinding.DatasourceSecretPurposes(AuthPurposeAccessToken),
+		pluginbinding.Fallback(core.DatasourceFallbackHostIndexFirst),
+	)
 }
 
 func gitlabProjectsLookupSpec() core.DatasourceSpec {

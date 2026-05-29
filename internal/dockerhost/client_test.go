@@ -200,6 +200,57 @@ func TestExtractTarRejectsExistingSymlinkAncestor(t *testing.T) {
 	}
 }
 
+func TestExtractTarRejectsEscapingSymlinkTarget(t *testing.T) {
+	var buf bytes.Buffer
+	writer := tar.NewWriter(&buf)
+	if err := writer.WriteHeader(&tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "../outside"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := extractTarToDirectory(bytes.NewReader(buf.Bytes()), t.TempDir(), true)
+	if err == nil {
+		t.Fatal("expected unsafe symlink target error")
+	}
+}
+
+func TestExtractTarRejectsOverwritingSymlinkDestination(t *testing.T) {
+	var buf bytes.Buffer
+	writer := tar.NewWriter(&buf)
+	if err := writer.WriteHeader(&tar.Header{Name: "link", Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len("bad"))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write([]byte("bad")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	dest := t.TempDir()
+	outside := t.TempDir()
+	outsideFile := filepath.Join(outside, "target")
+	if err := os.WriteFile(outsideFile, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(dest, "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := extractTarToDirectory(bytes.NewReader(buf.Bytes()), dest, true)
+	if err == nil {
+		t.Fatal("expected symlink destination error")
+	}
+	data, err := os.ReadFile(outsideFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "original" {
+		t.Fatalf("archive overwrote symlink target: %q", data)
+	}
+}
+
 func firstExposedPort(values nat.PortSet) (nat.Port, bool) {
 	for value := range values {
 		return value, true

@@ -34,6 +34,16 @@ func TestSearchSendsTavilyRequestAndParsesResults(t *testing.T) {
 	}
 }
 
+func TestSearchDropsUnsafeResultURLs(t *testing.T) {
+	host := &fakeHostClient{httpBody: `{"query":"fluxplane dex","results":[{"title":"Script","url":"javascript:alert(1)","content":"bad"},{"title":"Control","url":"https://example.com\nX: y","content":"bad"},{"title":"Safe","url":"https://example.com/safe","content":"ok"}]}`}
+	plugin := NewPluginWithService(Service{Endpoint: "https://tavily.test/search"})
+
+	out := plugintest.RunOK[websearch.SearchOutput](t, plugin, OperationSearch, websearch.SearchInput{Query: "fluxplane dex"}, plugintest.WithHost(host))
+	if len(out.Results) != 1 || len(out.Results[0].Results) != 1 || out.Results[0].Results[0].URL != "https://example.com/safe" {
+		t.Fatalf("output = %#v", out)
+	}
+}
+
 func TestDatasourceSearchUsesSharedWebsearchWrapper(t *testing.T) {
 	host := &fakeHostClient{httpBody: `{"query":"fluxplane dex","results":[{"title":"Dex","url":"https://example.com","content":"Snippet","score":0.75}]}`}
 	plugin := NewPluginWithService(Service{

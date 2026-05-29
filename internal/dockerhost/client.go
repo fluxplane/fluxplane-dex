@@ -1576,12 +1576,15 @@ func validateAndForwardTar(reader io.Reader, writer io.Writer, root string, over
 		}
 		switch header.Typeflag {
 		case tar.TypeReg, tar.TypeRegA:
-			if !overwrite {
-				if _, err := os.Lstat(target); err == nil {
+			if info, err := os.Lstat(target); err == nil {
+				if !overwrite {
 					return nil, 0, fmt.Errorf("destination file already exists: %s", target)
-				} else if !os.IsNotExist(err) {
-					return nil, 0, err
 				}
+				if info.Mode()&os.ModeSymlink != 0 {
+					return nil, 0, fmt.Errorf("refusing to overwrite symlink destination: %s", target)
+				}
+			} else if !os.IsNotExist(err) {
+				return nil, 0, err
 			}
 			if err := tarWriter.WriteHeader(header); err != nil {
 				return nil, 0, err
@@ -1593,6 +1596,9 @@ func validateAndForwardTar(reader io.Reader, writer io.Writer, root string, over
 			files = append(files, target)
 			total += written
 		case tar.TypeSymlink:
+			if err := ensureSafeSymlinkTarget(root, target, header.Linkname); err != nil {
+				return nil, 0, err
+			}
 			if !overwrite {
 				if _, err := os.Lstat(target); err == nil {
 					return nil, 0, fmt.Errorf("destination file already exists: %s", target)
@@ -1650,6 +1656,30 @@ func ensureNoSymlinkAncestor(root, target string) error {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("refusing to extract through symlink ancestor: %s", current)
 		}
+	}
+	return nil
+}
+
+func ensureSafeSymlinkTarget(root, target, linkname string) error {
+	linkname = strings.TrimSpace(linkname)
+	if linkname == "" || filepath.IsAbs(linkname) {
+		return fmt.Errorf("unsafe symlink target: %q", linkname)
+	}
+	resolved := filepath.Join(filepath.Dir(target), linkname)
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil {
+		return err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("unsafe symlink target: %q", linkname)
+	}
+	if err := ensureNoSymlinkAncestor(root, resolved); err != nil {
+		return err
+	}
+	if info, err := os.Lstat(resolved); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("unsafe symlink target: %q", linkname)
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }

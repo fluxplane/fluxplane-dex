@@ -7,7 +7,7 @@ import (
 
 const (
 	PluginName        = "grafana"
-	PluginVersion     = "0.14.0"
+	PluginVersion     = "0.16.0"
 	PluginDescription = "Grafana datasource catalog and proxy operations for Loki, Prometheus, Alertmanager, and Tempo."
 
 	EnvGrafanaAPIToken = "GRAFANA_API_TOKEN"
@@ -76,9 +76,9 @@ func manifestSpec() pluginbinding.ManifestSpec {
 			Description: "Grafana bearer token or basic auth used by host-resolved endpoint refs.",
 			Env:         []string{EnvGrafanaAPIToken, EnvGrafanaUsername, EnvGrafanaPassword},
 			Fields: []core.AuthField{
-				pluginbinding.AuthField(AuthPurposeAPIToken, "Grafana service account token", true, false, EnvGrafanaAPIToken),
+				pluginbinding.AuthField(AuthPurposeAPIToken, "Grafana service account token", true, true, EnvGrafanaAPIToken),
 				pluginbinding.AuthField(AuthPurposeUsername, "Grafana basic auth username", false, false, EnvGrafanaUsername),
-				pluginbinding.AuthField(AuthPurposePassword, "Grafana basic auth password", true, false, EnvGrafanaPassword),
+				pluginbinding.AuthField(AuthPurposePassword, "Grafana basic auth password", true, true, EnvGrafanaPassword),
 			},
 		}},
 	}

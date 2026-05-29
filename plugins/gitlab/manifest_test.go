@@ -25,6 +25,24 @@ func TestManifestInputSchemasDescribeAllFields(t *testing.T) {
 	assertSchemaPropertyDescription(t, "branch ref", pluginbinding.MustSchemaFor[BranchCreateInput](), "ref", "Source ref (commit SHA, branch, or tag)")
 }
 
+func TestGitLabDatasourceCapabilitySchemas(t *testing.T) {
+	assertSchemaHasProperty(t, "project search datasource", gitlabProjectsDatasourceSpec().Input, "query")
+	assertSchemaHasProperty(t, "project get datasource", gitlabProjectsDatasourceGetSpec().Input, "id")
+}
+
+func assertSchemaHasProperty(t *testing.T, name string, raw json.RawMessage, field string) {
+	t.Helper()
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("%s schema is invalid: %v", name, err)
+	}
+	if _, ok := schema.Properties[field]; !ok {
+		t.Fatalf("%s schema is missing property %q: %s", name, field, string(raw))
+	}
+}
+
 func assertSchemaPropertiesDescribed(t *testing.T, name string, raw json.RawMessage) {
 	t.Helper()
 	if len(raw) == 0 {

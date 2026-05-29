@@ -64,6 +64,15 @@ func systemHTTPRequestURL(input pluginbinding.HTTPRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("HTTP url must be absolute with a host")
+	}
+	if !strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https") {
+		return "", fmt.Errorf("HTTP url scheme must be http or https")
+	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("HTTP url must not include userinfo")
+	}
 	if strings.TrimSpace(input.Path) != "" {
 		basePath := strings.TrimRight(parsed.Path, "/")
 		baseEscapedPath := strings.TrimRight(parsed.EscapedPath(), "/")

@@ -143,10 +143,7 @@ func normalizeResultURL(raw string) string {
 			value = decoded
 		}
 	}
-	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
-		return value
-	}
-	return ""
+	return websearch.NormalizeResultURL(value)
 }
 
 func percentDecode(value string) string {

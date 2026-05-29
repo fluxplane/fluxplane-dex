@@ -2,7 +2,7 @@ module github.com/fluxplane/fluxplane-dex/plugins/kubernetes
 
 go 1.26.0
 
-require github.com/fluxplane/fluxplane-dex v0.15.1
+require github.com/fluxplane/fluxplane-dex v0.16.0
 
 require (
 	k8s.io/api v0.36.1

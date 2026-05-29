@@ -20,3 +20,22 @@ func TestSystemHTTPRequestURLCombinesPathAndQuery(t *testing.T) {
 		t.Fatalf("url = %q, want %q", got, want)
 	}
 }
+
+func TestSystemHTTPRequestURLRejectsUnsafeURLs(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{name: "relative", url: "/rest/api/3/myself"},
+		{name: "missing host", url: "https:///rest/api/3/myself"},
+		{name: "non http scheme", url: "file:///etc/passwd"},
+		{name: "userinfo", url: "https://user:secret@example.com/rest/api/3/myself"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got, err := systemHTTPRequestURL(pluginbinding.HTTPRequest{URL: tt.url}); err == nil {
+				t.Fatalf("systemHTTPRequestURL(%q) = %q, want error", tt.url, got)
+			}
+		})
+	}
+}

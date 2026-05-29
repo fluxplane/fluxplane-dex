@@ -201,3 +201,34 @@ func TestPrompterReceivesPrintFromConnect(t *testing.T) {
 		t.Fatalf("expected prompter to receive at least one Print call")
 	}
 }
+
+func TestConnectPromptsForMissingFieldsWhenPartiallyPrefilled(t *testing.T) {
+	prompter := &scriptedPrompter{secrets: []string{"ami-secret"}}
+	e, err := dex.New(dex.Config{WorkDir: t.TempDir(), Prompter: prompter})
+	if err != nil {
+		t.Fatalf("dex.New: %v", err)
+	}
+	t.Cleanup(func() { _ = e.Close() })
+
+	result, err := e.Auth().Connect(context.Background(), "asterisk", dex.ConnectOptions{
+		PrefilledFields: map[string]string{"username": "ami-user"},
+	})
+	if err != nil {
+		t.Fatalf("Auth().Connect: %v", err)
+	}
+	if !connectSaved(result.Saved, "username") || !connectSaved(result.Saved, "secret") {
+		t.Fatalf("saved fields = %v, want username and secret", result.Saved)
+	}
+	if len(result.Missing) != 0 {
+		t.Fatalf("missing fields = %v, want none", result.Missing)
+	}
+}
+
+func connectSaved(saved []string, name string) bool {
+	for _, field := range saved {
+		if field == name {
+			return true
+		}
+	}
+	return false
+}

@@ -36,6 +36,12 @@ func BuildAttachmentUploadRequest(contentBytes []byte, filename, contentType str
 	if filename == "" {
 		return AttachmentUploadRequest{}, errors.New("filename is required")
 	}
+	if filename == "." || filename == ".." || strings.ContainsAny(filename, "/\\") || filepath.Base(filename) != filename {
+		return AttachmentUploadRequest{}, errors.New("filename must be a plain file name without path separators")
+	}
+	if strings.ContainsFunc(filename, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return AttachmentUploadRequest{}, errors.New("filename must not contain control characters")
+	}
 	contentType = strings.TrimSpace(contentType)
 	if contentType == "" {
 		contentType = mime.TypeByExtension(filepath.Ext(filename))

@@ -33,6 +33,17 @@ func TestParseResults(t *testing.T) {
 	}
 }
 
+func TestParseResultsDropsUnsafeURLs(t *testing.T) {
+	body := `
+<a class="result__a" href="/l/?kh=-1&uddg=javascript%3Aalert%281%29">Script</a>
+<a class="result__a" href="/l/?kh=-1&uddg=https%3A%2F%2Fexample.com%0AX%3A%20y">Control</a>
+<a class="result__a" href="https://example.com/safe">Safe</a>`
+	results := parseResults(body, 10)
+	if len(results) != 1 || results[0].URL != "https://example.com/safe" {
+		t.Fatalf("results = %#v", results)
+	}
+}
+
 func TestDatasourceSearchUsesSharedWebsearchWrapper(t *testing.T) {
 	body := `
 <a class="result__a" href="/l/?kh=-1&uddg=https%3A%2F%2Fexample.com%2Fa">Example <b>A</b></a>

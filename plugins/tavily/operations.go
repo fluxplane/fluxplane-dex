@@ -87,7 +87,7 @@ func (s Service) searchOne(ctx pluginbinding.Context, query string, max int) (we
 	}
 	results := make([]websearch.Result, 0, len(decoded.Results))
 	for _, result := range decoded.Results {
-		url := strings.TrimSpace(result.URL)
+		url := websearch.NormalizeResultURL(result.URL)
 		if url == "" {
 			continue
 		}

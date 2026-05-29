@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-05-29
+
+### Added
+- Added live GitLab datasource search and get handlers for projects, users, groups, issues, and merge requests with capability-specific schemas.
+- Documented web search provider E2E checks and plugin security guidance for keeping resolved secrets out of model-visible surfaces.
+
+### Changed
+- Made pluginbinding cache access concurrency-safe for shared operation/provider caches.
+- Updated release version references for the root workspace, plugin modules, plugin manifests, builtin plugin manifests, and release documentation.
+
+### Fixed
+- Fixed auth connect prompts so partially prefilled auth fields still prompt for remaining required fields.
+- Hardened Docker archive extraction against symlink escapes and symlink destination overwrites.
+- Hardened Atlassian attachment upload filenames, system HTTP capability URLs, and web search result URL normalization, including rejection of embedded URL userinfo credentials.
+- Marked Grafana token/password fields as sensitive secrets and rejected invalid Grafana query, annotation, and silence time ranges.
+- Validated OpenAI image generation bounds and Ollama chat/embed input limits.
+
 ## [0.15.1] - 2026-05-29
 
 ### Fixed

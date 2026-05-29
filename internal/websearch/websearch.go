@@ -2,6 +2,7 @@ package websearch
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/fluxplane/fluxplane-dex/core"
@@ -316,7 +317,7 @@ func Records(source pluginbinding.DatasourceSource, sets []ResultSet) []SearchRe
 	var records []SearchRecord
 	for _, set := range sets {
 		for _, result := range set.Results {
-			url := strings.TrimSpace(result.URL)
+			url := NormalizeResultURL(result.URL)
 			if url == "" {
 				continue
 			}
@@ -364,6 +365,32 @@ func ToDatasourceSearchResult(source pluginbinding.DatasourceSource, input Searc
 		}
 	}
 	return result
+}
+
+func NormalizeResultURL(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" || containsControl(value) {
+		return ""
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" || parsed.User != nil {
+		return ""
+	}
+	switch parsed.Scheme {
+	case "http", "https":
+		return parsed.String()
+	default:
+		return ""
+	}
+}
+
+func containsControl(value string) bool {
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
 }
 
 func Render(output SearchOutput) string {

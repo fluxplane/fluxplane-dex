@@ -600,6 +600,9 @@ func (s Service) PrometheusRange(ctx pluginbinding.Context, input PrometheusRang
 	if err != nil {
 		return ProxyQueryResult{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
+	if !start.Before(end) {
+		return ProxyQueryResult{}, pluginbinding.Fail("bad_input", "start must be before end")
+	}
 	step := firstNonEmpty(input.Step, "1m")
 	values := url.Values{"query": {strings.TrimSpace(input.Query)}}
 	values.Set("start", strconv.FormatInt(start.Unix(), 10))
@@ -1021,6 +1024,9 @@ func annotationPayload(input AnnotationAddInput) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
+		if !annotationTime.Before(end) {
+			return nil, fmt.Errorf("time_end must be after time")
+		}
 		payload["timeEnd"] = end.UnixMilli()
 		payload["isRegion"] = true
 	}
@@ -1046,6 +1052,9 @@ func silencePayload(input AlertSilenceCreateInput) (map[string]any, error) {
 	end, err := parseTimeValue(input.EndsAt, now)
 	if err != nil {
 		return nil, err
+	}
+	if !start.Before(end) {
+		return nil, fmt.Errorf("ends_at must be after starts_at")
 	}
 	matchers := make([]map[string]any, 0, len(input.Matchers))
 	for _, matcher := range input.Matchers {
@@ -1293,6 +1302,9 @@ func queryRangeValues(query, since, until string, limit int) (url.Values, error)
 	start, err := parseTimeValue(firstNonEmpty(since, "1h"), now)
 	if err != nil {
 		return nil, err
+	}
+	if !start.Before(end) {
+		return nil, fmt.Errorf("since must be before until")
 	}
 	values := url.Values{"query": {strings.TrimSpace(query)}}
 	values.Set("start", strconv.FormatInt(start.UnixNano(), 10))

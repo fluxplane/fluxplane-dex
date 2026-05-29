@@ -134,37 +134,35 @@ func (s *AuthService) Connect(ctx context.Context, plugin string, opts ConnectOp
 		}
 	}
 
-	if len(values) == 0 {
-		prompter := s.engine.cfg.Prompter
-		_ = prompter.Print(ctx, fmt.Sprintf("Connecting %s/%s", plugin, instance))
-		for _, field := range fields {
-			name := strings.TrimSpace(field.Name)
-			if name == "" {
-				continue
+	prompter := s.engine.cfg.Prompter
+	_ = prompter.Print(ctx, fmt.Sprintf("Connecting %s/%s", plugin, instance))
+	for _, field := range fields {
+		name := strings.TrimSpace(field.Name)
+		if name == "" {
+			continue
+		}
+		if _, already := values[name]; already {
+			continue
+		}
+		label := name
+		if field.Description != "" {
+			label = name + " (" + field.Description + ")"
+		}
+		var value string
+		if field.Sensitive || field.Secret {
+			value, err = prompter.Secret(ctx, label)
+		} else {
+			value, err = prompter.Input(ctx, label)
+		}
+		if err != nil {
+			if errors.Is(err, ErrNoPrompter) {
+				break
 			}
-			if _, already := values[name]; already {
-				continue
-			}
-			label := name
-			if field.Description != "" {
-				label = name + " (" + field.Description + ")"
-			}
-			var value string
-			if field.Sensitive || field.Secret {
-				value, err = prompter.Secret(ctx, label)
-			} else {
-				value, err = prompter.Input(ctx, label)
-			}
-			if err != nil {
-				if errors.Is(err, ErrNoPrompter) {
-					break
-				}
-				return ConnectResult{}, err
-			}
-			value = strings.TrimSpace(value)
-			if value != "" {
-				values[name] = value
-			}
+			return ConnectResult{}, err
+		}
+		value = strings.TrimSpace(value)
+		if value != "" {
+			values[name] = value
 		}
 	}
 

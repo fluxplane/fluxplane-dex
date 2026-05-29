@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/protocol"
@@ -31,6 +32,7 @@ type Context struct {
 }
 
 type Cache struct {
+	mu     sync.RWMutex
 	values map[string]any
 }
 
@@ -512,6 +514,8 @@ func (c *Cache) Get(key string) (any, bool) {
 	if c == nil {
 		return nil, false
 	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	value, ok := c.values[key]
 	return value, ok
 }
@@ -520,6 +524,8 @@ func (c *Cache) Set(key string, value any) {
 	if c == nil {
 		return
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.values[key] = value
 }
 

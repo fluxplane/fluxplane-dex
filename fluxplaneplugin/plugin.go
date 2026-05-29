@@ -113,23 +113,14 @@ func (a *adapter) Contributions(ctx context.Context, _ pluginhost.Context) (reso
 	for _, op := range manifest.Operations {
 		specs = append(specs, dexOpToSpec(a.name, op))
 	}
-	// Each dex datasource needs a configured core datasource.Spec in the
-	// bundle so the runtime's datasource registry calls our Provider's
-	// Open(spec) and produces a queryable Accessor. Without this, the
-	// DatasourceProvider is registered but the runtime never opens any
-	// datasource against it and datasource_search returns empty.
-	datasources := make([]coredatasource.Spec, 0, len(manifest.Datasources))
-	for _, ds := range manifest.Datasources {
-		if strings.TrimSpace(ds.Name) == "" {
-			continue
-		}
-		datasources = append(datasources, coredatasource.Spec{
-			Name:        coredatasource.Name(ds.Name),
-			Description: ds.Description,
-			Kind:        a.name,
-			Entities:    []coredatasource.EntityType{coredatasource.EntityType(ds.Entity)},
-		})
-	}
+	// Emit ONE coredatasource.Spec per plugin (named after the plugin)
+	// whose Entities list aggregates every dex datasource entity. This
+	// matches the fluxplane-core convention where each plugin contributes
+	// one datasource keyed on the plugin name and exposes its surface
+	// through entity filters on datasource_search/list/get. The accessor
+	// (see datasource.go) dispatches each request to the right dex
+	// datasource based on req.Entity.
+	datasources := aggregatedDatasourceSpecs(a.name, manifest.Datasources)
 	return resource.ContributionBundle{
 		Operations:     specs,
 		OperationSets:  buildOperationSets(a.name, manifest.Operations),
@@ -279,6 +270,49 @@ func buildOperationSets(plugin string, ops []dex.OperationSpec) []operation.Set 
 		})
 	}
 	return sets
+}
+
+// aggregatedDatasourceSpecs returns a single coredatasource.Spec named after
+// the plugin whose Entities list aggregates every entity declared across the
+// dex per-entity datasources. The per-entity richness (descriptions, fields,
+// capabilities, schemas) flows separately through Provider.Entities() at
+// runtime — keeping the contribution Spec flat in entity names while the
+// EntitySpec graph carries the structure agents reason about.
+//
+// Plugins with no datasource entries produce a nil result so an empty
+// Datasources slice doesn't appear in the bundle.
+func aggregatedDatasourceSpecs(plugin string, sources []dex.DatasourceSpec) []coredatasource.Spec {
+	plugin = strings.TrimSpace(plugin)
+	if plugin == "" {
+		return nil
+	}
+	seen := map[string]bool{}
+	entities := make([]coredatasource.EntityType, 0, len(sources))
+	descriptions := make([]string, 0, len(sources))
+	for _, src := range sources {
+		entity := strings.TrimSpace(src.Entity)
+		if entity == "" || seen[entity] {
+			continue
+		}
+		seen[entity] = true
+		entities = append(entities, coredatasource.EntityType(entity))
+		if d := strings.TrimSpace(src.Description); d != "" {
+			descriptions = append(descriptions, d)
+		}
+	}
+	if len(entities) == 0 {
+		return nil
+	}
+	desc := strings.Join(descriptions, " | ")
+	if desc == "" {
+		desc = fmt.Sprintf("Dex %s plugin datasource.", plugin)
+	}
+	return []coredatasource.Spec{{
+		Name:        coredatasource.Name(plugin),
+		Description: desc,
+		Kind:        plugin,
+		Entities:    entities,
+	}}
 }
 
 // buildActivationSets emits one aggregate activation set named after the

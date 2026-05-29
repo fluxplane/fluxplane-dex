@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-05-29
+
+### Changed
+- `fluxplaneplugin` now aggregates a plugin's per-entity dex datasources into a
+  single `coredatasource.Spec` named after the plugin (e.g. `gitlab`) with a
+  multi-entity `Entities` list — matching the fluxplane-core convention where
+  one plugin contributes one datasource keyed on the plugin name. Per-entity
+  metadata (descriptions, capabilities, fields, schemas) still flows through
+  `Provider.Entities()` at runtime so agents reason in terms of entity types
+  and entity-typed filters, not per-entity datasource names.
+- `dexAccessor` holds an entity→source map and routes `Search`, `List`, and
+  `Get` to the matching dex datasource based on the request's `Entity`. The
+  legacy single-source `Open` shape (matching `spec.Name` against a specific
+  dex datasource name like `gitlab.projects`) keeps working so older callers
+  do not break.
+
 ## [0.11.0] - 2026-05-29
 
 ### Added

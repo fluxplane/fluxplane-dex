@@ -2,6 +2,8 @@ package fluxplaneplugin_test
 
 import (
 	"context"
+	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -185,6 +187,62 @@ func TestDatasourceProviderOpenUnknownReturnsError(t *testing.T) {
 	}
 	if _, err := providers[0].Open(context.Background(), coredatasource.Spec{Name: "definitely-not-a-real-datasource"}); err == nil {
 		t.Fatalf("expected error opening unknown datasource")
+	}
+}
+
+func TestDatasourceProviderListsIndexedRecords(t *testing.T) {
+	slackDir, err := filepath.Abs("../plugins/slack")
+	if err != nil {
+		t.Fatalf("filepath.Abs: %v", err)
+	}
+	e, err := dex.New(dex.Config{WorkDir: t.TempDir(), DevPlugins: map[string]string{"slack": slackDir}})
+	if err != nil {
+		t.Fatalf("dex.New: %v", err)
+	}
+	t.Cleanup(func() { _ = e.Close() })
+	if _, err := e.Runner().State.SaveIndexRecords("slack", "work", "slack.users", []json.RawMessage{
+		json.RawMessage(`{"entity":"slack.user","id":"U2","title":"Beta User","name":"beta"}`),
+		json.RawMessage(`{"entity":"slack.user","id":"U1","title":"Alpha User","name":"alpha"}`),
+	}); err != nil {
+		t.Fatalf("SaveIndexRecords: %v", err)
+	}
+	plug, err := fluxplaneplugin.Wrap(e, "slack")
+	if err != nil {
+		t.Fatalf("Wrap: %v", err)
+	}
+	contributor, ok := plug.(pluginhost.DatasourceProviderContributor)
+	if !ok {
+		t.Fatalf("adapter does not implement DatasourceProviderContributor")
+	}
+	providers, err := contributor.DatasourceProviders(context.Background(), pluginhost.Context{Ref: resource.PluginRef{Name: "slack", Instance: "work"}})
+	if err != nil {
+		t.Fatalf("DatasourceProviders: %v", err)
+	}
+	accessor, err := providers[0].Open(context.Background(), coredatasource.Spec{
+		Name:     "slack.users",
+		Kind:     "slack",
+		Entities: []coredatasource.EntityType{"slack.user"},
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	entity := accessor.Entities()[0]
+	if !entity.Supports(coredatasource.EntityCapabilityList) {
+		t.Fatalf("entity capabilities = %#v, want list", entity.Capabilities)
+	}
+	lister, ok := accessor.(coredatasource.Lister)
+	if !ok {
+		t.Fatalf("accessor does not implement Lister")
+	}
+	result, err := lister.List(context.Background(), coredatasource.ListRequest{Entity: "slack.user", Limit: 1})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if result.Datasource != "slack.users" || result.Entity != "slack.user" || result.Total != 1 || !result.Complete {
+		t.Fatalf("result metadata = %#v", result)
+	}
+	if len(result.Records) != 1 || result.Records[0].ID != "U1" {
+		t.Fatalf("records = %#v", result.Records)
 	}
 }
 

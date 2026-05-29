@@ -21,23 +21,25 @@ import (
 // resolution time. Plugins whose manifest can't be fetched yield a Provider
 // that has no entities — callers see an empty set rather than a hard failure
 // so listing is robust to transient dex errors.
-func (a *adapter) DatasourceProviders(ctx context.Context, _ pluginhost.Context) ([]coredatasource.Provider, error) {
+func (a *adapter) DatasourceProviders(ctx context.Context, pluginCtx pluginhost.Context) ([]coredatasource.Provider, error) {
 	manifest, err := a.engine.Manifest(ctx, a.name)
 	if err != nil {
-		return []coredatasource.Provider{&dexDatasourceProvider{plugin: a.name, engine: a.engine}}, nil
+		return []coredatasource.Provider{&dexDatasourceProvider{plugin: a.name, instance: pluginCtx.Ref.Instance, engine: a.engine}}, nil
 	}
 	specs := append([]dex.DatasourceSpec(nil), manifest.Datasources...)
 	return []coredatasource.Provider{&dexDatasourceProvider{
-		plugin:  a.name,
-		engine:  a.engine,
-		sources: specs,
+		plugin:   a.name,
+		instance: pluginCtx.Ref.Instance,
+		engine:   a.engine,
+		sources:  specs,
 	}}, nil
 }
 
 type dexDatasourceProvider struct {
-	plugin  string
-	engine  *dex.Engine
-	sources []dex.DatasourceSpec
+	plugin   string
+	instance string
+	engine   *dex.Engine
+	sources  []dex.DatasourceSpec
 }
 
 // Entities returns the union of entity specs declared across this plugin's
@@ -57,33 +59,71 @@ func (p *dexDatasourceProvider) Entities() []coredatasource.EntitySpec {
 	return out
 }
 
-// Open returns an Accessor for the configured spec. The dex datasource is
-// resolved by matching either spec.Name to a dex datasource name, or by
-// matching the first entity in spec.Entities to a dex datasource entity.
+// Open returns an Accessor for the configured spec. Two shapes are supported:
+//
+//   - Aggregated: spec.Name equals the plugin name (e.g. "gitlab"). The
+//     accessor's byEntity map covers every dex datasource the plugin
+//     declares, so Search/List/Get on any of the spec.Entities routes to
+//     the right per-entity dex source.
+//   - Legacy single-source: spec.Name matches a specific dex datasource
+//     name (e.g. "gitlab.projects"). Older callers that still address one
+//     dex source directly keep working; byEntity contains only that
+//     source's entity.
+//
+// Any other spec name with no matching entity is rejected so callers
+// learn at Open time, not via an empty Search result.
 func (p *dexDatasourceProvider) Open(_ context.Context, spec coredatasource.Spec) (coredatasource.Accessor, error) {
-	src, ok := p.resolveSource(spec)
-	if !ok {
-		return nil, fmt.Errorf("fluxplaneplugin: no dex datasource matches %q (entities=%v)", spec.Name, spec.Entities)
-	}
-	return &dexAccessor{plugin: p.plugin, engine: p.engine, spec: spec, source: src}, nil
-}
-
-func (p *dexDatasourceProvider) resolveSource(spec coredatasource.Spec) (dex.DatasourceSpec, bool) {
 	name := strings.TrimSpace(string(spec.Name))
-	for _, src := range p.sources {
-		if src.Name == name {
-			return src, true
-		}
-	}
-	if len(spec.Entities) > 0 {
-		want := strings.TrimSpace(string(spec.Entities[0]))
+	if name == p.plugin {
+		byEntity := map[string]dex.DatasourceSpec{}
 		for _, src := range p.sources {
-			if src.Entity == want {
-				return src, true
+			entity := strings.TrimSpace(src.Entity)
+			if entity == "" {
+				continue
+			}
+			if _, exists := byEntity[entity]; !exists {
+				byEntity[entity] = src
 			}
 		}
+		var fallback dex.DatasourceSpec
+		for _, entity := range spec.Entities {
+			if src, ok := byEntity[string(entity)]; ok {
+				fallback = src
+				break
+			}
+		}
+		if fallback.Name == "" && len(p.sources) > 0 {
+			fallback = p.sources[0]
+		}
+		if fallback.Name == "" {
+			return nil, fmt.Errorf("fluxplaneplugin: plugin %q has no dex datasources", p.plugin)
+		}
+		return &dexAccessor{
+			plugin:   p.plugin,
+			instance: p.instance,
+			engine:   p.engine,
+			spec:     spec,
+			byEntity: byEntity,
+			fallback: fallback,
+		}, nil
 	}
-	return dex.DatasourceSpec{}, false
+	for _, src := range p.sources {
+		if src.Name == name {
+			byEntity := map[string]dex.DatasourceSpec{}
+			if entity := strings.TrimSpace(src.Entity); entity != "" {
+				byEntity[entity] = src
+			}
+			return &dexAccessor{
+				plugin:   p.plugin,
+				instance: p.instance,
+				engine:   p.engine,
+				spec:     spec,
+				byEntity: byEntity,
+				fallback: src,
+			}, nil
+		}
+	}
+	return nil, fmt.Errorf("fluxplaneplugin: no dex datasource matches %q (entities=%v)", spec.Name, spec.Entities)
 }
 
 func dexEntitySpec(src dex.DatasourceSpec) coredatasource.EntitySpec {
@@ -109,42 +149,71 @@ func dexEntitySpec(src dex.DatasourceSpec) coredatasource.EntitySpec {
 	return entity
 }
 
-// dexAccessor implements the base Accessor plus Searcher and Getter. We do
-// not implement Lister, BatchGetter, or Relationer because dex's protocol
-// does not yet expose stable equivalents — callers should fall back to
-// search/get.
+// dexAccessor implements the base Accessor plus Searcher, Lister, and Getter.
+// List is mapped to an empty-query datasource search, which lets host-backed
+// indexes expose their first page without adding another dex protocol command.
+//
+// byEntity routes per-request entity strings to the matching dex
+// DatasourceSpec; fallback is used when req.Entity is empty (single-entity
+// callers or legacy specs).
 type dexAccessor struct {
-	plugin string
-	engine *dex.Engine
-	spec   coredatasource.Spec
-	source dex.DatasourceSpec
+	plugin   string
+	instance string
+	engine   *dex.Engine
+	spec     coredatasource.Spec
+	byEntity map[string]dex.DatasourceSpec
+	fallback dex.DatasourceSpec
+}
+
+// sourceFor resolves the dex datasource for a given core EntityType. Returns
+// the fallback (e.g. first declared entity) when entity is empty or unknown
+// so callers that don't pass entity filters still get a deterministic source.
+func (a *dexAccessor) sourceFor(entity string) dex.DatasourceSpec {
+	entity = strings.TrimSpace(entity)
+	if entity == "" {
+		return a.fallback
+	}
+	if src, ok := a.byEntity[entity]; ok {
+		return src
+	}
+	return a.fallback
 }
 
 var (
 	_ coredatasource.Accessor = (*dexAccessor)(nil)
 	_ coredatasource.Searcher = (*dexAccessor)(nil)
+	_ coredatasource.Lister   = (*dexAccessor)(nil)
 	_ coredatasource.Getter   = (*dexAccessor)(nil)
 )
 
 func (a *dexAccessor) Spec() coredatasource.Spec { return a.spec }
 
+// Entities exposes the rich per-entity metadata for every dex datasource the
+// accessor can route to, so the host's datasource_get_schema / introspection
+// surface sees all entities the plugin actually serves — not just the
+// fallback's. The contribution Spec only carries entity names; this is where
+// per-entity descriptions, capabilities, and field schemas surface.
 func (a *dexAccessor) Entities() []coredatasource.EntitySpec {
-	return []coredatasource.EntitySpec{dexEntitySpec(a.source)}
+	out := make([]coredatasource.EntitySpec, 0, len(a.byEntity))
+	for _, src := range a.byEntity {
+		out = append(out, dexEntitySpec(src))
+	}
+	return out
 }
 
 // Search proxies a search through dex. The request shape sent to dex follows
 // the dex datasource search convention: {datasource, entity, query, limit,
-// filters}. Dex plugins decode and respond with their own record shape; we
-// extract a best-effort list of records by looking for a top-level "records"
-// or "results" array, falling back to wrapping the raw payload as a single
-// Record with the JSON-encoded content.
+// filters}. The datasource name in the payload is the entity-specific dex
+// source (e.g. gitlab.projects) so the dex plugin's handler still dispatches
+// on its own per-source registry.
 func (a *dexAccessor) Search(ctx context.Context, req coredatasource.SearchRequest) (coredatasource.SearchResult, error) {
+	src := a.sourceFor(string(req.Entity))
 	entity := strings.TrimSpace(string(req.Entity))
 	if entity == "" {
-		entity = a.source.Entity
+		entity = src.Entity
 	}
 	payload := map[string]any{
-		"datasource": a.source.Name,
+		"datasource": src.Name,
 		"entity":     entity,
 	}
 	if q := strings.TrimSpace(req.Query); q != "" {
@@ -156,7 +225,7 @@ func (a *dexAccessor) Search(ctx context.Context, req coredatasource.SearchReque
 	if len(req.Filters) > 0 {
 		payload["filters"] = req.Filters
 	}
-	resp, err := a.engine.Datasources().Search(ctx, a.plugin, payload)
+	resp, err := a.engine.Datasources().SearchInstance(ctx, a.plugin, a.instance, payload)
 	if err != nil {
 		return coredatasource.SearchResult{}, err
 	}
@@ -164,7 +233,7 @@ func (a *dexAccessor) Search(ctx context.Context, req coredatasource.SearchReque
 		return coredatasource.SearchResult{}, fmt.Errorf("dex %s: %s", a.plugin, resp.Error.Message)
 	}
 	result := coredatasource.SearchResult{
-		Datasource: coredatasource.Name(a.source.Name),
+		Datasource: a.spec.Name,
 		Entity:     coredatasource.EntityType(entity),
 	}
 	result.Records = decodeRecords(resp.Result, result.Datasource, result.Entity)
@@ -174,30 +243,71 @@ func (a *dexAccessor) Search(ctx context.Context, req coredatasource.SearchReque
 	return result, nil
 }
 
-func (a *dexAccessor) Get(ctx context.Context, req coredatasource.GetRequest) (coredatasource.Record, error) {
+func (a *dexAccessor) List(ctx context.Context, req coredatasource.ListRequest) (coredatasource.ListResult, error) {
+	src := a.sourceFor(string(req.Entity))
 	entity := strings.TrimSpace(string(req.Entity))
 	if entity == "" {
-		entity = a.source.Entity
+		entity = src.Entity
 	}
 	payload := map[string]any{
-		"datasource": a.source.Name,
+		"datasource": src.Name,
+		"entity":     entity,
+	}
+	if req.Limit > 0 {
+		payload["limit"] = req.Limit
+	}
+	if req.Cursor != "" {
+		payload["cursor"] = strings.TrimSpace(req.Cursor)
+	}
+	if len(req.Filters) > 0 {
+		payload["filters"] = req.Filters
+	}
+	resp, err := a.engine.Datasources().SearchInstance(ctx, a.plugin, a.instance, payload)
+	if err != nil {
+		return coredatasource.ListResult{}, err
+	}
+	if resp.Error != nil {
+		return coredatasource.ListResult{}, fmt.Errorf("dex %s: %s", a.plugin, resp.Error.Message)
+	}
+	result := coredatasource.ListResult{
+		Datasource: a.spec.Name,
+		Entity:     coredatasource.EntityType(entity),
+		Complete:   true,
+	}
+	result.Records = decodeRecords(resp.Result, result.Datasource, result.Entity)
+	if total, ok := decodeTotal(resp.Result); ok {
+		result.Total = total
+	} else {
+		result.Total = len(result.Records)
+	}
+	return result, nil
+}
+
+func (a *dexAccessor) Get(ctx context.Context, req coredatasource.GetRequest) (coredatasource.Record, error) {
+	src := a.sourceFor(string(req.Entity))
+	entity := strings.TrimSpace(string(req.Entity))
+	if entity == "" {
+		entity = src.Entity
+	}
+	payload := map[string]any{
+		"datasource": src.Name,
 		"entity":     entity,
 		"id":         req.ID,
 	}
-	resp, err := a.engine.Datasources().Get(ctx, a.plugin, payload)
+	resp, err := a.engine.Datasources().GetInstance(ctx, a.plugin, a.instance, payload)
 	if err != nil {
 		return coredatasource.Record{}, err
 	}
 	if resp.Error != nil {
 		return coredatasource.Record{}, fmt.Errorf("dex %s: %s", a.plugin, resp.Error.Message)
 	}
-	records := decodeRecords(resp.Result, coredatasource.Name(a.source.Name), coredatasource.EntityType(entity))
+	records := decodeRecords(resp.Result, a.spec.Name, coredatasource.EntityType(entity))
 	if len(records) > 0 {
 		return records[0], nil
 	}
 	return coredatasource.Record{
 		ID:         req.ID,
-		Datasource: coredatasource.Name(a.source.Name),
+		Datasource: a.spec.Name,
 		Entity:     coredatasource.EntityType(entity),
 		Raw:        json.RawMessage(resp.Result),
 	}, nil

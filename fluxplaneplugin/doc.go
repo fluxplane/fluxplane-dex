@@ -23,6 +23,14 @@
 // flows, and the agent runs `dex plugin install <name>` / `dex auth connect`
 // on demand before the operations actually run.
 //
+// Higher-level facade for consumers that want minimal boilerplate (e.g.
+// fluxplane-apps/slack-bot, coder, custom apps):
+//
+//   - Assembly via New(Config{...}) — bundles native + dex plugins with an
+//     optional EnabledDexPlugins allowlist, then exposes Plugins(),
+//     Bundles(ctx), Register(host), and Engine() in the shapes
+//     fluxplane-core's launch path expects.
+//
 // Lower-level building blocks are also exported:
 //
 //   - Wrap(engine, name)  — one pluginhost.Plugin for a single dex plugin.

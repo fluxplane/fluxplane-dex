@@ -6,24 +6,31 @@ import (
 	"fmt"
 	"strings"
 
+	coreactivation "github.com/fluxplane/fluxplane-core/core/activation"
+	coredatasource "github.com/fluxplane/fluxplane-core/core/datasource"
 	"github.com/fluxplane/fluxplane-core/core/operation"
 	"github.com/fluxplane/fluxplane-core/core/resource"
 	"github.com/fluxplane/fluxplane-core/orchestration/pluginhost"
+	runtimeevidence "github.com/fluxplane/fluxplane-core/runtime/evidence"
 
 	dex "github.com/fluxplane/fluxplane-dex"
 )
 
 // adapter exposes one dex plugin as a pluginhost.Plugin +
-// OperationContributor + DatasourceProviderContributor.
+// OperationContributor + DatasourceProviderContributor +
+// AssertionDeriverContributor. The intent deriver hangs off the adapter so
+// every registered dex plugin contributes one to the pluginhost — which is
+// fine because identical deriver Specs are deduplicated by name downstream.
 type adapter struct {
 	engine *dex.Engine
 	name   string
 }
 
 var (
-	_ pluginhost.Plugin                      = (*adapter)(nil)
-	_ pluginhost.OperationContributor        = (*adapter)(nil)
+	_ pluginhost.Plugin                        = (*adapter)(nil)
+	_ pluginhost.OperationContributor          = (*adapter)(nil)
 	_ pluginhost.DatasourceProviderContributor = (*adapter)(nil)
+	_ pluginhost.AssertionDeriverContributor   = (*adapter)(nil)
 )
 
 // Wrap returns a pluginhost.Plugin that proxies a single dex plugin into the
@@ -106,10 +113,29 @@ func (a *adapter) Contributions(ctx context.Context, _ pluginhost.Context) (reso
 	for _, op := range manifest.Operations {
 		specs = append(specs, dexOpToSpec(a.name, op))
 	}
+	// Each dex datasource needs a configured core datasource.Spec in the
+	// bundle so the runtime's datasource registry calls our Provider's
+	// Open(spec) and produces a queryable Accessor. Without this, the
+	// DatasourceProvider is registered but the runtime never opens any
+	// datasource against it and datasource_search returns empty.
+	datasources := make([]coredatasource.Spec, 0, len(manifest.Datasources))
+	for _, ds := range manifest.Datasources {
+		if strings.TrimSpace(ds.Name) == "" {
+			continue
+		}
+		datasources = append(datasources, coredatasource.Spec{
+			Name:        coredatasource.Name(ds.Name),
+			Description: ds.Description,
+			Kind:        a.name,
+			Entities:    []coredatasource.EntityType{coredatasource.EntityType(ds.Entity)},
+		})
+	}
 	return resource.ContributionBundle{
-		Operations:    specs,
-		OperationSets: buildOperationSets(a.name, manifest.Operations),
-		Plugins:       []resource.PluginRef{{Name: a.name}},
+		Operations:     specs,
+		OperationSets:  buildOperationSets(a.name, manifest.Operations),
+		Datasources:    datasources,
+		ActivationSets: buildActivationSets(a.name, manifest.Operations, datasources),
+		Plugins:        []resource.PluginRef{{Name: a.name}},
 	}, nil
 }
 
@@ -131,6 +157,18 @@ func (a *adapter) Operations(ctx context.Context, pluginCtx pluginhost.Context) 
 		ops = append(ops, operation.New(spec, a.runner(op.Name, instance)))
 	}
 	return ops, nil
+}
+
+// AssertionDerivers contributes the dex intent deriver. Each registered
+// adapter returns the same logical deriver (built from a fresh index over
+// the engine's marketplace); pluginhost-level dedup keeps the runtime
+// from invoking it more than once per turn.
+func (a *adapter) AssertionDerivers(ctx context.Context, _ pluginhost.Context) ([]runtimeevidence.AssertionDeriver, error) {
+	idx := buildIntentIndex(ctx, a.engine)
+	if idx == nil || len(idx.keywords) == 0 {
+		return nil, nil
+	}
+	return []runtimeevidence.AssertionDeriver{intentDeriver{index: idx}}, nil
 }
 
 func (a *adapter) runner(opName, instance string) operation.Handler {
@@ -241,6 +279,85 @@ func buildOperationSets(plugin string, ops []dex.OperationSpec) []operation.Set 
 		})
 	}
 	return sets
+}
+
+// buildActivationSets emits one aggregate activation set named after the
+// plugin (e.g. "slack") and one per dotted entity group (e.g. "slack_users").
+// Each set targets both the matching operation set AND any datasource(s) the
+// plugin provides for that scope. This pairing is what makes the intent
+// reaction's "enable activation set slack" actually expose slack's datasource
+// to the agent — operation-set activation alone leaves datasource_list/search
+// denied.
+//
+// Datasource→entity matching for per-entity sets uses the dex declared
+// `Entities[0]` of each datasource spec (lowercased). If a datasource carries
+// no entity it only attaches to the aggregate set.
+func buildActivationSets(plugin string, ops []dex.OperationSpec, datasources []coredatasource.Spec) []coreactivation.Set {
+	if plugin == "" {
+		return nil
+	}
+
+	entities := map[string]struct{}{}
+	for _, op := range ops {
+		if op.Name == "" {
+			continue
+		}
+		full := qualifiedOpName(plugin, op.Name)
+		rest := strings.TrimPrefix(full, plugin+".")
+		segments := strings.SplitN(rest, ".", 2)
+		if len(segments) < 2 {
+			continue
+		}
+		entity := strings.TrimSpace(segments[0])
+		if entity == "" {
+			continue
+		}
+		entities[strings.ToLower(entity)] = struct{}{}
+	}
+
+	aggregate := coreactivation.Set{
+		Name:        plugin,
+		Description: fmt.Sprintf("Activate the %s dex surface (operations + datasources).", plugin),
+		Targets:     []coreactivation.Target{{Kind: coreactivation.TargetOperationSet, OperationSet: plugin}},
+	}
+	for _, ds := range datasources {
+		if strings.TrimSpace(string(ds.Name)) == "" {
+			continue
+		}
+		aggregate.Targets = append(aggregate.Targets, coreactivation.Target{
+			Kind:       coreactivation.TargetDatasource,
+			Datasource: coredatasource.Ref{Name: ds.Name},
+		})
+	}
+
+	sets := []coreactivation.Set{aggregate}
+	for entity := range entities {
+		setName := plugin + "_" + entity
+		set := coreactivation.Set{
+			Name:        setName,
+			Description: fmt.Sprintf("Activate the %s dex %s surface.", plugin, entity),
+			Targets:     []coreactivation.Target{{Kind: coreactivation.TargetOperationSet, OperationSet: setName}},
+		}
+		for _, ds := range datasources {
+			if matchesEntity(ds, entity) {
+				set.Targets = append(set.Targets, coreactivation.Target{
+					Kind:       coreactivation.TargetDatasource,
+					Datasource: coredatasource.Ref{Name: ds.Name},
+				})
+			}
+		}
+		sets = append(sets, set)
+	}
+	return sets
+}
+
+func matchesEntity(ds coredatasource.Spec, entity string) bool {
+	for _, e := range ds.Entities {
+		if strings.EqualFold(string(e), entity) {
+			return true
+		}
+	}
+	return false
 }
 
 func trimSchema(raw json.RawMessage) json.RawMessage {

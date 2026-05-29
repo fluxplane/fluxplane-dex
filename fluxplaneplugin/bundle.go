@@ -11,16 +11,24 @@ import (
 	dex "github.com/fluxplane/fluxplane-dex"
 )
 
-// Bundles emits one resource.ContributionBundle per dex marketplace plugin so
-// consumers can splice dex contributions into their product bundle path
-// (e.g. coder's product.Bundle()) and have them flow through the standard
-// surface/activation discovery alongside native plugins.
+// Bundles emits one resource.ContributionBundle per dex marketplace plugin
+// plus a final "intent" bundle that carries the reaction rules driving
+// keyword-based auto-activation. Consumers splice the slice into their
+// product bundle path (e.g. coder's product.Bundle()) and the bundles flow
+// through the standard surface/activation discovery alongside native plugins.
 //
-// Each bundle carries the plugin's operation specs, operation sets grouped
-// by second dotted segment (e.g. "gitlab_mr" for every "gitlab.mr.*"),
-// datasource specs, datasource entity declarations, the plugin's
-// resource.PluginRef, and a stable resource.SourceRef tagged with the "dex"
-// ecosystem so downstream catalogs can distinguish dex-sourced contributions.
+// Each per-plugin bundle carries the plugin's operation specs, operation sets
+// grouped by second dotted segment (e.g. "gitlab_mr" for every
+// "gitlab.mr.*"), datasource specs, datasource entity declarations, the
+// plugin's resource.PluginRef, and a stable resource.SourceRef tagged with
+// the "dex" ecosystem so downstream catalogs can distinguish dex-sourced
+// contributions.
+//
+// The trailing intent bundle carries one reaction rule per activation-set
+// name across all dex plugins so that the AssertionDeriver returned by the
+// adapter (see Register / AssertionDerivers) can auto-enable surfaces from
+// channel-message tokens. Without the reactions the deriver would emit
+// assertions that nothing listens for.
 //
 // Plugins whose manifest can't be fetched — typically because the binary
 // isn't installed in the active DEX_HOME — yield a stub bundle that still
@@ -37,11 +45,39 @@ func Bundles(ctx context.Context, engine *dex.Engine) ([]resource.ContributionBu
 		return nil, fmt.Errorf("fluxplaneplugin: engine is nil")
 	}
 	entries := engine.Marketplace().Plugins()
-	out := make([]resource.ContributionBundle, 0, len(entries))
+	out := make([]resource.ContributionBundle, 0, len(entries)+1)
 	for _, entry := range entries {
 		out = append(out, bundleFor(ctx, engine, entry.Name))
 	}
+	if intentBundle, ok := buildIntentBundle(ctx, engine); ok {
+		out = append(out, intentBundle)
+	}
 	return out, nil
+}
+
+// buildIntentBundle constructs a bundle that wires the dex intent reaction
+// rules. The bundle has no PluginRef of its own — it's a pure resource
+// contribution that gives meaning to the assertions the intent deriver
+// emits.
+func buildIntentBundle(ctx context.Context, engine *dex.Engine) (resource.ContributionBundle, bool) {
+	idx := buildIntentIndex(ctx, engine)
+	sets := idx.activationSets()
+	if len(sets) == 0 {
+		return resource.ContributionBundle{}, false
+	}
+	return resource.ContributionBundle{
+		Source: resource.SourceRef{
+			ID:        intentBundleSourceID,
+			Ecosystem: "dex",
+			Scope:     resource.ScopeEmbedded,
+			Location:  "dex/intent",
+			Trust: policy.Trust{
+				Kind:  policy.TrustSource,
+				Level: policy.TrustVerified,
+			},
+		},
+		Reactions: reactionsForActivationSets(sets),
+	}, true
 }
 
 // Register adds one pluginhost.Plugin per dex marketplace plugin to host so

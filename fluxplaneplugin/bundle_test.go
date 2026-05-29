@@ -21,7 +21,15 @@ func TestBundlesEmitsOnePerMarketplaceEntry(t *testing.T) {
 		t.Fatalf("expected at least one bundle")
 	}
 	seen := map[string]bool{}
+	intentBundles := 0
 	for _, b := range bundles {
+		if b.Source.ID == "dex-intent" {
+			intentBundles++
+			if len(b.Reactions) == 0 {
+				t.Fatalf("intent bundle has no reactions")
+			}
+			continue
+		}
 		if len(b.Plugins) == 0 {
 			t.Fatalf("bundle %q missing PluginRef", b.Source.ID)
 		}
@@ -40,6 +48,9 @@ func TestBundlesEmitsOnePerMarketplaceEntry(t *testing.T) {
 		}
 		seen[name] = true
 	}
+	if intentBundles != 1 {
+		t.Fatalf("expected exactly one intent bundle, got %d", intentBundles)
+	}
 }
 
 // Plugins whose manifest can't be fetched (binary not installed in the
@@ -53,6 +64,9 @@ func TestBundlesStubsUninstalledPlugins(t *testing.T) {
 	}
 	var stubs int
 	for _, b := range bundles {
+		if b.Source.ID == "dex-intent" {
+			continue
+		}
 		// Builtin plugins (websearch, vision) have manifests; everything else
 		// in a fresh DEX_HOME stubs.
 		if len(b.Operations) == 0 && len(b.OperationSets) == 0 {

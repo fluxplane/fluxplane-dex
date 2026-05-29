@@ -71,6 +71,7 @@ func queryRowsDatasourceSpec() core.DatasourceSpec {
 		"SQL query result rows.",
 		[]string{pluginbinding.CapabilitySearch},
 		pluginbinding.DatasourceSecretPurposes(AuthPurposeUsername, AuthPurposePassword),
+		pluginbinding.DatasourceAccess(core.OperationAccessProvider),
 		pluginbinding.EntitySchemaFor[QueryRowRecord](),
 		pluginbinding.EntitySchema(core.DatasourceEntitySchema{IDField: "id", TitleField: "title"}),
 		pluginbinding.Completion("SQL result row fields.", "driver", "database", "endpoint_url"),

@@ -12,18 +12,21 @@ import (
 	"time"
 
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
+	"github.com/fluxplane/fluxplane-dex/internal/kuberneteshost"
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 )
 
 type sqlProviderQueryInput struct {
-	EndpointRef string `json:"endpoint_ref,omitempty"`
-	Driver      string `json:"driver,omitempty"`
-	Database    string `json:"database,omitempty"`
-	Query       string `json:"query,omitempty"`
-	Timeout     string `json:"timeout,omitempty"`
-	MaxRows     int    `json:"max_rows,omitempty"`
+	EndpointRef   string `json:"endpoint_ref,omitempty"`
+	URL           string `json:"url,omitempty"`
+	CredentialRef string `json:"credential_ref,omitempty"`
+	Driver        string `json:"driver,omitempty"`
+	Database      string `json:"database,omitempty"`
+	Query         string `json:"query,omitempty"`
+	Timeout       string `json:"timeout,omitempty"`
+	MaxRows       int    `json:"max_rows,omitempty"`
 }
 
 type sqlProviderQueryOutput struct {
@@ -87,20 +90,28 @@ func (r Runner) runHostSQLQuery(ctx context.Context, plugin, instance, grant str
 	if err != nil {
 		return sqlProviderQueryOutput{}, err
 	}
-	db, err := stdsql.Open(target.Driver, target.DSN)
+	dsn := sqlProviderReadOnlyDSN(target.Driver, target.DSN)
+	db, err := stdsql.Open(target.Driver, dsn)
 	if err != nil {
 		return sqlProviderQueryOutput{}, err
 	}
 	defer func() { _ = db.Close() }()
 	queryCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	start := time.Now()
-	rows, err := db.QueryContext(queryCtx, query)
+	tx, err := db.BeginTx(queryCtx, &stdsql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return sqlProviderQueryOutput{}, err
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() { _ = tx.Rollback() }()
+	start := time.Now()
+	rows, err := tx.QueryContext(queryCtx, query)
+	if err != nil {
+		return sqlProviderQueryOutput{}, err
+	}
 	resultRows, columns, truncated, err := sqlProviderScanRows(rows, maxRows)
+	if closeErr := rows.Close(); err == nil && closeErr != nil {
+		err = closeErr
+	}
 	if err != nil {
 		return sqlProviderQueryOutput{}, err
 	}
@@ -129,12 +140,19 @@ func (r Runner) sqlProviderTarget(ctx context.Context, plugin, instance, grant s
 	if !ok {
 		return sqlProviderTarget{}, fmt.Errorf("unknown endpoint_ref %q", endpointRef)
 	}
+	rawURL := firstNonEmpty(strings.TrimSpace(input.URL), endpoint.URL)
+	credentialRef := firstNonEmpty(strings.TrimSpace(input.CredentialRef), endpoint.CredentialRef)
+	if credentialRef != "" {
+		if target, ok, err := r.sqlProviderTargetFromCredentialRef(ctx, credentialRef, input.Driver, input.Database, rawURL); ok || err != nil {
+			return target, err
+		}
+	}
 	username := r.optionalHostSecret(ctx, plugin, instance, "username", grant)
 	password := r.optionalHostSecret(ctx, plugin, instance, "password", grant)
 	if target, ok, err := sqlProviderTargetFromSecret(password, input.Driver, input.Database); ok || err != nil {
 		return target, err
 	}
-	return sqlProviderTargetFromURL(input.Driver, endpoint.URL, input.Database, username, password)
+	return sqlProviderTargetFromURL(input.Driver, rawURL, input.Database, username, password)
 }
 
 func (r Runner) optionalHostSecret(ctx context.Context, plugin, instance, purpose, grant string) string {
@@ -150,6 +168,99 @@ func sqlProviderDuration(value string, fallback time.Duration) (time.Duration, e
 		return fallback, nil
 	}
 	return time.ParseDuration(value)
+}
+
+type sqlProviderCredentials struct {
+	Username string
+	Password string
+	URL      string
+	DSN      string
+	Host     string
+	Port     string
+	Database string
+	Driver   string
+}
+
+func (r Runner) sqlProviderTargetFromCredentialRef(ctx context.Context, ref, driverOverride, databaseOverride, endpointURL string) (sqlProviderTarget, bool, error) {
+	parsed, err := url.Parse(strings.TrimSpace(ref))
+	if err != nil {
+		return sqlProviderTarget{}, true, err
+	}
+	if parsed.Scheme != "kubernetes" {
+		return sqlProviderTarget{}, false, nil
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) != 2 || strings.TrimSpace(parsed.Host) == "" {
+		return sqlProviderTarget{}, true, fmt.Errorf("invalid kubernetes credential_ref %q", ref)
+	}
+	namespace := strings.TrimSpace(parsed.Host)
+	kind := strings.TrimSpace(parts[0])
+	name := strings.TrimSpace(parts[1])
+	contextName := strings.TrimSpace(parsed.Query().Get("context"))
+	input := kuberneteshost.EndpointDiscoverInput{Context: contextName, Namespace: namespace, Name: name}
+	var data map[string]string
+	switch kind {
+	case "secrets", "secret":
+		items, err := kuberneteshost.Secrets(ctx, input)
+		if err != nil {
+			return sqlProviderTarget{}, true, err
+		}
+		if len(items) == 0 {
+			return sqlProviderTarget{}, true, fmt.Errorf("secret %s/%s not found", namespace, name)
+		}
+		data = bytesMapToStringMap(items[0].Data)
+	case "configmaps", "configmap":
+		items, err := kuberneteshost.ConfigMaps(ctx, input)
+		if err != nil {
+			return sqlProviderTarget{}, true, err
+		}
+		if len(items) == 0 {
+			return sqlProviderTarget{}, true, fmt.Errorf("configmap %s/%s not found", namespace, name)
+		}
+		data = items[0].Data
+	default:
+		return sqlProviderTarget{}, true, fmt.Errorf("unsupported kubernetes credential_ref kind %q", kind)
+	}
+	creds := sqlProviderCredentialsFromData(data)
+	return sqlProviderTargetFromCredentials(creds, driverOverride, databaseOverride, endpointURL)
+}
+
+func sqlProviderCredentialsFromData(data map[string]string) sqlProviderCredentials {
+	return sqlProviderCredentials{
+		Username: valueForKeys(data, "username", "user", "db_username", "MYSQL_USERNAME", "POSTGRES_USERNAME"),
+		Password: valueForKeys(data, "password", "pass", "db_password", "MYSQL_PASSWORD", "POSTGRES_PASSWORD"),
+		URL:      valueForKeys(data, "url", "endpoint", "dsn_url", "database_url", "DATABASE_URL"),
+		DSN:      valueForKeys(data, "dsn", "connection_string"),
+		Host:     valueForKeys(data, "host", "hostname", "endpoint"),
+		Port:     valueForKeys(data, "port"),
+		Database: valueForKeys(data, "database", "db", "dbname"),
+		Driver:   valueForKeys(data, "driver", "dialect", "type"),
+	}
+}
+
+func sqlProviderTargetFromCredentials(creds sqlProviderCredentials, driverOverride, databaseOverride, endpointURL string) (sqlProviderTarget, bool, error) {
+	driver := firstNonEmpty(driverOverride, creds.Driver)
+	database := firstNonEmpty(databaseOverride, creds.Database)
+	if creds.URL != "" && strings.Contains(creds.URL, "://") {
+		target, err := sqlProviderTargetFromURL(driver, creds.URL, database, creds.Username, creds.Password)
+		return target, true, err
+	}
+	if creds.DSN != "" {
+		target, err := sqlProviderTargetFromDSN(driver, creds.DSN, database)
+		return target, true, err
+	}
+	if endpointURL != "" {
+		target, err := sqlProviderTargetFromURL(driver, endpointURL, database, creds.Username, creds.Password)
+		return target, true, err
+	}
+	if creds.Host != "" {
+		if driver == "" {
+			driver = "mysql"
+		}
+		target, err := sqlProviderTargetFromNetworkParts(driver, firstNonEmpty(creds.Username, sqlProviderDefaultUser(driver)), creds.Password, creds.Password != "", creds.Host, creds.Port, database, "")
+		return target, true, err
+	}
+	return sqlProviderTarget{}, false, nil
 }
 
 func sqlProviderTargetFromSecret(secretValue, driverOverride, databaseOverride string) (sqlProviderTarget, bool, error) {
@@ -353,6 +464,22 @@ func sqlProviderTargetFromSQLiteURL(parsed *url.URL, rawURL, databaseOverride st
 	return sqlProviderTarget{Driver: "sqlite", Dialect: "sqlite", DSN: dsn, SafeURL: "sqlite://" + dsn, Database: database}
 }
 
+func sqlProviderReadOnlyDSN(driver, dsn string) string {
+	if sqlProviderNormalizeDriver(driver, "") != "sqlite" || strings.TrimSpace(dsn) == ":memory:" {
+		return dsn
+	}
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+	if strings.HasPrefix(dsn, "file:") {
+		if strings.Contains(dsn, "mode=") {
+			return dsn
+		}
+		return dsn + separator + "mode=ro"
+	}
+	return "file:" + dsn + separator + "mode=ro"
+}
 func sqlProviderNormalizeDriver(driver, scheme string) string {
 	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(driver, scheme)))
 	switch value {

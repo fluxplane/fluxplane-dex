@@ -25,6 +25,35 @@ func TestQueryRequiresEndpointRef(t *testing.T) {
 	}
 }
 
+func TestReadOnlyQueryRejectsMultiStatementAndWriteCTE(t *testing.T) {
+	blocked := []string{
+		"select 1; delete from users",
+		"with deleted as (delete from users returning id) select * from deleted",
+		"select * from users into outfile '/tmp/users'",
+	}
+	for _, query := range blocked {
+		if readOnlyQuery(query) {
+			t.Fatalf("readOnlyQuery(%q) = true, want false", query)
+		}
+	}
+}
+
+func TestReadOnlyQueryIgnoresStringLiteralAndCommentTokens(t *testing.T) {
+	allowed := []string{
+		"select 'delete from users' as text",
+		"select \"drop table users\" as text",
+		"select `delete` from audit_log",
+		"select 'semi;colon' as text",
+		"select 1 -- delete from users\n",
+		"select /* drop table users */ 1",
+	}
+	for _, query := range allowed {
+		if !readOnlyQuery(query) {
+			t.Fatalf("readOnlyQuery(%q) = false, want true", query)
+		}
+	}
+}
+
 func TestDatasourceSearchRejectsFreeTextWithSearchSpecificMessage(t *testing.T) {
 	plugin := NewPluginWithService(Service{})
 	err := plugintest.DatasourceSearchError(t, plugin, map[string]any{
@@ -145,3 +174,13 @@ func (h sqlTestHost) CapabilityCall(input pluginbinding.ProviderCallRequest) (pl
 }
 
 var _ pluginbinding.HostClient = sqlTestHost{}
+
+func TestDatasourceDeclaresProviderAccess(t *testing.T) {
+	spec := queryRowsDatasourceSpec()
+	for _, access := range spec.Access {
+		if access == core.OperationAccessProvider {
+			return
+		}
+	}
+	t.Fatalf("sql datasource access = %v, want provider", spec.Access)
+}

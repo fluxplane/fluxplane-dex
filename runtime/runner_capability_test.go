@@ -300,6 +300,57 @@ func TestHostSQLProviderQueriesEndpointRef(t *testing.T) {
 	if out.EndpointRef != "sqlite-dev" || out.Driver != "sqlite" || out.RowCount != 2 || out.Rows[0]["name"] != "Ada" {
 		t.Fatalf("sql output = %#v", out)
 	}
+
+}
+func TestHostSQLProviderUsesReadOnlyTransaction(t *testing.T) {
+	state, err := NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbPath := t.TempDir() + "/app.db"
+	db, err := stdsql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`create table users (id integer primary key, name text); insert into users (id, name) values (1, 'Ada'), (2, 'Linus')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveEndpoint(core.EndpointRef{ID: "sqlite-dev", URL: "sqlite://" + dbPath, Product: "sql"}); err != nil {
+		t.Fatal(err)
+	}
+	grant, err := state.CreateGrantWithCapabilities("sql", "default", []string{"sql.query"}, nil, []CapabilityGrant{{Name: pluginbinding.CapabilityProvider, Provider: "sql", Action: "query"}}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := Runner{State: state}
+	frame, err := protocol.NewRequestFrame("cap-1", protocol.TargetHost, protocol.HostCapabilityProviderCall, pluginbinding.ProviderCallRequest{
+		Provider: "sql",
+		Action:   "query",
+		Payload:  json.RawMessage(`{"endpoint_ref":"sqlite-dev","query":"delete from users"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := runner.handleHostRequest(context.Background(), "sql", "default", grant.Token, frame)
+	if resp.OK {
+		t.Fatalf("response = %#v, want read-only write failure", resp)
+	}
+
+	db, err = stdsql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var count int
+	if err := db.QueryRow(`select count(*) from users`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("row count = %d, want 2", count)
+	}
 }
 
 func TestOperationCapabilityGrantsLimitBlobWriteToWriteOperations(t *testing.T) {

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Fixed SQL live endpoint queries to use endpoint `credential_ref` material and grant provider access to the SQL query-row datasource.
+- Hardened SQL read-only execution with host-level read-only transactions, SQLite read-only handles, multi-statement rejection, write CTE rejection, and MySQL `SELECT ... INTO OUTFILE`/`DUMPFILE` rejection.
+
 ## [0.14.0] - 2026-05-29
 
 ### Added

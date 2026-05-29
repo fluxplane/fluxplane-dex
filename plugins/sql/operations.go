@@ -23,8 +23,8 @@ type QueryInput struct {
 	Driver      string `json:"driver,omitempty" jsonschema:"description=SQL driver or dialect.,enum=mysql,enum=postgres,enum=sqlite"`
 	Database    string `json:"database,omitempty" jsonschema:"description=Database override."`
 	Query       string `json:"query,omitempty" jsonschema:"required,description=Read-only SQL query."`
-	Timeout     string `json:"timeout,omitempty" jsonschema:"description=Query timeout duration."`
-	MaxRows     int    `json:"max_rows,omitempty" jsonschema:"description=Maximum rows to return."`
+	Timeout     string `json:"timeout,omitempty" jsonschema:"description=Query timeout as a Go duration such as 5s or 1m. Defaults to 10s."`
+	MaxRows     int    `json:"max_rows,omitempty" jsonschema:"description=Maximum rows to return. Defaults to 100 and is capped at 1000.,minimum=0,maximum=1000"`
 }
 
 type QueryOutput struct {
@@ -137,17 +137,92 @@ func (s Service) QueryRows(ctx pluginbinding.Context, input QueryInput) (QueryRo
 
 func readOnlyQuery(query string) bool {
 	trimmed := strings.TrimSpace(strings.TrimLeft(query, "("))
-	fields := strings.Fields(trimmed)
-	if len(fields) == 0 {
+	if trimmed == "" {
 		return false
 	}
-	first := strings.ToLower(fields[0])
-	switch first {
+	tokens, hasStatementSeparator := sqlTokens(trimmed)
+	if hasStatementSeparator || len(tokens) == 0 {
+		return false
+	}
+	switch tokens[0] {
 	case "select", "show", "describe", "desc", "explain", "with":
-		return true
 	default:
 		return false
 	}
+	for i, token := range tokens {
+		switch token {
+		case "insert", "update", "delete", "drop", "create", "alter", "truncate", "replace", "grant", "revoke", "call", "do", "load", "copy", "execute", "merge":
+			return false
+		case "outfile", "dumpfile":
+			if i > 0 && tokens[i-1] == "into" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func sqlTokens(query string) ([]string, bool) {
+	tokens := []string{}
+	var current strings.Builder
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		tokens = append(tokens, current.String())
+		current.Reset()
+	}
+	for i := 0; i < len(query); i++ {
+		ch := query[i]
+		switch {
+		case ch == ';':
+			flush()
+			return tokens, true
+		case ch == '-' && i+1 < len(query) && query[i+1] == '-':
+			flush()
+			i += 2
+			for i < len(query) && query[i] != '\n' && query[i] != '\r' {
+				i++
+			}
+			i--
+		case ch == '#':
+			flush()
+			for i < len(query) && query[i] != '\n' && query[i] != '\r' {
+				i++
+			}
+			i--
+		case ch == '/' && i+1 < len(query) && query[i+1] == '*':
+			flush()
+			i += 2
+			for i+1 < len(query) && !(query[i] == '*' && query[i+1] == '/') {
+				i++
+			}
+			i++
+		case ch == '\'' || ch == '"' || ch == '`':
+			flush()
+			quote := ch
+			for i++; i < len(query); i++ {
+				if query[i] == '\\' && quote != '`' && i+1 < len(query) {
+					i++
+					continue
+				}
+				if query[i] != quote {
+					continue
+				}
+				if quote == '\'' && i+1 < len(query) && query[i+1] == '\'' {
+					i++
+					continue
+				}
+				break
+			}
+		case ch == '_' || ch >= '0' && ch <= '9' || ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z':
+			current.WriteByte(byte(strings.ToLower(string(ch))[0]))
+		default:
+			flush()
+		}
+	}
+	flush()
+	return tokens, false
 }
 
 func parseDurationDefault(value string, fallback time.Duration) (time.Duration, error) {

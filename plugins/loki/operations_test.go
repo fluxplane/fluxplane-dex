@@ -12,6 +12,7 @@ import (
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding/plugintest"
+	"github.com/fluxplane/fluxplane-dex/protocol"
 )
 
 func TestQueryUsesLokiAPI(t *testing.T) {
@@ -40,8 +41,46 @@ func TestQueryUsesLokiAPI(t *testing.T) {
 	}
 }
 
+func TestQueryCapsLimitValidatesDirectionAndSortsForward(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("limit"); got != "1000" {
+			t.Fatalf("limit = %q, want 1000", got)
+		}
+		if got := r.URL.Query().Get("direction"); got != "forward" {
+			t.Fatalf("direction = %q, want forward", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "success",
+			"data": map[string]any{
+				"resultType": "streams",
+				"result": []map[string]any{{
+					"stream": map[string]string{"app": "api"},
+					"values": [][]string{{"1710000002000000000", "new"}, {"1710000001000000000", "old"}},
+				}},
+			},
+		})
+	}))
+	defer server.Close()
+	plugin := NewPluginWithService(NewService())
+	host := newLokiTestHost(server.URL, "")
+
+	out := plugintest.RunOK[QueryResult](t, plugin, OperationQuery, map[string]any{"endpoint_ref": "loki-dev", "query": `{app="api"}`, "limit": 5000, "direction": "forward"}, plugintest.WithHost(host))
+	if out.Limit != 1000 || len(out.Entries) != 2 || out.Entries[0].Line != "old" || out.Entries[1].Line != "new" {
+		t.Fatalf("query output = %#v", out)
+	}
+
+	err := plugintest.RunError(t, plugin, OperationQuery, map[string]any{"endpoint_ref": "loki-dev", "query": `{app="api"}`, "direction": "sideways"}, plugintest.WithHost(host))
+	if err.Code != "bad_input" {
+		t.Fatalf("err = %#v", err)
+	}
+}
+
 func TestManifestQuality(t *testing.T) {
-	plugintest.AssertManifestQuality(t, Manifest())
+	manifest := Manifest()
+	if manifest.Metadata[pluginbinding.ManifestProtocolKey] != protocol.Version {
+		t.Fatalf("protocol metadata = %#v", manifest.Metadata)
+	}
+	plugintest.AssertManifestQuality(t, manifest)
 }
 
 func TestDatasourceHandlersUseLokiAPI(t *testing.T) {
@@ -83,6 +122,47 @@ func TestRecentLogsBuildsSelector(t *testing.T) {
 	if query != `{app="api",namespace="prod"} |= "error"` {
 		t.Fatalf("query = %q", query)
 	}
+	escaped := recentLogsQuery(RecentLogsInput{App: `api"blue`, Contains: `err\or "x"`})
+	if escaped != `{app="api\"blue"} |= "err\\or \"x\""` {
+		t.Fatalf("escaped query = %q", escaped)
+	}
+}
+
+func TestLabelsRejectInvalidLabelAndFailedStatus(t *testing.T) {
+	plugin := NewPluginWithService(NewService())
+	err := plugintest.RunError(t, plugin, OperationLabels, map[string]any{"endpoint_ref": "loki-dev", "label": `bad/name`}, plugintest.WithHost(newLokiTestHost("http://127.0.0.1:1", "")))
+	if err.Code != "bad_input" {
+		t.Fatalf("err = %#v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "error", "data": []string{}})
+	}))
+	defer server.Close()
+	err = plugintest.RunError(t, plugin, OperationLabels, map[string]any{"endpoint_ref": "loki-dev"}, plugintest.WithHost(newLokiTestHost(server.URL, "")))
+	if err.Code != "loki" {
+		t.Fatalf("err = %#v", err)
+	}
+}
+
+func TestDatasourceDeclaresNetworkAccessAndTenantSecret(t *testing.T) {
+	for _, spec := range []core.DatasourceSpec{logEntriesDatasourceSpec(), labelsDatasourceSpec()} {
+		if !hasLokiDatasourceAccess(spec, core.OperationAccessNetwork) {
+			t.Fatalf("%s access = %v, want network", spec.Name, spec.Access)
+		}
+		if len(spec.SecretPurposes) != 1 || spec.SecretPurposes[0] != AuthPurposeTenantID {
+			t.Fatalf("%s secret purposes = %v, want tenant_id", spec.Name, spec.SecretPurposes)
+		}
+	}
+}
+
+func hasLokiDatasourceAccess(spec core.DatasourceSpec, want core.OperationAccess) bool {
+	for _, access := range spec.Access {
+		if access == want {
+			return true
+		}
+	}
+	return false
 }
 
 type lokiTestHost struct {

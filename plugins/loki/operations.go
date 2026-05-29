@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,6 +15,13 @@ import (
 
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 )
+
+const (
+	defaultLokiLimit = 100
+	maxLokiLimit     = 1000
+)
+
+var lokiLabelNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 type Service struct {
 }
@@ -23,7 +31,7 @@ func NewService() Service {
 }
 
 type LokiTargetInput struct {
-	EndpointRef string `json:"endpoint_ref,omitempty" jsonschema:"description=Registered Loki endpoint ref resolved by the host."`
+	EndpointRef string `json:"endpoint_ref,omitempty" jsonschema:"required,description=Registered Loki endpoint ref resolved by the host."`
 }
 
 type TestInput struct {
@@ -39,11 +47,11 @@ type TestResult struct {
 
 type QueryInput struct {
 	LokiTargetInput
-	Query     string `json:"query,omitempty" jsonschema:"required,description=LogQL query"`
-	Since     string `json:"since,omitempty"`
-	Until     string `json:"until,omitempty"`
-	Limit     int    `json:"limit,omitempty"`
-	Direction string `json:"direction,omitempty"`
+	Query     string `json:"query,omitempty" jsonschema:"required,description=LogQL stream query for Loki query_range."`
+	Since     string `json:"since,omitempty" jsonschema:"description=Start time as RFC3339 unix seconds or duration ago. Defaults to 1h."`
+	Until     string `json:"until,omitempty" jsonschema:"description=End time as RFC3339 unix seconds or duration ago. Defaults to now."`
+	Limit     int    `json:"limit,omitempty" jsonschema:"description=Maximum log entries to return. Defaults to 100 and is capped at 1000.,minimum=0,maximum=1000"`
+	Direction string `json:"direction,omitempty" jsonschema:"description=Loki query direction. Defaults to backward.,enum=backward,enum=forward"`
 }
 
 type LogEntry struct {
@@ -63,8 +71,8 @@ type QueryResult struct {
 
 type LabelsInput struct {
 	LokiTargetInput
-	Label string `json:"label,omitempty"`
-	Query string `json:"query,omitempty"`
+	Label string `json:"label,omitempty" jsonschema:"description=Optional Loki label name. When omitted label names are returned."`
+	Query string `json:"query,omitempty" jsonschema:"description=Optional LogQL stream selector used to filter label names or values."`
 }
 
 type LabelsResult struct {
@@ -75,27 +83,27 @@ type LabelsResult struct {
 
 type RecentLogsInput struct {
 	LokiTargetInput
-	App       string `json:"app,omitempty"`
-	Namespace string `json:"namespace,omitempty"`
-	Pod       string `json:"pod,omitempty"`
-	Container string `json:"container,omitempty"`
-	Contains  string `json:"contains,omitempty"`
-	Since     string `json:"since,omitempty"`
-	Limit     int    `json:"limit,omitempty"`
+	App       string `json:"app,omitempty" jsonschema:"description=Exact app label filter."`
+	Namespace string `json:"namespace,omitempty" jsonschema:"description=Exact namespace label filter."`
+	Pod       string `json:"pod,omitempty" jsonschema:"description=Exact pod label filter."`
+	Container string `json:"container,omitempty" jsonschema:"description=Exact container label filter."`
+	Contains  string `json:"contains,omitempty" jsonschema:"description=Line substring filter."`
+	Since     string `json:"since,omitempty" jsonschema:"description=Start time as RFC3339 unix seconds or duration ago. Defaults to 1h."`
+	Limit     int    `json:"limit,omitempty" jsonschema:"description=Maximum log entries to return. Defaults to 100 and is capped at 1000.,minimum=0,maximum=1000"`
 }
 
 type LogEntriesInput struct {
 	LokiTargetInput
-	Query     string `json:"query,omitempty" jsonschema:"description=LogQL query. Plain text is used as a contains filter for recent logs."`
-	App       string `json:"app,omitempty"`
-	Namespace string `json:"namespace,omitempty"`
-	Pod       string `json:"pod,omitempty"`
-	Container string `json:"container,omitempty"`
-	Contains  string `json:"contains,omitempty"`
-	Since     string `json:"since,omitempty"`
-	Until     string `json:"until,omitempty"`
-	Limit     int    `json:"limit,omitempty"`
-	Direction string `json:"direction,omitempty"`
+	Query     string `json:"query,omitempty" jsonschema:"description=LogQL stream query. Plain text is used as a contains filter for recent logs."`
+	App       string `json:"app,omitempty" jsonschema:"description=Exact app label filter used when query is plain text or empty."`
+	Namespace string `json:"namespace,omitempty" jsonschema:"description=Exact namespace label filter used when query is plain text or empty."`
+	Pod       string `json:"pod,omitempty" jsonschema:"description=Exact pod label filter used when query is plain text or empty."`
+	Container string `json:"container,omitempty" jsonschema:"description=Exact container label filter used when query is plain text or empty."`
+	Contains  string `json:"contains,omitempty" jsonschema:"description=Line substring filter used when query is plain text or empty."`
+	Since     string `json:"since,omitempty" jsonschema:"description=Start time as RFC3339 unix seconds or duration ago. Defaults to 1h."`
+	Until     string `json:"until,omitempty" jsonschema:"description=End time as RFC3339 unix seconds or duration ago. Defaults to now for LogQL queries."`
+	Limit     int    `json:"limit,omitempty" jsonschema:"description=Maximum log entries to return. Defaults to 100 and is capped at 1000.,minimum=0,maximum=1000"`
+	Direction string `json:"direction,omitempty" jsonschema:"description=Loki query direction for LogQL queries. Defaults to backward.,enum=backward,enum=forward"`
 }
 
 type LogEntryRecord struct {
@@ -161,8 +169,11 @@ func (s Service) Labels(ctx pluginbinding.Context, input LabelsInput) (LabelsRes
 	if err != nil {
 		return LabelsResult{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
-	path := "/loki/api/v1/labels"
 	label := strings.TrimSpace(input.Label)
+	if label != "" && !lokiLabelNamePattern.MatchString(label) {
+		return LabelsResult{}, pluginbinding.Fail("bad_input", "label must be a valid Loki label name")
+	}
+	path := "/loki/api/v1/labels"
 	if label != "" {
 		path = "/loki/api/v1/label/" + url.PathEscape(label) + "/values"
 	}
@@ -177,19 +188,23 @@ func (s Service) Labels(ctx pluginbinding.Context, input LabelsInput) (LabelsRes
 	if err := client.get(context.Background(), path, values, &response); err != nil {
 		return LabelsResult{}, pluginbinding.Errorf("loki", "%s", err)
 	}
+	if response.Status != "success" {
+		return LabelsResult{}, pluginbinding.Errorf("loki", "label query failed with status %s", response.Status)
+	}
 	sort.Strings(response.Data)
 	return LabelsResult{URL: target, Label: label, Values: response.Data}, nil
 }
 
 func (s Service) LogEntriesDatasource(ctx pluginbinding.Context, input LogEntriesInput) (LogEntriesDatasourceResult, error) {
 	query := strings.TrimSpace(input.Query)
+	limit := clampLokiLimit(input.Limit)
 	var out QueryResult
 	var err error
 	if strings.HasPrefix(query, "{") || strings.HasPrefix(query, "(") {
 		out, err = s.Query(ctx, QueryInput{LokiTargetInput: input.LokiTargetInput, Query: query, Since: input.Since, Until: input.Until, Limit: input.Limit, Direction: input.Direction})
 	} else {
 		contains := firstNonEmpty(input.Contains, query)
-		out, err = s.RecentLogs(ctx, RecentLogsInput{LokiTargetInput: input.LokiTargetInput, App: input.App, Namespace: input.Namespace, Pod: input.Pod, Container: input.Container, Contains: contains, Since: input.Since, Limit: input.Limit})
+		out, err = s.RecentLogs(ctx, RecentLogsInput{LokiTargetInput: input.LokiTargetInput, App: input.App, Namespace: input.Namespace, Pod: input.Pod, Container: input.Container, Contains: contains, Since: input.Since, Limit: limit})
 	}
 	if err != nil {
 		return LogEntriesDatasourceResult{}, err
@@ -243,9 +258,7 @@ func (s Service) LabelsDatasource(ctx pluginbinding.Context, input LabelsInput) 
 }
 
 func (s Service) query(ctx context.Context, target string, client Client, query, since, until string, limit int, direction string) (QueryResult, error) {
-	if limit <= 0 {
-		limit = 100
-	}
+	limit = clampLokiLimit(limit)
 	now := time.Now()
 	end, err := parseTimeValue(firstNonEmpty(until, "0s"), now)
 	if err != nil {
@@ -255,8 +268,9 @@ func (s Service) query(ctx context.Context, target string, client Client, query,
 	if err != nil {
 		return QueryResult{}, pluginbinding.Errorf("bad_input", "%s", err)
 	}
-	if strings.TrimSpace(direction) == "" {
-		direction = "backward"
+	direction = normalizeLokiDirection(direction)
+	if direction == "" {
+		return QueryResult{}, pluginbinding.Fail("bad_input", "direction must be backward or forward")
 	}
 	values := url.Values{}
 	values.Set("query", query)
@@ -282,7 +296,12 @@ func (s Service) query(ctx context.Context, target string, client Client, query,
 			entries = append(entries, LogEntry{ID: id, Timestamp: ts.Format(time.RFC3339Nano), Labels: stream.Stream, Line: value[1]})
 		}
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Timestamp > entries[j].Timestamp })
+	sort.SliceStable(entries, func(i, j int) bool {
+		if direction == "forward" {
+			return entries[i].Timestamp < entries[j].Timestamp
+		}
+		return entries[i].Timestamp > entries[j].Timestamp
+	})
 	return QueryResult{URL: target, NormalizedQuery: query, Entries: entries, Count: len(entries), Limit: limit}, nil
 }
 
@@ -311,7 +330,7 @@ func recentLogsQuery(input RecentLogsInput) string {
 	}
 	var parts []string
 	for key, value := range labels {
-		parts = append(parts, key+`="`+strings.ReplaceAll(value, `"`, `\"`)+`"`)
+		parts = append(parts, key+"="+quoteLogQLString(value))
 	}
 	sort.Strings(parts)
 	query := "{" + strings.Join(parts, ",") + "}"
@@ -319,9 +338,34 @@ func recentLogsQuery(input RecentLogsInput) string {
 		query = `{job=~".+"}`
 	}
 	if strings.TrimSpace(input.Contains) != "" {
-		query += ` |= "` + strings.ReplaceAll(input.Contains, `"`, `\"`) + `"`
+		query += ` |= ` + quoteLogQLString(input.Contains)
 	}
 	return query
+}
+
+func clampLokiLimit(limit int) int {
+	if limit <= 0 {
+		return defaultLokiLimit
+	}
+	if limit > maxLokiLimit {
+		return maxLokiLimit
+	}
+	return limit
+}
+
+func normalizeLokiDirection(direction string) string {
+	switch strings.ToLower(strings.TrimSpace(direction)) {
+	case "", "backward":
+		return "backward"
+	case "forward":
+		return "forward"
+	default:
+		return ""
+	}
+}
+
+func quoteLogQLString(value string) string {
+	return strconv.Quote(value)
 }
 
 func parseTimeValue(value string, now time.Time) (time.Time, error) {

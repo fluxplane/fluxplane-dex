@@ -56,12 +56,9 @@ func (c Client) get(ctx context.Context, path string, values url.Values, out any
 }
 
 func (c Client) ready(ctx context.Context) error {
-	var out map[string]any
-	if err := c.get(ctx, "/ready", nil, &out); err == nil {
-		return nil
-	}
+	_ = ctx
 	resp, err := c.Host.HTTP(pluginbinding.HTTPRequest{
-		EndpointRef: c.EndpointRef,
+		EndpointRef: strings.TrimSpace(c.EndpointRef),
 		Path:        "/ready",
 		Method:      "GET",
 		Auth: &pluginbinding.HTTPAuthRequest{

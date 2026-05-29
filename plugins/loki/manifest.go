@@ -3,6 +3,7 @@ package loki
 import (
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
+	"github.com/fluxplane/fluxplane-dex/protocol"
 )
 
 const (
@@ -37,6 +38,7 @@ func manifestSpec() pluginbinding.ManifestSpec {
 		Version:     PluginVersion,
 		Description: PluginDescription,
 		Aliases:     []string{PluginName},
+		Metadata:    map[string]string{pluginbinding.ManifestProtocolKey: protocol.Version},
 		Operations: []core.OperationSpec{
 			testSpec(),
 			querySpec(),
@@ -65,6 +67,8 @@ func logEntriesDatasourceSpec() core.DatasourceSpec {
 		EntityLogEntry,
 		"Loki log entries.",
 		[]string{pluginbinding.CapabilitySearch},
+		pluginbinding.DatasourceAccess(core.OperationAccessNetwork),
+		pluginbinding.DatasourceSecretPurposes(AuthPurposeTenantID),
 		pluginbinding.EntitySchemaFor[LogEntryRecord](),
 		pluginbinding.EntitySchema(core.DatasourceEntitySchema{IDField: "id", TitleField: "title"}),
 		pluginbinding.Completion("Loki log entry fields.", "app", "namespace", "pod", "container", "endpoint_url"),
@@ -77,6 +81,8 @@ func labelsDatasourceSpec() core.DatasourceSpec {
 		EntityLabel,
 		"Loki label names or values.",
 		[]string{pluginbinding.CapabilitySearch},
+		pluginbinding.DatasourceAccess(core.OperationAccessNetwork),
+		pluginbinding.DatasourceSecretPurposes(AuthPurposeTenantID),
 		pluginbinding.EntitySchemaFor[LabelRecord](),
 		pluginbinding.EntitySchema(core.DatasourceEntitySchema{IDField: "id", TitleField: "title"}),
 		pluginbinding.Completion("Loki label fields.", "name", "label", "endpoint_url"),

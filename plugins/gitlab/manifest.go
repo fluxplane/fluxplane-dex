@@ -8,7 +8,7 @@ import (
 
 const (
 	PluginName        = "gitlab"
-	PluginVersion     = "0.11.0"
+	PluginVersion     = "0.13.1"
 	PluginDescription = "GitLab operations, datasources, indexes, and reverse lookups."
 
 	AuthMethodPersonalAccessToken = "personal_access_token"

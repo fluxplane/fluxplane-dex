@@ -1045,6 +1045,44 @@ func TestServiceThreadMessagesDatasourceAcceptsNameRef(t *testing.T) {
 	}
 }
 
+func TestServiceThreadMessagesDatasourceAcceptsQueryPermalink(t *testing.T) {
+	factory := &capturingFactory{
+		clients: map[string]*fakeClient{
+			"user_token": {
+				thread: []ThreadMessage{{TS: "1780048408.196529", User: "U1", Text: "root"}},
+			},
+		},
+	}
+	plugin := testPlugin(factory)
+
+	out := plugintest.DatasourceSearchOK[ThreadMessagesDatasourceResult](t, plugin, map[string]any{"datasource": DatasourceThreadMessages, "query": "https://example.slack.com/archives/C04NKKBETCM/p1780048408196529"})
+	if out.Query != "1780048408.196529" || out.Count != 1 || out.Records[0].Channel != "C04NKKBETCM" {
+		t.Fatalf("thread datasource result = %#v", out)
+	}
+}
+
+func TestServiceThreadMessagesDatasourceAcceptsGenericFilters(t *testing.T) {
+	factory := &capturingFactory{
+		clients: map[string]*fakeClient{
+			"user_token": {
+				thread: []ThreadMessage{{TS: "1780048408.196529", User: "U1", Text: "root"}},
+			},
+		},
+	}
+	plugin := testPlugin(factory)
+
+	out := plugintest.DatasourceSearchOK[ThreadMessagesDatasourceResult](t, plugin, map[string]any{
+		"datasource": DatasourceThreadMessages,
+		"filters": map[string]any{
+			"channel":   "C04NKKBETCM",
+			"thread_ts": "1780048408.196529",
+		},
+	})
+	if out.Query != "1780048408.196529" || out.Count != 1 || out.Records[0].Channel != "C04NKKBETCM" {
+		t.Fatalf("thread datasource result = %#v", out)
+	}
+}
+
 func TestServiceChannelMembersDatasourceRequiresChannelAndFilters(t *testing.T) {
 	factory := &capturingFactory{
 		clients: map[string]*fakeClient{

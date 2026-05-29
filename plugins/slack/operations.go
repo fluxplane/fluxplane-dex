@@ -579,12 +579,14 @@ type ThreadInput struct {
 }
 
 type ThreadMessagesInput struct {
-	Datasource string `json:"datasource,omitempty" jsonschema:"description=Exact datasource name."`
-	Ref        string `json:"ref,omitempty" jsonschema:"description=Slack message reference as URL or channel:timestamp"`
-	Channel    string `json:"channel,omitempty" jsonschema:"description=Slack channel ID or name"`
-	TS         string `json:"ts,omitempty" jsonschema:"description=Slack root message timestamp"`
-	Limit      int    `json:"limit,omitempty" jsonschema:"description=Maximum thread messages to return"`
-	Entity     string `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
+	Datasource string         `json:"datasource,omitempty" jsonschema:"description=Exact datasource name."`
+	Query      string         `json:"query,omitempty" jsonschema:"description=Slack message reference as URL or channel:timestamp. Used as ref when ref is empty."`
+	Ref        string         `json:"ref,omitempty" jsonschema:"description=Slack message reference as URL or channel:timestamp"`
+	Channel    string         `json:"channel,omitempty" jsonschema:"description=Slack channel ID or name"`
+	TS         string         `json:"ts,omitempty" jsonschema:"description=Slack root message timestamp"`
+	Limit      int            `json:"limit,omitempty" jsonschema:"description=Maximum thread messages to return"`
+	Entity     string         `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
+	Filters    map[string]any `json:"filters,omitempty" jsonschema:"description=Optional generic datasource filters. Supports ref, channel, channel_id, ts, message_ts, thread_ts, and root_ts."`
 }
 
 type ThreadResult struct {
@@ -1326,12 +1328,13 @@ func (s Service) Thread(ctx pluginbinding.Context, input ThreadInput) (ThreadRes
 }
 
 func (s Service) ThreadMessagesDatasource(ctx pluginbinding.Context, input ThreadMessagesInput) (ThreadMessagesDatasourceResult, error) {
-	ref, err := s.resolveMessageRef(ctx, input.Ref, input.Channel, input.TS)
+	ref, channel, ts := threadMessagesRefInput(input)
+	msgRef, err := s.resolveMessageRef(ctx, ref, channel, ts)
 	if err != nil {
 		return ThreadMessagesDatasourceResult{}, err
 	}
 	messages, _, err := pluginbinding.ReadWithPreferredAuthPurposes[Client, []ThreadMessage]([]string{AuthPurposeUser, AuthPurposeBot}, s.openClientForContext(ctx), func(client Client, _ string) ([]ThreadMessage, error) {
-		return client.GetThread(context.Background(), ref.Channel, ref.TS, input.Limit, 0)
+		return client.GetThread(context.Background(), msgRef.Channel, msgRef.TS, input.Limit, 0)
 	}, fallbackableSlackError)
 	if err != nil {
 		return ThreadMessagesDatasourceResult{}, pluginbinding.Errorf("slack", "%s", err)
@@ -1339,12 +1342,69 @@ func (s Service) ThreadMessagesDatasource(ctx pluginbinding.Context, input Threa
 	messages = limitThreadMessages(messages, input.Limit)
 	records := make([]ThreadMessageRecord, 0, len(messages))
 	for _, message := range messages {
-		record, ok := normalizeThreadMessageRecord(ctx.DatasourceSource(), ref.Channel, ref.TS, message)
+		record, ok := normalizeThreadMessageRecord(ctx.DatasourceSource(), msgRef.Channel, msgRef.TS, message)
 		if ok {
 			records = append(records, record)
 		}
 	}
-	return pluginbinding.NewDatasourceSearchResult(DatasourceThreadMessages, ref.TS, records), nil
+	return pluginbinding.NewDatasourceSearchResult(DatasourceThreadMessages, msgRef.TS, records), nil
+}
+
+func threadMessagesRefInput(input ThreadMessagesInput) (ref, channel, ts string) {
+	ref = strings.TrimSpace(input.Ref)
+	channel = strings.TrimSpace(input.Channel)
+	ts = strings.TrimSpace(input.TS)
+	if ref == "" {
+		ref = filterString(input.Filters, "ref")
+	}
+	if channel == "" {
+		channel = firstFilterString(input.Filters, "channel", "channel_id", "channel_ref")
+	}
+	if ts == "" {
+		ts = firstFilterString(input.Filters, "ts", "message_ts", "thread_ts", "root_ts")
+	}
+	query := strings.TrimSpace(input.Query)
+	if ref == "" && channel == "" && ts == "" {
+		ref = query
+	} else if ref == "" && query != "" {
+		if parsed, ok := parseSlackMessageRef(query); ok {
+			ref = parsed.Channel + ":" + parsed.TS
+		}
+	}
+	return ref, channel, ts
+}
+
+func firstFilterString(filters map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := filterString(filters, key); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func filterString(filters map[string]any, key string) string {
+	if len(filters) == 0 {
+		return ""
+	}
+	value, ok := filters[key]
+	if !ok || value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	default:
+		return strings.Trim(strings.TrimSpace(jsonNumberString(typed)), "\"")
+	}
+}
+
+func jsonNumberString(value any) string {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 func (s Service) ChannelMembersDatasource(ctx pluginbinding.Context, input ChannelMembersInput) (ChannelMembersDatasourceResult, error) {

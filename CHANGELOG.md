@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-05-29
+
+### Fixed
+- Fixed the Slack `slack.thread_message` datasource so thread reads accept generic datasource `query` and `filters` inputs, including Slack permalinks and `thread_ts` aliases.
+
+
 ## [0.13.0] - 2026-05-29
 
 ### Added

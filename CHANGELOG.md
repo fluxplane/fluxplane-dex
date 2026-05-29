@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-05-29
+
+### Added
+- New `plugins/asterisk` marketplace plugin (manifest, handler, operations,
+  and `cmd/dex-plugin-asterisk` entrypoint) plus the matching
+  `runtime/asterisk_provider.go`, marketplace registration, and runner
+  wiring so the plugin is reachable through the dex engine.
+
+### Changed
+- Small kubernetes host provider tweaks and a `plugintest` helper update
+  landed alongside the asterisk work.
+
 ## [0.12.0] - 2026-05-29
 
 ### Changed

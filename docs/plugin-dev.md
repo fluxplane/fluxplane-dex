@@ -87,6 +87,22 @@ For new integrations, the preferred flow is:
 
 - Keep schemas small and explicit. Avoid generic `map[string]any` params unless
   the upstream API genuinely requires arbitrary structured input.
+- Every exported input field in operation and datasource input structs must have
+  a useful JSON Schema description. Models and UIs depend on these descriptions
+  to decide which fields to use.
+- Escape commas inside `jsonschema` tag values as `\\,` in Go source, for
+  example `jsonschema:"description=User ID\\, mention\\, or name"`. The
+  jsonschema library splits tag options on unescaped commas, and a single
+  backslash makes the Go struct tag invalid for `reflect.StructTag.Get`.
+- Prefer typed fields for normal operation inputs. Datasource compatibility
+  inputs may include generic fields such as `query`, `entity`, `datasource`,
+  and `filters`; when they do, document the supported filter keys in the
+  `filters` field description and map them into the same validation path as
+  the typed fields.
+- Datasource `Search`, `List`, and `Get` handlers should accept the generic
+  request shapes used by hosts and agents, not only the plugin's first custom
+  shape. Common examples are top-level `query`, `filters.query`, and entity
+  selectors such as `filters.channel` or `filters.thread_ts`.
 - Separate read operations from write operations. This lets manifests and grants
   express least privilege.
 - Mark destructive operations with clear effects and risk metadata.
@@ -118,6 +134,11 @@ Every plugin should have focused tests for:
 
 - Manifest validity, operation schemas, capability declarations, effects, and
   risk metadata.
+- Generated input schema quality: every manifest operation and datasource input
+  property should have a non-empty `description`, and descriptions containing
+  commas should be asserted so escaping regressions are caught.
+- Datasource generic request compatibility for the shapes agents use, including
+  top-level `query`, `filters` aliases, and entity-specific identifiers.
 - Operation behavior using fake host capabilities or test transports.
 - Auth and endpoint flows that verify secrets stay out of params, results, and
   logs.
@@ -140,6 +161,11 @@ dex plugin list -o json
 dex op show <plugin>.<operation> -o json
 dex <plugin> <operation path> -h
 ```
+
+After changing plugin code, reinstall the managed development plugin before
+live-testing through dex, coder, or datasource tools. A stale binary in
+`~/.dex/plugins/bin` can make a fixed datasource or operation appear broken.
+Confirm `dex plugin list -o json` shows the expected plugin path and version.
 
 Do not use committed `replace` directives for release preparation. The root
 module should build without plugin-module requirements, and plugin modules

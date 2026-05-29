@@ -103,12 +103,12 @@ type EmojiListInput struct {
 }
 
 type PresenceGetInput struct {
-	User string `json:"user,omitempty" jsonschema:"description=Slack user ID, mention, or name. Empty asks Slack for the authenticated user's presence when supported."`
+	User string `json:"user,omitempty" jsonschema:"description=Slack user ID\\, mention\\, or name. Empty asks Slack for the authenticated user's presence when supported."`
 }
 
 type PresenceSetInput struct {
 	SlackRoleInput
-	Presence string `json:"presence,omitempty" jsonschema:"required,description=Presence to set, either auto or away,enum=auto,enum=away"`
+	Presence string `json:"presence,omitempty" jsonschema:"required,description=Presence to set\\, either auto or away,enum=auto,enum=away"`
 }
 
 type MessageSendInput struct {
@@ -177,7 +177,7 @@ type FileUploadInput struct {
 
 type FileListInput struct {
 	Channel string `json:"channel,omitempty" jsonschema:"description=Slack channel ID or name"`
-	User    string `json:"user,omitempty" jsonschema:"description=Slack user ID, mention, or name"`
+	User    string `json:"user,omitempty" jsonschema:"description=Slack user ID\\, mention\\, or name"`
 	Types   string `json:"types,omitempty" jsonschema:"description=Slack file types filter. Defaults to all."`
 	Query   string `json:"query,omitempty" jsonschema:"description=Optional case-insensitive substring filter"`
 	Limit   int    `json:"limit,omitempty" jsonschema:"description=Maximum files to return"`
@@ -469,14 +469,15 @@ type SearchInput struct {
 	Query      string   `json:"query,omitempty" jsonschema:"required,description=Slack search query"`
 	Limit      int      `json:"limit,omitempty" jsonschema:"description=Maximum messages to return"`
 	Tickets    bool     `json:"tickets,omitempty" jsonschema:"description=Extract ticket references from matching messages"`
-	TicketKeys []string `json:"ticket_keys,omitempty" jsonschema:"description=Optional ticket project keys to extract, for example DEV or TEL. Empty extracts uppercase issue keys."`
+	TicketKeys []string `json:"ticket_keys,omitempty" jsonschema:"description=Optional ticket project keys to extract\\, for example DEV or TEL. Empty extracts uppercase issue keys."`
 }
 
 type MessageSearchInput struct {
-	Datasource string `json:"datasource,omitempty" jsonschema:"description=Exact datasource name."`
-	Query      string `json:"query,omitempty" jsonschema:"required,description=Slack search query"`
-	Limit      int    `json:"limit,omitempty" jsonschema:"description=Maximum messages to return"`
-	Entity     string `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
+	Datasource string         `json:"datasource,omitempty" jsonschema:"description=Exact datasource name."`
+	Query      string         `json:"query,omitempty" jsonschema:"required,description=Slack search query"`
+	Limit      int            `json:"limit,omitempty" jsonschema:"description=Maximum messages to return"`
+	Entity     string         `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
+	Filters    map[string]any `json:"filters,omitempty" jsonschema:"description=Optional generic datasource filters. Supports query\\, text\\, q\\, channel\\, channel_id\\, and in_channel."`
 }
 
 type SearchResult struct {
@@ -502,19 +503,19 @@ type TicketMention struct {
 }
 
 type MentionsInput struct {
-	User       string   `json:"user,omitempty" jsonschema:"description=Slack user ID, mention, or name to search mentions for. Empty defaults to authenticated user or bot."`
+	User       string   `json:"user,omitempty" jsonschema:"description=Slack user ID\\, mention\\, or name to search mentions for. Empty defaults to authenticated user or bot."`
 	Bot        bool     `json:"bot,omitempty" jsonschema:"description=Search mentions of the bot token identity instead of the user token identity."`
-	Since      string   `json:"since,omitempty" jsonschema:"description=Time window such as 1h, 7d, or 14d. Empty means today."`
+	Since      string   `json:"since,omitempty" jsonschema:"description=Time window such as 1h\\, 7d\\, or 14d. Empty means today."`
 	Limit      int      `json:"limit,omitempty" jsonschema:"description=Maximum mentions to return"`
 	Unhandled  bool     `json:"unhandled,omitempty" jsonschema:"description=Only return pending mentions"`
 	MaxThread  int      `json:"max_thread,omitempty" jsonschema:"description=Maximum thread messages to inspect for status classification"`
 	Tickets    bool     `json:"tickets,omitempty" jsonschema:"description=Extract ticket references from mention text"`
-	TicketKeys []string `json:"ticket_keys,omitempty" jsonschema:"description=Optional ticket project keys to extract, for example DEV or TEL. Empty extracts uppercase issue keys."`
+	TicketKeys []string `json:"ticket_keys,omitempty" jsonschema:"description=Optional ticket project keys to extract\\, for example DEV or TEL. Empty extracts uppercase issue keys."`
 }
 
 type UnreadsInput struct {
 	Channel string `json:"channel,omitempty" jsonschema:"description=Optional Slack channel ID or name"`
-	Since   string `json:"since,omitempty" jsonschema:"description=Time window such as 1h, 7d, or 14d. Defaults to 14d."`
+	Since   string `json:"since,omitempty" jsonschema:"description=Time window such as 1h\\, 7d\\, or 14d. Defaults to 14d."`
 	Limit   int    `json:"limit,omitempty" jsonschema:"description=Maximum unread messages to fetch per channel"`
 }
 
@@ -586,7 +587,7 @@ type ThreadMessagesInput struct {
 	TS         string         `json:"ts,omitempty" jsonschema:"description=Slack root message timestamp"`
 	Limit      int            `json:"limit,omitempty" jsonschema:"description=Maximum thread messages to return"`
 	Entity     string         `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
-	Filters    map[string]any `json:"filters,omitempty" jsonschema:"description=Optional generic datasource filters. Supports ref, channel, channel_id, ts, message_ts, thread_ts, and root_ts."`
+	Filters    map[string]any `json:"filters,omitempty" jsonschema:"description=Optional generic datasource filters. Supports ref\\, channel\\, channel_id\\, ts\\, message_ts\\, thread_ts\\, and root_ts."`
 }
 
 type ThreadResult struct {
@@ -618,11 +619,12 @@ type SlackFile struct {
 }
 
 type ChannelMembersInput struct {
-	Datasource string `json:"datasource,omitempty" jsonschema:"description=Exact datasource name."`
-	Channel    string `json:"channel,omitempty" jsonschema:"required,description=Slack channel ID"`
-	Query      string `json:"query,omitempty" jsonschema:"description=Optional member text filter"`
-	Limit      int    `json:"limit,omitempty" jsonschema:"description=Maximum members to return"`
-	Entity     string `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
+	Datasource string         `json:"datasource,omitempty" jsonschema:"description=Exact datasource name."`
+	Channel    string         `json:"channel,omitempty" jsonschema:"required,description=Slack channel ID"`
+	Query      string         `json:"query,omitempty" jsonschema:"description=Optional member text filter"`
+	Limit      int            `json:"limit,omitempty" jsonschema:"description=Maximum members to return"`
+	Entity     string         `json:"entity,omitempty" jsonschema:"description=Datasource entity filter."`
+	Filters    map[string]any `json:"filters,omitempty" jsonschema:"description=Optional generic datasource filters. Supports channel\\, channel_id\\, channel_ref\\, query\\, text\\, user\\, and user_id."`
 }
 
 func (s Service) IndexBuild(ctx pluginbinding.Context, input IndexBuildInput) (pluginbinding.IndexBuildResult, error) {
@@ -1291,7 +1293,10 @@ func (s Service) Unreads(ctx pluginbinding.Context, input UnreadsInput) (Unreads
 }
 
 func (s Service) SearchMessagesDatasource(ctx pluginbinding.Context, input MessageSearchInput) (MessageDatasourceResult, error) {
-	query := strings.TrimSpace(input.Query)
+	query, err := s.messageSearchDatasourceQuery(ctx, input)
+	if err != nil {
+		return MessageDatasourceResult{}, err
+	}
 	if query == "" {
 		return MessageDatasourceResult{}, pluginbinding.Fail("bad_input", "query is required")
 	}
@@ -1407,12 +1412,40 @@ func jsonNumberString(value any) string {
 	return string(data)
 }
 
+func (s Service) messageSearchDatasourceQuery(ctx pluginbinding.Context, input MessageSearchInput) (string, error) {
+	query := strings.TrimSpace(input.Query)
+	if query == "" {
+		query = firstFilterString(input.Filters, "query", "text", "q")
+	}
+	channel := firstFilterString(input.Filters, "channel", "channel_id", "channel_ref", "in_channel")
+	if channel == "" || query == "" || strings.Contains(query, " in:") || strings.HasPrefix(query, "in:") {
+		return query, nil
+	}
+	resolved, err := s.resolveChannel(ctx, channel)
+	if err != nil {
+		return "", err
+	}
+	return query + " in:" + resolved, nil
+}
+
+func channelMembersDatasourceInput(input ChannelMembersInput) (channel, query string) {
+	channel = strings.TrimSpace(input.Channel)
+	if channel == "" {
+		channel = firstFilterString(input.Filters, "channel", "channel_id", "channel_ref")
+	}
+	query = strings.TrimSpace(input.Query)
+	if query == "" {
+		query = firstFilterString(input.Filters, "query", "text", "user", "user_id")
+	}
+	return channel, query
+}
+
 func (s Service) ChannelMembersDatasource(ctx pluginbinding.Context, input ChannelMembersInput) (ChannelMembersDatasourceResult, error) {
-	channel, err := s.resolveChannel(ctx, input.Channel)
+	channelInput, query := channelMembersDatasourceInput(input)
+	channel, err := s.resolveChannel(ctx, channelInput)
 	if err != nil {
 		return ChannelMembersDatasourceResult{}, err
 	}
-	query := strings.TrimSpace(input.Query)
 	readLimit := input.Limit
 	if query != "" {
 		readLimit = 0

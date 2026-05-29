@@ -15,6 +15,61 @@ import (
 	slackapi "github.com/slack-go/slack"
 )
 
+func TestManifestInputSchemasDescribeAllFields(t *testing.T) {
+	manifest := Manifest()
+	for _, op := range manifest.Operations {
+		assertSchemaPropertiesDescribed(t, "operation "+op.Name, op.Input)
+	}
+	for _, ds := range manifest.Datasources {
+		assertSchemaPropertiesDescribed(t, "datasource "+ds.Name, ds.Input)
+	}
+
+	assertSchemaPropertyDescription(t, "presence user", pluginbinding.MustSchemaFor[PresenceGetInput](), "user", "Slack user ID, mention, or name. Empty asks Slack for the authenticated user's presence when supported.")
+	assertSchemaPropertyDescription(t, "message filters", pluginbinding.MustSchemaFor[MessageSearchInput](), "filters", "Optional generic datasource filters. Supports query, text, q, channel, channel_id, and in_channel.")
+	assertSchemaPropertyDescription(t, "thread filters", pluginbinding.MustSchemaFor[ThreadMessagesInput](), "filters", "Optional generic datasource filters. Supports ref, channel, channel_id, ts, message_ts, thread_ts, and root_ts.")
+	assertSchemaPropertyDescription(t, "channel member filters", pluginbinding.MustSchemaFor[ChannelMembersInput](), "filters", "Optional generic datasource filters. Supports channel, channel_id, channel_ref, query, text, user, and user_id.")
+}
+
+func assertSchemaPropertiesDescribed(t *testing.T, name string, raw json.RawMessage) {
+	t.Helper()
+	if len(raw) == 0 {
+		return
+	}
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("%s input schema is invalid: %v", name, err)
+	}
+	for field, propRaw := range schema.Properties {
+		var prop struct {
+			Description string `json:"description"`
+		}
+		if err := json.Unmarshal(propRaw, &prop); err != nil {
+			t.Fatalf("%s.%s schema is invalid: %v", name, field, err)
+		}
+		if strings.TrimSpace(prop.Description) == "" {
+			t.Fatalf("%s.%s is missing a schema description: %s", name, field, string(propRaw))
+		}
+	}
+}
+
+func assertSchemaPropertyDescription(t *testing.T, name string, raw json.RawMessage, field, want string) {
+	t.Helper()
+	var schema struct {
+		Properties map[string]struct {
+			Description string `json:"description"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("%s schema is invalid: %v", name, err)
+	}
+	got := schema.Properties[field].Description
+	if got != want {
+		t.Fatalf("%s description = %q, want %q", name, got, want)
+	}
+}
+
 func TestServiceIndexBuildUsesUserTokenFirst(t *testing.T) {
 	factory := &capturingFactory{
 		clients: map[string]*fakeClient{
@@ -987,6 +1042,28 @@ func TestServiceMessagesDatasourceReturnsRecords(t *testing.T) {
 	}
 }
 
+func TestServiceMessagesDatasourceAcceptsGenericFilters(t *testing.T) {
+	factory := &capturingFactory{
+		clients: map[string]*fakeClient{
+			"user_token": {
+				searchMessages: []SearchMessage{{Channel: "C1", TS: "1710000000.123456", User: "U1", Text: "incident update"}},
+				searchTotal:    1,
+			},
+		},
+	}
+	plugin := testPlugin(factory)
+
+	out := plugintest.DatasourceSearchOK[MessageDatasourceResult](t, plugin, map[string]any{
+		"datasource": DatasourceMessages,
+		"filters": map[string]any{
+			"query": "incident",
+		},
+	})
+	if out.Source != DatasourceMessages || out.Query != "incident" || out.Count != 1 {
+		t.Fatalf("message datasource result = %#v", out)
+	}
+}
+
 func TestServiceThreadMessagesDatasourceRequiresChannelAndTS(t *testing.T) {
 	plugin := testPlugin(&capturingFactory{clients: map[string]*fakeClient{"user_token": {}}})
 
@@ -1110,6 +1187,34 @@ func TestServiceChannelMembersDatasourceRequiresChannelAndFilters(t *testing.T) 
 	}
 	if factory.clients["user_token"].channelMembersCalls != 1 || factory.clients["user_token"].lastMembersLimit != 0 {
 		t.Fatalf("member calls = %#v", factory.clients["user_token"])
+	}
+}
+
+func TestServiceChannelMembersDatasourceAcceptsGenericFilters(t *testing.T) {
+	factory := &capturingFactory{
+		clients: map[string]*fakeClient{
+			"user_token": {
+				channelMembers: []User{
+					{ID: "U1", Name: "timo", RealName: "Timo Friedl", DisplayName: "Timo"},
+					{ID: "U2", Name: "ada", RealName: "Ada Lovelace", DisplayName: "Ada"},
+				},
+			},
+		},
+	}
+	plugin := testPlugin(factory)
+
+	out := plugintest.DatasourceSearchOK[ChannelMembersDatasourceResult](t, plugin, map[string]any{
+		"datasource": DatasourceChannelMembers,
+		"filters": map[string]any{
+			"channel_id": "C1",
+			"query":      "ada",
+		},
+	})
+	if out.Source != DatasourceChannelMembers || out.Query != "ada" || out.Count != 1 {
+		t.Fatalf("channel members result = %#v", out)
+	}
+	if out.Records[0].ID != "C1:U2" {
+		t.Fatalf("member record = %#v", out.Records[0])
 	}
 }
 

@@ -16,6 +16,19 @@ import (
 	"github.com/fluxplane/fluxplane-dex/protocol"
 )
 
+func TestHTTPRequestURLPreservesEscapedPath(t *testing.T) {
+	got, err := httpRequestURL(pluginbinding.HTTPRequest{
+		URL:  "https://gitlab.example.com",
+		Path: "/api/v4/projects/group%2Frepo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "https://gitlab.example.com/api/v4/projects/group%2Frepo" {
+		t.Fatalf("url = %q", got)
+	}
+}
+
 func TestHandleHostCapabilityRejectsMissingGrant(t *testing.T) {
 	state, err := NewState(t.TempDir())
 	if err != nil {

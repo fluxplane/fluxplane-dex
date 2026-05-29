@@ -90,7 +90,7 @@ func (t hostHTTPTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	}
 	if t.options.endpointRef != "" {
 		input.EndpointRef = t.options.endpointRef
-		input.Path = req.URL.Path
+		input.Path = req.URL.EscapedPath()
 		input.Query = map[string][]string(req.URL.Query())
 	} else {
 		input.URL = req.URL.String()

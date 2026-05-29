@@ -98,9 +98,17 @@ func httpRequestURL(input pluginbinding.HTTPRequest) (string, error) {
 		return "", err
 	}
 	if strings.TrimSpace(input.Path) != "" {
-		basePath := strings.TrimRight(parsed.EscapedPath(), "/")
+		basePath := strings.TrimRight(parsed.Path, "/")
+		baseEscapedPath := strings.TrimRight(parsed.EscapedPath(), "/")
 		relPath := strings.TrimLeft(strings.TrimSpace(input.Path), "/")
-		parsed.Path = basePath + "/" + relPath
+		decodedRelPath, err := url.PathUnescape(relPath)
+		if err != nil {
+			return "", err
+		}
+		parsed.Path = basePath + "/" + decodedRelPath
+		if baseEscapedPath != basePath || decodedRelPath != relPath {
+			parsed.RawPath = baseEscapedPath + "/" + relPath
+		}
 	}
 	query := parsed.Query()
 	for key, values := range input.Query {

@@ -11,8 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expanded Slack datasource generic filter support for `slack.message` and `slack.channel_member`, so datasource clients can pass query/channel/user constraints through the standard `filters` object.
 - Fixed Slack input schema descriptions that contain commas so generated JSON Schema keeps the complete description text.
 - Documented compact plugin development rules for input schemas, comma escaping, datasource generic request compatibility, dev-plugin reinstall checks, and live testing with dex and coder.
+- Added E2E testing notes for live endpoint, GitLab, datasource, and coder-surface probes.
 - Improved host-index datasource search so combined name and ID queries, such as Slack user/channel lookups, match across record fields.
 - Fixed GitLab input schema descriptions containing commas so generated JSON Schema keeps complete descriptions.
+- Fixed endpoint-routed HTTP requests to preserve escaped path segments so GitLab project and merge request lookups by namespaced path work.
 
 ## [0.13.1] - 2026-05-29
 

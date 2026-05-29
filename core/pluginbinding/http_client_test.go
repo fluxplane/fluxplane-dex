@@ -47,6 +47,21 @@ func TestHostHTTPClientUsesHostHTTP(t *testing.T) {
 	}
 }
 
+func TestHostHTTPClientPreservesEndpointEscapedPath(t *testing.T) {
+	host := &hostHTTPClientTestHost{}
+	client := HostHTTPClient(host, HostHTTPClientEndpointRef("gitlab-dev"))
+	req, err := http.NewRequest("GET", "https://gitlab.endpoint.local/api/v4/projects/group%2Frepo", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Do(req); err != nil {
+		t.Fatal(err)
+	}
+	if host.request.Path != "/api/v4/projects/group%2Frepo" {
+		t.Fatalf("path = %q", host.request.Path)
+	}
+}
+
 func TestHostHTTPClientCanRouteThroughEndpointRef(t *testing.T) {
 	host := &hostHTTPClientTestHost{}
 	client := HostHTTPClient(host,

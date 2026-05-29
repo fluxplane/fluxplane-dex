@@ -46,6 +46,58 @@ If the full suite fails in a large CLI golden/manifest test, inspect whether the
 failure is caused by your change or by local plugin availability/output drift.
 Do not hide unrelated failures; record them in the handoff.
 
+## Web search provider probes
+
+Web search providers exercise a useful combination of manifest metadata,
+operation calls, datasource calls, host HTTP, and, for Tavily, secret broker
+routing. Provider plugins must not read environment variables directly; use dex
+auth storage even when the source material starts in the shell environment.
+
+```bash
+# Reinstall local code and provider binaries after changes.
+task install
+dex plugin install tavily --dev-plugin tavily=./plugins/tavily
+dex plugin install duckduckgo --dev-plugin duckduckgo=./plugins/duckduckgo
+
+# Tavily auth: choose one. The plugin itself still receives only brokered auth.
+dex auth connect tavily -f api_key="$TAVILY_API_KEY"
+# or, if TAVILY_API_KEY is in the dex process environment:
+dex auth connect auto tavily
+
+dex auth status tavily -o json
+```
+
+Then run both direct operation and datasource paths with small limits:
+
+```bash
+dex op show tavily.search -o json --dev-plugin tavily=./plugins/tavily
+dex op run tavily.search '{"query":"fluxplane dex","max":2}' -o json \
+  --dev-plugin tavily=./plugins/tavily
+dex datasource search tavily.web_search '{"query":"fluxplane dex","limit":2}' -o json \
+  --dev-plugin tavily=./plugins/tavily
+
+dex op show duckduckgo.search -o json --dev-plugin duckduckgo=./plugins/duckduckgo
+dex op run duckduckgo.search '{"query":"fluxplane dex","max":2}' -o json \
+  --dev-plugin duckduckgo=./plugins/duckduckgo
+dex datasource search duckduckgo.web_search '{"query":"fluxplane dex","limit":2}' -o json \
+  --dev-plugin duckduckgo=./plugins/duckduckgo
+```
+
+Also probe validation failures so upstream calls are not attempted for oversized
+requests:
+
+```bash
+dex op run tavily.search '{"queries":["1","2","3","4","5","6"]}' -o json \
+  --dev-plugin tavily=./plugins/tavily
+# Expected: Error: at most 5 queries are allowed
+```
+
+If `dex op run tavily.search` returns `401 Unauthorized`, check
+`dex auth status tavily -o json`. If direct operation calls pass but
+`dex datasource search tavily.web_search ...` fails with a capability or secret
+grant error, inspect datasource `Access` and `SecretPurposes` metadata; datasource
+handlers need the same host grants as operations.
+
 ## Endpoint checks
 
 Live operations that route through host HTTP need a registered endpoint. Example

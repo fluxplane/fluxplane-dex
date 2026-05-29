@@ -65,6 +65,14 @@ Capability guidance:
   explicit `endpoint_ref` and single-endpoint defaulting so coder prompts with
   empty input continue to work.
 
+- Authenticated plugins must declare auth fields and secret purposes in the
+  manifest, then request those purposes through host capabilities. For example,
+  Tavily declares `api_key` and performs HTTP with
+  `BearerTokenPurpose: "api_key"`; plugin operations must never call
+  `os.Getenv("TAVILY_API_KEY")` or otherwise read env directly. Use
+  `dex auth connect` or `dex auth connect auto` to move environment-sourced
+  material into host-owned dex auth storage before live tests.
+
 ## Input And Operation Design
 
 - Keep schemas small and explicit; avoid `map[string]any` unless the upstream
@@ -121,6 +129,9 @@ Focused tests should cover:
   execution parity.
 - Missing endpoint/auth, invalid params, denied capability, and other error
   paths.
+- Live provider plugins with auth, such as Tavily, should have tests/probes that
+  confirm the manifest advertises auth/secret purposes while runtime calls obtain
+  credentials only through the dex secret broker.
 
 ## Local And Live Testing
 
@@ -138,6 +149,21 @@ After changing plugin code, reinstall the dev plugin before testing through dex,
 coder, or datasource tools. A stale binary in `~/.dex/plugins/bin` can make fixed
 code appear broken. Confirm `dex plugin list -o json` shows the expected plugin
 path/version.
+
+For authenticated plugins, connect secrets through dex before running live
+commands. `auto` may read manifest-declared environment variables in the host
+process and save them to dex auth storage, but plugin code still consumes the
+value only through the runtime secret broker:
+
+```sh
+# Explicit value path. Avoid shell history or logs that expose real keys.
+dex auth connect tavily -f api_key="$TAVILY_API_KEY"
+
+# Auto path. Requires TAVILY_API_KEY in the dex process environment.
+dex auth connect auto tavily
+
+dex auth status tavily -o json
+```
 
 Live-test at three levels when possible:
 
@@ -160,6 +186,17 @@ coder --yolo --model=codex --input \
 
 For datasource compatibility, live-test both the typed/top-level shape and the
 generic `filters` shape that agents use.
+
+For provider-style integrations, test both the concrete provider operation and
+its datasource. This catches missing datasource grants even when direct operation
+calls pass:
+
+```sh
+dex op run tavily.search '{"query":"fluxplane dex","max":2}' -o json \
+  --dev-plugin tavily=./plugins/tavily
+dex datasource search tavily.web_search '{"query":"fluxplane dex","limit":2}' -o json \
+  --dev-plugin tavily=./plugins/tavily
+```
 
 For Jira and other Atlassian Cloud plugins, always include a host-backed probe in
 addition to direct `dex` CLI checks. Direct dex transport can succeed while coder

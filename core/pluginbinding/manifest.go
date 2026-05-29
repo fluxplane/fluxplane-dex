@@ -8,6 +8,7 @@ import (
 
 const (
 	CapabilitySearch = "search"
+	CapabilityList   = "list"
 	CapabilityLookup = "lookup"
 	CapabilityGet    = "get"
 	CapabilityIndex  = "index"
@@ -223,7 +224,7 @@ func IndexedDatasourceWithOptions(name, entity, description, indexDescription st
 }
 
 func SearchableIndexCapabilities() []string {
-	return []string{CapabilitySearch, CapabilityLookup, CapabilityGet, CapabilityIndex}
+	return []string{CapabilitySearch, CapabilityList, CapabilityLookup, CapabilityGet, CapabilityIndex}
 }
 
 func authEnv(fields []core.AuthField) []string {

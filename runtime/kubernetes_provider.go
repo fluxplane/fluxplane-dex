@@ -99,6 +99,12 @@ func (r Runner) hostKubernetesProviderCall(ctx context.Context, plugin, instance
 		if err == nil {
 			result, err = kuberneteshost.Secrets(ctx, request)
 		}
+	case "configmaps":
+		var request kuberneteshost.EndpointDiscoverInput
+		request, err = decodeProviderPayload[kuberneteshost.EndpointDiscoverInput](input.Payload)
+		if err == nil {
+			result, err = kuberneteshost.ConfigMaps(ctx, request)
+		}
 	default:
 		err = fmt.Errorf("unsupported kubernetes provider action %q", action)
 	}

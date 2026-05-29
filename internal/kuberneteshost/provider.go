@@ -185,7 +185,33 @@ func Secrets(ctx context.Context, input EndpointDiscoverInput) ([]corev1.Secret,
 	if err != nil {
 		return nil, err
 	}
+	if name := strings.TrimSpace(input.Name); name != "" {
+		secret, err := clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		return []corev1.Secret{*secret}, nil
+	}
 	list, err := clientset.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
+func ConfigMaps(ctx context.Context, input EndpointDiscoverInput) ([]corev1.ConfigMap, error) {
+	clientset, namespace, err := kubernetesClient(input)
+	if err != nil {
+		return nil, err
+	}
+	if name := strings.TrimSpace(input.Name); name != "" {
+		configMap, err := clientset.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		return []corev1.ConfigMap{*configMap}, nil
+	}
+	list, err := clientset.CoreV1().ConfigMaps(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}

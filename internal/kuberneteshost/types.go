@@ -31,6 +31,7 @@ type EndpointDiscoverInput struct {
 	Product   string `json:"product,omitempty"`
 	Context   string `json:"context,omitempty"`
 	Namespace string `json:"namespace,omitempty"`
+	Name      string `json:"name,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
 }
 

@@ -3,6 +3,7 @@ go 1.26.1
 use (
 	.
 	./fluxplaneplugin
+	./plugins/asterisk
 	./plugins/confluence
 	./plugins/docker
 	./plugins/duckduckgo

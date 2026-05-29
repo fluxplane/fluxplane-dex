@@ -107,6 +107,13 @@ func (r Runner) InvokeInstance(ctx context.Context, pluginName, instance, comman
 		}
 		req.Grant = grant.Token
 	}
+	if command == protocol.CommandEndpointsDiscover {
+		grant, err := r.State.CreateGrantWithCapabilities(entry.Name, req.Instance, []string{command}, nil, []CapabilityGrant{{Name: pluginbinding.CapabilityProvider, Provider: "kubernetes", Action: "*"}}, 5*time.Minute)
+		if err != nil {
+			return protocol.Response{}, err
+		}
+		req.Grant = grant.Token
+	}
 	if command == protocol.CommandDatasourcesSearch || command == protocol.CommandDatasourcesGet || command == protocol.CommandDatasourcesLookup {
 		operations, purposes, capabilities := r.datasourceGrantScope(ctx, entry.Name, command, payload)
 		if len(purposes) > 0 || len(capabilities) > 0 {
@@ -738,6 +745,9 @@ func (r Runner) hostProviderCall(ctx context.Context, plugin, instance, grant st
 	}
 	if strings.TrimSpace(input.Provider) == "kubernetes" {
 		return r.hostKubernetesProviderCall(ctx, plugin, instance, grant, input)
+	}
+	if strings.TrimSpace(input.Provider) == "asterisk" {
+		return r.hostAsteriskProviderCall(ctx, plugin, instance, grant, input)
 	}
 	if strings.TrimSpace(input.Provider) == systemProviderName {
 		result, err := localSystemProvider{}.Call(ctx, strings.TrimSpace(input.Action), input.Payload)

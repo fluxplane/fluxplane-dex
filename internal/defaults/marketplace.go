@@ -100,6 +100,13 @@ const MarketplaceJSON = `{
       "local_path": "plugins/kubernetes"
     },
     {
+      "name": "asterisk",
+      "description": "Asterisk endpoint discovery and AMI operations.",
+      "binary": "dex-plugin-asterisk",
+      "go_install": "github.com/fluxplane/fluxplane-dex/plugins/asterisk/cmd/dex-plugin-asterisk@latest",
+      "local_path": "plugins/asterisk"
+    },
+    {
       "name": "ollama",
       "description": "Ollama local LLM operations: inspect installed models, generate completions, chat, and embed.",
       "binary": "dex-plugin-ollama",

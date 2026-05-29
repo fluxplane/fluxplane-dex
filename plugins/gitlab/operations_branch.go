@@ -13,7 +13,7 @@ type BranchCreateInput struct {
 	Path      string `json:"path,omitempty" jsonschema:"description=Alias for project"`
 	Branch    string `json:"branch,omitempty" jsonschema:"description=Branch name to create"`
 	Name      string `json:"name,omitempty" jsonschema:"description=Alias for branch"`
-	Ref       string `json:"ref,omitempty" jsonschema:"description=Source ref (commit SHA, branch, or tag)"`
+	Ref       string `json:"ref,omitempty" jsonschema:"description=Source ref (commit SHA\\, branch\\, or tag)"`
 }
 
 type BranchDeleteInput struct {

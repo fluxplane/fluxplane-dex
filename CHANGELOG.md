@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed Slack input schema descriptions that contain commas so generated JSON Schema keeps the complete description text.
 - Documented compact plugin development rules for input schemas, comma escaping, datasource generic request compatibility, dev-plugin reinstall checks, and live testing with dex and coder.
 - Improved host-index datasource search so combined name and ID queries, such as Slack user/channel lookups, match across record fields.
+- Fixed GitLab input schema descriptions containing commas so generated JSON Schema keeps complete descriptions.
 
 ## [0.13.1] - 2026-05-29
 

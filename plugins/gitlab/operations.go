@@ -128,7 +128,7 @@ type RepositoryTagCreateInput struct {
 	Path      string `json:"path,omitempty" jsonschema:"description=Alias for project"`
 	TagName   string `json:"tag_name,omitempty" jsonschema:"description=Tag name to create"`
 	Name      string `json:"name,omitempty" jsonschema:"description=Alias for tag_name"`
-	Ref       string `json:"ref,omitempty" jsonschema:"description=Commit SHA, branch name, or existing tag name"`
+	Ref       string `json:"ref,omitempty" jsonschema:"description=Commit SHA\\, branch name\\, or existing tag name"`
 	Message   string `json:"message,omitempty" jsonschema:"description=Optional annotated tag message"`
 }
 

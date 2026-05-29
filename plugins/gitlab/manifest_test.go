@@ -1,12 +1,69 @@
 package gitlab
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/fluxplane/fluxplane-dex/core"
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding/plugintest"
 	"github.com/fluxplane/fluxplane-dex/protocol"
 )
+
+func TestManifestInputSchemasDescribeAllFields(t *testing.T) {
+	manifest := Manifest()
+	for _, op := range manifest.Operations {
+		assertSchemaPropertiesDescribed(t, "operation "+op.Name, op.Input)
+	}
+	for _, ds := range manifest.Datasources {
+		assertSchemaPropertiesDescribed(t, "datasource "+ds.Name, ds.Input)
+	}
+
+	assertSchemaPropertyDescription(t, "repo file encoding", pluginbinding.MustSchemaFor[RepoFileCreateInput](), "encoding", "Content encoding, such as text or base64")
+	assertSchemaPropertyDescription(t, "repository tag ref", pluginbinding.MustSchemaFor[RepositoryTagCreateInput](), "ref", "Commit SHA, branch name, or existing tag name")
+	assertSchemaPropertyDescription(t, "branch ref", pluginbinding.MustSchemaFor[BranchCreateInput](), "ref", "Source ref (commit SHA, branch, or tag)")
+}
+
+func assertSchemaPropertiesDescribed(t *testing.T, name string, raw json.RawMessage) {
+	t.Helper()
+	if len(raw) == 0 {
+		return
+	}
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("%s input schema is invalid: %v", name, err)
+	}
+	for field, propRaw := range schema.Properties {
+		var prop struct {
+			Description string `json:"description"`
+		}
+		if err := json.Unmarshal(propRaw, &prop); err != nil {
+			t.Fatalf("%s.%s schema is invalid: %v", name, field, err)
+		}
+		if strings.TrimSpace(prop.Description) == "" {
+			t.Fatalf("%s.%s is missing a schema description: %s", name, field, string(propRaw))
+		}
+	}
+}
+
+func assertSchemaPropertyDescription(t *testing.T, name string, raw json.RawMessage, field, want string) {
+	t.Helper()
+	var schema struct {
+		Properties map[string]struct {
+			Description string `json:"description"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("%s schema is invalid: %v", name, err)
+	}
+	got := schema.Properties[field].Description
+	if got != want {
+		t.Fatalf("%s description = %q, want %q", name, got, want)
+	}
+}
 
 func TestManifestQuality(t *testing.T) {
 	plugintest.AssertManifestQuality(t, Manifest())

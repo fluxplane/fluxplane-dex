@@ -16,7 +16,7 @@ type RepoFileCreateInput struct {
 	Content         string `json:"content,omitempty" jsonschema:"description=File content"`
 	CommitMessage   string `json:"commit_message,omitempty" jsonschema:"description=Commit message"`
 	StartBranch     string `json:"start_branch,omitempty" jsonschema:"description=Optional source branch when creating target branch"`
-	Encoding        string `json:"encoding,omitempty" jsonschema:"description=Content encoding, such as text or base64"`
+	Encoding        string `json:"encoding,omitempty" jsonschema:"description=Content encoding\\, such as text or base64"`
 	AuthorEmail     string `json:"author_email,omitempty" jsonschema:"description=Commit author email"`
 	AuthorName      string `json:"author_name,omitempty" jsonschema:"description=Commit author name"`
 	ExecuteFilemode *bool  `json:"execute_filemode,omitempty" jsonschema:"description=Whether the file should be executable"`
@@ -31,7 +31,7 @@ type RepoFileUpdateInput struct {
 	Content         string `json:"content,omitempty" jsonschema:"description=File content"`
 	CommitMessage   string `json:"commit_message,omitempty" jsonschema:"description=Commit message"`
 	StartBranch     string `json:"start_branch,omitempty" jsonschema:"description=Optional source branch when creating target branch"`
-	Encoding        string `json:"encoding,omitempty" jsonschema:"description=Content encoding, such as text or base64"`
+	Encoding        string `json:"encoding,omitempty" jsonschema:"description=Content encoding\\, such as text or base64"`
 	AuthorEmail     string `json:"author_email,omitempty" jsonschema:"description=Commit author email"`
 	AuthorName      string `json:"author_name,omitempty" jsonschema:"description=Commit author name"`
 	LastCommitID    string `json:"last_commit_id,omitempty" jsonschema:"description=Expected last commit id"`

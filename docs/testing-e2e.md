@@ -23,10 +23,14 @@ and fixture tests do not catch.
 go test ./core/pluginbinding ./runtime ./plugins/gitlab
 ```
 
-After changing runtime/plugin surfaces, reinstall the CLI used by E2E commands:
+After changing runtime/plugin surfaces, reinstall the CLI used by E2E commands.
+If you changed an out-of-process plugin, reinstall that plugin binary too; otherwise
+coder/dex may still execute the previously installed plugin even though `dex --dev-plugin`
+checks pass.
 
 ```bash
 task install
+go install ./plugins/jira/cmd/dex-plugin-jira # example: only when Jira changed
 ```
 
 A full suite is still useful before release work:
@@ -135,6 +139,16 @@ dex lookup 'group/repo#1' --plugin gitlab --entity gitlab.issue --limit 2 -o com
 dex lookup 'group/repo!1' --plugin gitlab --entity gitlab.merge_request --limit 2 -o compact \
   --dev-plugin gitlab=./plugins/gitlab
 ```
+
+
+## Jira datasource get regression
+
+`datasource_get` for `jira.issue` and `jira.user` should fetch live records from
+Jira, not require a prebuilt host index. If it fails with
+`jira datasource get requires host index integration`, the running Jira plugin
+binary is stale or the get handlers are not registered. Reinstall both dex/coder
+and `dex-plugin-jira`, then retry with a compact prompt that does not print
+record bodies.
 
 ## Coder datasource surface probe
 

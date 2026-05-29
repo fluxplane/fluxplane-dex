@@ -86,7 +86,7 @@ func TestRunnerValidatesEndpointRefWithoutInjectingOperationInput(t *testing.T) 
 	}
 	runner := Runner{State: state}
 	call := protocol.OperationCall{Name: "sql.query", Input: json.RawMessage(`{"endpoint_ref":"mysql-dev","query":"select 1"}`)}
-	changed, err := runner.resolveOperationEndpointRefWithMode(&call, false)
+	changed, err := runner.resolveOperationEndpointRefWithMode("mysql", &call, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,6 +128,57 @@ func TestRunnerValidatesEndpointRefWithoutInjectingDatasourcePayload(t *testing.
 		t.Fatal(err)
 	}
 	if input["url"] != "kubernetes://context/dev" || input["endpoint_product"] != "kubernetes" {
+		t.Fatalf("input = %#v", input)
+	}
+}
+
+func TestRunnerInjectsSingleProductEndpointRefIntoDatasourcePayload(t *testing.T) {
+	state, err := NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveEndpoint(core.EndpointRef{ID: "jira-prod", URL: "https://example.atlassian.net", Product: "jira", Protocol: "https"}); err != nil {
+		t.Fatal(err)
+	}
+	runner := Runner{State: state}
+	req, err := protocol.NewRequest(protocol.CommandDatasourcesGet, "jira", map[string]any{"datasource": "jira.issues", "entity": "jira.issue", "id": "DEV-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.resolveDatasourceEndpointRef(context.Background(), "jira", &req); err != nil {
+		t.Fatal(err)
+	}
+	var input map[string]any
+	if err := json.Unmarshal(req.Payload, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input["endpoint_ref"] != "jira-prod" || input["url"] != "https://example.atlassian.net" {
+		t.Fatalf("input = %#v", input)
+	}
+}
+
+func TestRunnerInjectsSingleProductEndpointRefIntoOperationInput(t *testing.T) {
+	state, err := NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveEndpoint(core.EndpointRef{ID: "jira-prod", URL: "https://example.atlassian.net", Product: "jira", Protocol: "https"}); err != nil {
+		t.Fatal(err)
+	}
+	runner := Runner{State: state}
+	call := protocol.OperationCall{Name: "jira.auth.test", Input: json.RawMessage(`{}`)}
+	changed, err := runner.resolveOperationEndpointRefWithMode("jira", &call, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected operation input to be rewritten")
+	}
+	var input map[string]any
+	if err := json.Unmarshal(call.Input, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input["endpoint_ref"] != "jira-prod" || input["url"] != "https://example.atlassian.net" {
 		t.Fatalf("input = %#v", input)
 	}
 }

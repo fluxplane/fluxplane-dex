@@ -35,6 +35,8 @@ func NewPluginWithService(service Service) *pluginbinding.Plugin {
 		pluginbinding.RegisterOperation(userSearchSpec(), service.UserSearch),
 		pluginbinding.RegisterDatasourceSearch(jiraIssuesDatasourceSpec(), service.IssueDatasource),
 		pluginbinding.RegisterDatasourceSearch(jiraUsersDatasourceSpec(), service.UserDatasource),
+		pluginbinding.RegisterDatasourceGet(jiraIssuesDatasourceSpec(), service.IssueDatasourceGet),
+		pluginbinding.RegisterDatasourceGet(jiraUsersDatasourceSpec(), service.UserDatasourceGet),
 		pluginbinding.RegisterDatasourceLookup(jiraIssuesLookupSpec(), service.Lookup),
 		pluginbinding.RegisterDatasourceLookup(jiraUsersLookupSpec(), service.Lookup),
 	)

@@ -188,6 +188,15 @@ var (
 
 func (a *dexAccessor) Spec() coredatasource.Spec { return a.spec }
 
+func (a *dexAccessor) applySpecConfig(payload map[string]any) {
+	if payload == nil || len(a.spec.Config) == 0 {
+		return
+	}
+	if endpointRef := strings.TrimSpace(a.spec.Config["endpoint_ref"]); endpointRef != "" {
+		payload["endpoint_ref"] = endpointRef
+	}
+}
+
 // Entities exposes the rich per-entity metadata for every dex datasource the
 // accessor can route to, so the host's datasource_get_schema / introspection
 // surface sees all entities the plugin actually serves — not just the
@@ -216,6 +225,7 @@ func (a *dexAccessor) Search(ctx context.Context, req coredatasource.SearchReque
 		"datasource": src.Name,
 		"entity":     entity,
 	}
+	a.applySpecConfig(payload)
 	if q := strings.TrimSpace(req.Query); q != "" {
 		payload["query"] = q
 	}
@@ -253,6 +263,7 @@ func (a *dexAccessor) List(ctx context.Context, req coredatasource.ListRequest) 
 		"datasource": src.Name,
 		"entity":     entity,
 	}
+	a.applySpecConfig(payload)
 	if req.Limit > 0 {
 		payload["limit"] = req.Limit
 	}
@@ -294,6 +305,7 @@ func (a *dexAccessor) Get(ctx context.Context, req coredatasource.GetRequest) (c
 		"entity":     entity,
 		"id":         req.ID,
 	}
+	a.applySpecConfig(payload)
 	resp, err := a.engine.Datasources().GetInstance(ctx, a.plugin, a.instance, payload)
 	if err != nil {
 		return coredatasource.Record{}, err
@@ -324,6 +336,12 @@ func decodeRecords(raw json.RawMessage, ds coredatasource.Name, entity coredatas
 	}
 	var asObject map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &asObject); err == nil {
+		if record, ok := asObject["record"]; ok {
+			var obj map[string]json.RawMessage
+			if err := json.Unmarshal(record, &obj); err == nil {
+				return []coredatasource.Record{recordFromObject(obj, ds, entity)}
+			}
+		}
 		for _, key := range []string{"records", "results", "items"} {
 			if arr, ok := asObject[key]; ok {
 				return recordsFromArray(arr, ds, entity)

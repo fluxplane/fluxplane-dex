@@ -32,6 +32,7 @@ type Client interface {
 	CreateMeta(context.Context, IssueCreateMetaOptions) (IssueMetaResult, error)
 	EditMeta(context.Context, string) (IssueMetaResult, error)
 	SearchUsers(context.Context, UserSearchOptions) ([]User, error)
+	GetUser(context.Context, string) (User, error)
 }
 
 type ClientFactory func(pluginbinding.Context, string) (Client, error)
@@ -41,11 +42,20 @@ func NewLiveClient(ctx pluginbinding.Context, endpointRef string) (Client, error
 	if endpointRef == "" {
 		return nil, fmt.Errorf("jira endpoint_ref is required")
 	}
-	return liveClient{endpointRef: endpointRef, host: ctx.Host}, nil
+	client := liveClient{endpointRef: endpointRef, host: ctx.Host}
+	if ctx.Host != nil {
+		if material, err := ctx.Host.Secret(AuthPurposeCloudID); err == nil {
+			if cloudID := strings.TrimSpace(material.Value); cloudID != "" {
+				client.baseURL = "https://api.atlassian.com/ex/jira/" + url.PathEscape(cloudID)
+			}
+		}
+	}
+	return client, nil
 }
 
 type liveClient struct {
 	endpointRef string
+	baseURL     string
 	host        pluginbinding.HostClient
 }
 
@@ -297,6 +307,14 @@ func (c liveClient) SearchUsers(ctx context.Context, input UserSearchOptions) ([
 	}
 }
 
+func (c liveClient) GetUser(ctx context.Context, accountID string) (User, error) {
+	query := url.Values{}
+	query.Set("accountId", strings.TrimSpace(accountID))
+	var out User
+	err := c.getJSON(ctx, "/rest/api/3/user", query, &out)
+	return out, err
+}
+
 func (c liveClient) getJSON(ctx context.Context, path string, query url.Values, out any) error {
 	return c.doJSON(ctx, "GET", path, query, nil, out)
 }
@@ -322,8 +340,16 @@ func (c liveClient) do(ctx context.Context, method, path string, query url.Value
 		}
 		payload = data
 	}
+	requestURL := ""
+	endpointRef := c.endpointRef
+	if strings.TrimSpace(c.baseURL) != "" {
+		requestURL = strings.TrimRight(c.baseURL, "/")
+		endpointRef = ""
+		path = "/" + strings.TrimLeft(path, "/")
+	}
 	resp, err := c.host.HTTP(pluginbinding.HTTPRequest{
-		EndpointRef: c.endpointRef,
+		URL:         requestURL,
+		EndpointRef: endpointRef,
 		Path:        path,
 		Query:       map[string][]string(query),
 		Method:      method,
@@ -353,8 +379,16 @@ func (c liveClient) getBytes(ctx context.Context, path string, query url.Values)
 	if c.host == nil {
 		return nil, "", fmt.Errorf("host client is unavailable")
 	}
+	requestURL := ""
+	endpointRef := c.endpointRef
+	if strings.TrimSpace(c.baseURL) != "" {
+		requestURL = strings.TrimRight(c.baseURL, "/")
+		endpointRef = ""
+		path = "/" + strings.TrimLeft(path, "/")
+	}
 	resp, err := c.host.HTTP(pluginbinding.HTTPRequest{
-		EndpointRef: c.endpointRef,
+		URL:         requestURL,
+		EndpointRef: endpointRef,
 		Path:        path,
 		Query:       map[string][]string(query),
 		Method:      "GET",

@@ -8,11 +8,12 @@ import (
 
 const (
 	PluginName        = "jira"
-	PluginVersion     = "0.13.1"
+	PluginVersion     = "0.13.2"
 	PluginDescription = "Jira Cloud issue operations, comments, attachments, transitions, datasources, indexes, and reverse lookups."
 
 	AuthMethodAtlassianCloud = "atlassian_cloud_basic"
 	AuthPurposeAPIToken      = "api_token"
+	AuthPurposeCloudID       = "cloud_id"
 
 	EnvAtlassianAPIToken = "ATLASSIAN_API_TOKEN"
 	EnvJiraAPIToken      = "JIRA_API_TOKEN"
@@ -62,6 +63,7 @@ func manifestSpec() pluginbinding.ManifestSpec {
 			Env:         []string{EnvJiraAPIToken, EnvAtlassianAPIToken},
 			Fields: []core.AuthField{
 				pluginbinding.AuthField(AuthPurposeAPIToken, "Atlassian API token", true, true, EnvJiraAPIToken, EnvAtlassianAPIToken),
+				pluginbinding.AuthField(AuthPurposeCloudID, "Atlassian Cloud ID", false, true, "ATLASSIAN_CLOUD_ID", "JIRA_CLOUD_ID"),
 			},
 		}},
 		Operations: operationSpecs(),
@@ -292,5 +294,5 @@ func jiraUsersLookupSpec() core.DatasourceSpec {
 }
 
 func atlassianAuthPurposes() []string {
-	return []string{AuthPurposeAPIToken}
+	return []string{AuthPurposeAPIToken, AuthPurposeCloudID}
 }

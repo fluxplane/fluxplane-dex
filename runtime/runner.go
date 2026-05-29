@@ -142,7 +142,7 @@ func (r Runner) resolveEndpointRefs(ctx context.Context, plugin string, req *pro
 		if err := json.Unmarshal(req.Payload, &call); err != nil {
 			return nil
 		}
-		changed, err := r.resolveOperationEndpointRefWithMode(&call, schemaHasProperty(operationInputs[call.Name], "url") || schemaHasProperty(operationInputs[call.Name], "credential_ref"))
+		changed, err := r.resolveOperationEndpointRefWithMode(plugin, &call, schemaHasProperty(operationInputs[call.Name], "url") || schemaHasProperty(operationInputs[call.Name], "credential_ref") || schemaHasProperty(operationInputs[call.Name], "endpoint_ref"))
 		if err != nil {
 			return err
 		}
@@ -161,7 +161,7 @@ func (r Runner) resolveEndpointRefs(ctx context.Context, plugin string, req *pro
 		changed := false
 		for i := range batch.Calls {
 			call := &batch.Calls[i]
-			callChanged, err := r.resolveOperationEndpointRefWithMode(call, schemaHasProperty(operationInputs[call.Name], "url") || schemaHasProperty(operationInputs[call.Name], "credential_ref"))
+			callChanged, err := r.resolveOperationEndpointRefWithMode(plugin, call, schemaHasProperty(operationInputs[call.Name], "url") || schemaHasProperty(operationInputs[call.Name], "credential_ref") || schemaHasProperty(operationInputs[call.Name], "endpoint_ref"))
 			if err != nil {
 				return err
 			}
@@ -179,10 +179,10 @@ func (r Runner) resolveEndpointRefs(ctx context.Context, plugin string, req *pro
 }
 
 func (r Runner) resolveOperationEndpointRef(call *protocol.OperationCall) (bool, error) {
-	return r.resolveOperationEndpointRefWithMode(call, true)
+	return r.resolveOperationEndpointRefWithMode("", call, true)
 }
 
-func (r Runner) resolveOperationEndpointRefWithMode(call *protocol.OperationCall, inject bool) (bool, error) {
+func (r Runner) resolveOperationEndpointRefWithMode(plugin string, call *protocol.OperationCall, inject bool) (bool, error) {
 	if call == nil || len(call.Input) == 0 {
 		return false, nil
 	}
@@ -190,9 +190,21 @@ func (r Runner) resolveOperationEndpointRefWithMode(call *protocol.OperationCall
 	if err := json.Unmarshal(call.Input, &input); err != nil {
 		return false, nil
 	}
+	defaultChanged := false
+	var err error
+	if inject {
+		defaultChanged, err = r.injectDefaultEndpointRef(plugin, input)
+		if err != nil {
+			return false, err
+		}
+	}
 	changed, err := r.resolveEndpointRefInput(input, inject)
-	if err != nil || !changed {
-		return changed, err
+	if err != nil {
+		return false, err
+	}
+	changed = changed || defaultChanged
+	if !changed {
+		return false, nil
 	}
 	raw, err := json.Marshal(input)
 	if err != nil {
@@ -204,7 +216,6 @@ func (r Runner) resolveOperationEndpointRefWithMode(call *protocol.OperationCall
 
 func (r Runner) resolveDatasourceEndpointRef(ctx context.Context, plugin string, req *protocol.Request) error {
 	_ = ctx
-	_ = plugin
 	if req == nil || len(req.Payload) == 0 {
 		return nil
 	}
@@ -212,10 +223,15 @@ func (r Runner) resolveDatasourceEndpointRef(ctx context.Context, plugin string,
 	if err := json.Unmarshal(req.Payload, &input); err != nil {
 		return nil
 	}
+	defaultChanged, err := r.injectDefaultEndpointRef(plugin, input)
+	if err != nil {
+		return err
+	}
 	changed, err := r.resolveEndpointRefInput(input, true)
 	if err != nil {
 		return err
 	}
+	changed = changed || defaultChanged
 	if !changed {
 		return nil
 	}
@@ -225,6 +241,21 @@ func (r Runner) resolveDatasourceEndpointRef(ctx context.Context, plugin string,
 	}
 	req.Payload = raw
 	return nil
+}
+
+func (r Runner) injectDefaultEndpointRef(plugin string, input map[string]any) (bool, error) {
+	if input == nil || strings.TrimSpace(plugin) == "" {
+		return false, nil
+	}
+	if ref, _ := input["endpoint_ref"].(string); strings.TrimSpace(ref) != "" {
+		return false, nil
+	}
+	endpoints, err := r.State.ListEndpoints(plugin)
+	if err != nil || len(endpoints) != 1 {
+		return false, err
+	}
+	input["endpoint_ref"] = endpoints[0].ID
+	return true, nil
 }
 
 func (r Runner) resolveEndpointRefInput(input map[string]any, inject bool) (bool, error) {

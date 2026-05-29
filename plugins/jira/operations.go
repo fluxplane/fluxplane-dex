@@ -52,7 +52,6 @@ type AuthTestResult struct {
 }
 
 type IssueSearchInput struct {
-	JiraTargetInput
 	pluginbinding.DatasourceSearchInput
 	JQL     string   `json:"jql,omitempty" jsonschema:"description=Jira JQL query"`
 	Project string   `json:"project,omitempty" jsonschema:"description=Project key filter"`
@@ -183,7 +182,6 @@ type AttachmentDeleteInput struct {
 }
 
 type UserSearchInput struct {
-	JiraTargetInput
 	pluginbinding.DatasourceSearchInput
 }
 
@@ -633,6 +631,46 @@ func (s Service) UserDatasource(ctx pluginbinding.Context, input UserSearchInput
 	}
 	records := userRecords(ctx.DatasourceSource(), users)
 	return pluginbinding.NewDatasourceSearchResult(DatasourceUsers, strings.TrimSpace(input.Query), records), nil
+}
+
+func (s Service) IssueDatasourceGet(ctx pluginbinding.Context, input pluginbinding.DatasourceGetInput) (pluginbinding.DatasourceGetResult[IssueRecord], error) {
+	client, baseURL, err := s.client(ctx, input)
+	if err != nil {
+		return pluginbinding.DatasourceGetResult[IssueRecord]{}, pluginbinding.Errorf("secret", "%s", err)
+	}
+	key := strings.TrimSpace(pluginbinding.FirstString(pluginbinding.InputMap(input), "id", "key"))
+	if key == "" {
+		return pluginbinding.DatasourceGetResult[IssueRecord]{}, pluginbinding.Fail("bad_input", "issue key is required")
+	}
+	issue, err := client.GetIssue(context.Background(), key)
+	if err != nil {
+		return pluginbinding.DatasourceGetResult[IssueRecord]{}, pluginbinding.Errorf("jira", "%s", err)
+	}
+	record, ok := normalizeIssueRecord(ctx.DatasourceSource(), baseURL, issue)
+	if !ok {
+		return pluginbinding.DatasourceGetResult[IssueRecord]{}, pluginbinding.Fail("not_found", "jira issue not found")
+	}
+	return pluginbinding.NewDatasourceGetResult(DatasourceIssues, record), nil
+}
+
+func (s Service) UserDatasourceGet(ctx pluginbinding.Context, input pluginbinding.DatasourceGetInput) (pluginbinding.DatasourceGetResult[UserRecord], error) {
+	client, _, err := s.client(ctx, input)
+	if err != nil {
+		return pluginbinding.DatasourceGetResult[UserRecord]{}, pluginbinding.Errorf("secret", "%s", err)
+	}
+	accountID := strings.TrimSpace(pluginbinding.FirstString(pluginbinding.InputMap(input), "id", "account_id", "accountId"))
+	if accountID == "" {
+		return pluginbinding.DatasourceGetResult[UserRecord]{}, pluginbinding.Fail("bad_input", "user account_id is required")
+	}
+	user, err := client.GetUser(context.Background(), accountID)
+	if err != nil {
+		return pluginbinding.DatasourceGetResult[UserRecord]{}, pluginbinding.Errorf("jira", "%s", err)
+	}
+	record, ok := normalizeUserRecord(ctx.DatasourceSource(), user)
+	if !ok {
+		return pluginbinding.DatasourceGetResult[UserRecord]{}, pluginbinding.Fail("not_found", "jira user not found")
+	}
+	return pluginbinding.NewDatasourceGetResult(DatasourceUsers, record), nil
 }
 
 func (s Service) IndexBuild(ctx pluginbinding.Context, input IndexBuildInput) (pluginbinding.IndexBuildResult, error) {

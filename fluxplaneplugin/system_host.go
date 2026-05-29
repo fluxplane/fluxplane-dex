@@ -3,6 +3,7 @@ package fluxplaneplugin
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -24,8 +25,12 @@ func (h SystemCapabilityHost) HTTP(ctx context.Context, input pluginbinding.HTTP
 	if h.System == nil || h.System.Network() == nil {
 		return pluginbinding.HTTPResponse{}, fmt.Errorf("fluxplaneplugin: system network is unavailable")
 	}
+	requestURL, err := systemHTTPRequestURL(input)
+	if err != nil {
+		return pluginbinding.HTTPResponse{}, err
+	}
 	resp, err := h.System.Network().DoHTTP(ctx, coresystem.HTTPRequest{
-		URL:       input.URL,
+		URL:       requestURL,
 		Method:    input.Method,
 		Headers:   input.Headers,
 		Body:      string(input.Body),
@@ -48,6 +53,38 @@ func (h SystemCapabilityHost) HTTP(ctx context.Context, input pluginbinding.HTTP
 		Truncated:   resp.Truncated,
 		DurationMS:  int64(resp.Duration / time.Millisecond),
 	}, nil
+}
+
+func systemHTTPRequestURL(input pluginbinding.HTTPRequest) (string, error) {
+	endpoint := strings.TrimSpace(input.URL)
+	if endpoint == "" {
+		return "", fmt.Errorf("HTTP url is required")
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(input.Path) != "" {
+		basePath := strings.TrimRight(parsed.Path, "/")
+		baseEscapedPath := strings.TrimRight(parsed.EscapedPath(), "/")
+		relPath := strings.TrimLeft(strings.TrimSpace(input.Path), "/")
+		decodedRelPath, err := url.PathUnescape(relPath)
+		if err != nil {
+			return "", err
+		}
+		parsed.Path = basePath + "/" + decodedRelPath
+		if baseEscapedPath != basePath || decodedRelPath != relPath {
+			parsed.RawPath = baseEscapedPath + "/" + relPath
+		}
+	}
+	query := parsed.Query()
+	for key, values := range input.Query {
+		for _, value := range values {
+			query.Add(key, value)
+		}
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
 }
 
 func (h SystemCapabilityHost) BlobRead(ctx context.Context, input pluginbinding.BlobReadRequest) (pluginbinding.BlobReadResponse, error) {

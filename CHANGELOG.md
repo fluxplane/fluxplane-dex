@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-05-29
+
 ### Fixed
+- Fixed fluxplaneplugin system-backed HTTP capability requests to preserve dex request paths and query parameters.
+- Added Jira `cloud_id` auth handling so host-system HTTP calls target Atlassian API URLs instead of site URLs.
+- Fixed Jira datasource `get` for issues and users to fetch live records instead of requiring host-index integration.
+- Fixed Jira datasource search inputs to preserve `endpoint_ref` and default datasource calls to the single registered product endpoint when one is available.
+- Defaulted Jira operations that accept `endpoint_ref` to the single registered Jira endpoint when one exists, matching datasource behavior.
 - Expanded Slack datasource generic filter support for `slack.message` and `slack.channel_member`, so datasource clients can pass query/channel/user constraints through the standard `filters` object.
 - Fixed Slack input schema descriptions that contain commas so generated JSON Schema keeps the complete description text.
 - Documented compact plugin development rules for input schemas, comma escaping, datasource generic request compatibility, dev-plugin reinstall checks, and live testing with dex and coder.

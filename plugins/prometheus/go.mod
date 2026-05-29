@@ -2,7 +2,7 @@ module github.com/fluxplane/fluxplane-dex/plugins/prometheus
 
 go 1.26
 
-require github.com/fluxplane/fluxplane-dex v0.13.1
+require github.com/fluxplane/fluxplane-dex v0.13.2
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect

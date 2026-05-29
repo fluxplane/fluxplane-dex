@@ -69,6 +69,54 @@ func TestIssueSearchAndDatasourceNormalizeRecords(t *testing.T) {
 	}
 }
 
+func TestDatasourceSearchAcceptsEndpointRef(t *testing.T) {
+	client := &fakeClient{}
+	var capturedEndpointRef string
+	plugin := NewPluginWithService(Service{ClientFactory: func(_ pluginbinding.Context, endpointRef string) (Client, error) {
+		capturedEndpointRef = endpointRef
+		return client, nil
+	}})
+
+	_ = plugintest.DatasourceSearchOK[IssueDatasourceResult](t, plugin, map[string]any{"datasource": DatasourceIssues, "entity": EntityIssue, "query": "bug", "endpoint_ref": "jira-prod"})
+	if capturedEndpointRef != "jira-prod" {
+		t.Fatalf("endpoint_ref = %q", capturedEndpointRef)
+	}
+}
+
+func TestDatasourceGetFetchesLiveIssue(t *testing.T) {
+	client := &fakeClient{issue: Issue{
+		ID:  "10001",
+		Key: "DEX-7",
+		Fields: IssueFields{
+			Summary: "Ship Jira plugin",
+			Status:  NamedValue{Name: "In Progress"},
+			Project: Project{Key: "DEX", Name: "Dex"},
+		},
+	}}
+	plugin := testPlugin(client)
+
+	out := plugintest.DatasourceGetOK[pluginbinding.DatasourceGetResult[IssueRecord]](t, plugin, map[string]any{"datasource": DatasourceIssues, "entity": EntityIssue, "id": "DEX-7"})
+	if out.Record.ID != "DEX-7" || out.Record.Summary != "Ship Jira plugin" || out.Record.ProjectKey != "DEX" {
+		t.Fatalf("get output = %#v", out)
+	}
+	if client.issueKey != "DEX-7" {
+		t.Fatalf("issue key = %q", client.issueKey)
+	}
+}
+
+func TestDatasourceGetFetchesLiveUser(t *testing.T) {
+	client := &fakeClient{user: User{AccountID: "acct-1", DisplayName: "Ada Lovelace", Active: true}}
+	plugin := testPlugin(client)
+
+	out := plugintest.DatasourceGetOK[pluginbinding.DatasourceGetResult[UserRecord]](t, plugin, map[string]any{"datasource": DatasourceUsers, "entity": EntityUser, "id": "acct-1"})
+	if out.Record.ID != "acct-1" || out.Record.DisplayName != "Ada Lovelace" || !out.Record.Active {
+		t.Fatalf("get output = %#v", out)
+	}
+	if client.userOptions.Query != "acct-1" {
+		t.Fatalf("user id = %q", client.userOptions.Query)
+	}
+}
+
 func TestIssueJQLCombinesFiltersWithAnd(t *testing.T) {
 	got := issueJQL(IssueSearchOptions{Project: "DEX", Status: "In Progress", Query: "plugin", OrderBy: "updated DESC"})
 	want := `project = "DEX" and status = "In Progress" and text ~ "plugin" order by updated DESC`
@@ -577,4 +625,15 @@ func (c *fakeClient) EditMeta(_ context.Context, key string) (IssueMetaResult, e
 func (c *fakeClient) SearchUsers(_ context.Context, options UserSearchOptions) ([]User, error) {
 	c.userOptions = options
 	return c.users, nil
+}
+
+func (c *fakeClient) GetUser(_ context.Context, accountID string) (User, error) {
+	c.userOptions.Query = accountID
+	if c.user.AccountID != "" {
+		return c.user, nil
+	}
+	if len(c.users) > 0 {
+		return c.users[0], nil
+	}
+	return User{}, nil
 }

@@ -19,7 +19,7 @@ type Prompter interface {
 // and react (e.g. fall back to env-var-based auto-connect).
 type NoopPrompter struct{}
 
-func (NoopPrompter) Confirm(context.Context, string) (bool, error)   { return false, ErrNoPrompter }
-func (NoopPrompter) Input(context.Context, string) (string, error)   { return "", ErrNoPrompter }
-func (NoopPrompter) Secret(context.Context, string) (string, error)  { return "", ErrNoPrompter }
-func (NoopPrompter) Print(context.Context, string) error             { return nil }
+func (NoopPrompter) Confirm(context.Context, string) (bool, error)  { return false, ErrNoPrompter }
+func (NoopPrompter) Input(context.Context, string) (string, error)  { return "", ErrNoPrompter }
+func (NoopPrompter) Secret(context.Context, string) (string, error) { return "", ErrNoPrompter }
+func (NoopPrompter) Print(context.Context, string) error            { return nil }

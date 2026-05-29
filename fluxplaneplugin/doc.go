@@ -35,7 +35,7 @@
 //
 //   - Wrap(engine, name)  — one pluginhost.Plugin for a single dex plugin.
 //   - All(engine)         — pluginhost.Plugin slice for every marketplace
-//                           plugin.
+//     plugin.
 //
 // Scope: operations + operation sets + datasource specs + datasource
 // providers (with Searcher/Getter). Auth methods, identity resolvers, and

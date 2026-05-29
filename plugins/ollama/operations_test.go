@@ -170,6 +170,43 @@ func TestChatRejectsEmptyMessages(t *testing.T) {
 	}
 }
 
+func TestChatRejectsInvalidMessages(t *testing.T) {
+	plugin := NewPluginWithService(NewService())
+	cases := []struct {
+		name     string
+		messages []ChatMessage
+		want     string
+	}{
+		{
+			name:     "missing role",
+			messages: []ChatMessage{{Content: "hello"}},
+			want:     "message 0 role is required",
+		},
+		{
+			name:     "invalid role",
+			messages: []ChatMessage{{Role: "developer", Content: "hello"}},
+			want:     "message 0 role must be system, user, assistant, or tool",
+		},
+		{
+			name:     "missing content",
+			messages: []ChatMessage{{Role: "user"}},
+			want:     "message 0 content is required",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := plugintest.RunError(t, plugin, OperationChat, ChatInput{
+				OllamaTargetInput: testTarget(),
+				Model:             "llama3",
+				Messages:          tc.messages,
+			})
+			if err == nil || err.Code != "bad_input" || !strings.Contains(err.Message, tc.want) {
+				t.Fatalf("err = %#v, want bad_input containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestEmbedParsesVectors(t *testing.T) {
 	host := newRoutedHost(t, map[string]string{
 		"POST /api/embed": `{"model":"all-minilm","embeddings":[[0.1,0.2,0.3]]}`,
@@ -209,6 +246,18 @@ func TestEmbedRejectsEmptyInput(t *testing.T) {
 	plugin := NewPluginWithService(NewService())
 	err := plugintest.RunError(t, plugin, OperationEmbed, EmbedInput{OllamaTargetInput: testTarget(), Model: "all-minilm"})
 	if err == nil || err.Code != "bad_input" {
+		t.Fatalf("err = %#v", err)
+	}
+}
+
+func TestEmbedRejectsBlankInputEntry(t *testing.T) {
+	plugin := NewPluginWithService(NewService())
+	err := plugintest.RunError(t, plugin, OperationEmbed, EmbedInput{
+		OllamaTargetInput: testTarget(),
+		Model:             "all-minilm",
+		Input:             []string{"hello", "   "},
+	})
+	if err == nil || err.Code != "bad_input" || !strings.Contains(err.Message, "input 1 must not be empty") {
 		t.Fatalf("err = %#v", err)
 	}
 }

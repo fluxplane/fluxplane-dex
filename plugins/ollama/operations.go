@@ -125,8 +125,8 @@ func (s Service) Chat(ctx pluginbinding.Context, input ChatInput) (ChatResult, e
 	if model == "" {
 		return ChatResult{}, pluginbinding.Fail("bad_input", "model is required")
 	}
-	if len(input.Messages) == 0 {
-		return ChatResult{}, pluginbinding.Fail("bad_input", "messages must not be empty")
+	if err := validateChatMessages(input.Messages); err != nil {
+		return ChatResult{}, err
 	}
 	client, err := s.client(ctx, input.OllamaTargetInput)
 	if err != nil {
@@ -158,8 +158,8 @@ func (s Service) Embed(ctx pluginbinding.Context, input EmbedInput) (EmbedResult
 	if model == "" {
 		return EmbedResult{}, pluginbinding.Fail("bad_input", "model is required")
 	}
-	if len(input.Input) == 0 {
-		return EmbedResult{}, pluginbinding.Fail("bad_input", "input must contain at least one entry")
+	if err := validateEmbedInput(input.Input); err != nil {
+		return EmbedResult{}, err
 	}
 	client, err := s.client(ctx, input.OllamaTargetInput)
 	if err != nil {
@@ -183,6 +183,39 @@ func (s Service) Embed(ctx pluginbinding.Context, input EmbedInput) (EmbedResult
 		return EmbedResult{}, pluginbinding.Errorf("ollama", "%s", err)
 	}
 	return out, nil
+}
+
+func validateChatMessages(messages []ChatMessage) error {
+	if len(messages) == 0 {
+		return pluginbinding.Fail("bad_input", "messages must not be empty")
+	}
+	for i, message := range messages {
+		role := strings.TrimSpace(message.Role)
+		if role == "" {
+			return pluginbinding.Errorf("bad_input", "message %d role is required", i)
+		}
+		switch role {
+		case "system", "user", "assistant", "tool":
+		default:
+			return pluginbinding.Errorf("bad_input", "message %d role must be system, user, assistant, or tool", i)
+		}
+		if strings.TrimSpace(message.Content) == "" {
+			return pluginbinding.Errorf("bad_input", "message %d content is required", i)
+		}
+	}
+	return nil
+}
+
+func validateEmbedInput(input []string) error {
+	if len(input) == 0 {
+		return pluginbinding.Fail("bad_input", "input must contain at least one entry")
+	}
+	for i, value := range input {
+		if strings.TrimSpace(value) == "" {
+			return pluginbinding.Errorf("bad_input", "input %d must not be empty", i)
+		}
+	}
+	return nil
 }
 
 func (s Service) ModelSearch(ctx pluginbinding.Context, input pluginbinding.DatasourceSearchInput) (ModelSearchResult, error) {

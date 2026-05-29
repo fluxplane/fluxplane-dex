@@ -21,4 +21,4 @@ use (
 	./plugins/tavily
 )
 
-replace github.com/fluxplane/fluxplane-dex v0.15.0 => .
+replace github.com/fluxplane/fluxplane-dex v0.15.1 => .

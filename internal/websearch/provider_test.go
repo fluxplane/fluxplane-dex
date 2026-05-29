@@ -46,7 +46,7 @@ func TestDefineProviderWiresManifestOperationDatasourceAndSecrets(t *testing.T) 
 		t.Fatalf("datasources = %#v", manifest.Datasources)
 	}
 	datasource := manifest.Datasources[0]
-	if datasource.EntitySchema == nil || datasource.EntitySchema.IDField != "url" || datasource.Fallback != core.DatasourceFallbackProviderFirst {
+	if datasource.EntitySchema == nil || datasource.EntitySchema.IDField != "url" || datasource.Fallback != core.DatasourceFallbackProviderFirst || len(datasource.Access) != 1 || datasource.Access[0] != core.OperationAccessNetwork {
 		t.Fatalf("datasource metadata = %#v", datasource)
 	}
 	out := plugintest.DatasourceSearchOK[DatasourceSearchResult](t, plugin, SearchInput{Query: "dex", Entity: EntitySearchResult})

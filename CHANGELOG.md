@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-05-29
+
+### Fixed
+- Declared network access on shared web search datasource specs so host policy grants match Tavily and DuckDuckGo live datasource execution.
+
 ## [0.15.0] - 2026-05-29
 
 ### Added

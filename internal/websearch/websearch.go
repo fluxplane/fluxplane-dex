@@ -287,6 +287,7 @@ func DatasourceSpec(name, description string, secretPurposes ...string) core.Dat
 	options := []pluginbinding.DatasourceSpecOption{
 		pluginbinding.EntitySchemaFor[SearchRecord](),
 		pluginbinding.EntitySchema(core.DatasourceEntitySchema{IDField: "url", TitleField: "title"}),
+		pluginbinding.DatasourceAccess(core.OperationAccessNetwork),
 		pluginbinding.Fallback(core.DatasourceFallbackProviderFirst),
 	}
 	if len(secretPurposes) > 0 {

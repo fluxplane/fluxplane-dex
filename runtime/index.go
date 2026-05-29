@@ -310,7 +310,7 @@ func (s State) IndexStatus(plugin, instance string) (IndexStatus, error) {
 }
 
 func (s State) loadIndexSnapshots(plugin, instance string) ([]IndexSnapshot, error) {
-	dir := filepath.Join(s.IndexDir(), safeName(plugin), safeName(NormalizeInstance(instance)))
+	dir := filepath.Join(s.IndexDir(), pathName(plugin), pathName(NormalizeInstance(instance)))
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -338,7 +338,7 @@ func (s State) loadIndexSnapshots(plugin, instance string) ([]IndexSnapshot, err
 }
 
 func (s State) indexPath(plugin, instance, index string) string {
-	return filepath.Join(s.IndexDir(), safeName(plugin), safeName(instance), safeName(index)+".json")
+	return filepath.Join(s.IndexDir(), pathName(plugin), pathName(instance), pathName(index)+".json")
 }
 
 func normalizeIndexMetadata(raw json.RawMessage, snapshot IndexSnapshot) json.RawMessage {

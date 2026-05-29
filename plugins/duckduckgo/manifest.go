@@ -8,7 +8,7 @@ import (
 
 const (
 	PluginName        = "duckduckgo"
-	PluginVersion     = "0.13.3"
+	PluginVersion     = "0.13.4"
 	PluginDescription = "DuckDuckGo web search provider."
 
 	OperationSearch = "duckduckgo.search"

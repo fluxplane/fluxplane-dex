@@ -54,3 +54,45 @@ func TestSecretGrantRejectsWrongPurpose(t *testing.T) {
 		t.Fatal("expected wrong purpose to be rejected")
 	}
 }
+
+func TestSecretPathNamesDoNotCollide(t *testing.T) {
+	state, err := NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SaveSecret("example", "prod/work", "access_token", StoredSecret{Value: "slash-instance"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SaveSecret("example", "prod_work", "access_token", StoredSecret{Value: "underscore-instance"}); err != nil {
+		t.Fatal(err)
+	}
+	grant, err := state.CreateGrant("example", "prod_work", nil, []SecretPurpose{{Name: "access_token"}}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	material, err := state.ResolveSecret(context.Background(), "example", "prod_work", "access_token", grant.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if material.Value != "underscore-instance" {
+		t.Fatalf("resolved colliding instance secret %q", material.Value)
+	}
+
+	if err := state.SaveSecret("example", "default", "access/token", StoredSecret{Value: "slash-purpose"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SaveSecret("example", "default", "access_token", StoredSecret{Value: "underscore-purpose"}); err != nil {
+		t.Fatal(err)
+	}
+	purposeGrant, err := state.CreateGrant("example", "default", nil, []SecretPurpose{{Name: "access_token"}}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	purposeMaterial, err := state.ResolveSecret(context.Background(), "example", "default", "access_token", purposeGrant.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if purposeMaterial.Value != "underscore-purpose" {
+		t.Fatalf("resolved colliding purpose secret %q", purposeMaterial.Value)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,8 @@ import (
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/protocol"
 )
+
+const maxPluginOutputBytes = 4 * 1024 * 1024
 
 type Runner struct {
 	Marketplace  Marketplace
@@ -460,10 +463,15 @@ func (r Runner) invokeRequestV1(ctx context.Context, entry core.PluginEntry, req
 	}
 	cmd.Stdin = bytes.NewReader(data)
 	cmd.Env = r.pluginEnv()
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr limitedBuffer
+	stdout.limit = maxPluginOutputBytes
+	stderr.limit = maxPluginOutputBytes
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if stdout.truncated || stderr.truncated {
+			return protocol.Response{}, fmt.Errorf("run plugin %s: plugin output exceeded %d bytes", entry.Name, maxPluginOutputBytes)
+		}
 		if stdout.Len() > 0 {
 			resp, decodeErr := decodeResponse(stdout.Bytes())
 			if resp.Protocol == protocol.Version || resp.Protocol == protocol.VersionV1 {
@@ -475,6 +483,9 @@ func (r Runner) invokeRequestV1(ctx context.Context, entry core.PluginEntry, req
 			msg = err.Error()
 		}
 		return protocol.Response{}, fmt.Errorf("run plugin %s: %s", entry.Name, msg)
+	}
+	if stdout.truncated || stderr.truncated {
+		return protocol.Response{}, fmt.Errorf("run plugin %s: plugin output exceeded %d bytes", entry.Name, maxPluginOutputBytes)
 	}
 	return decodeResponse(stdout.Bytes())
 }
@@ -493,13 +504,15 @@ func (r Runner) invokeRequestV2(ctx context.Context, entry core.PluginEntry, req
 		return protocol.Response{}, err
 	}
 	cmd.Env = r.pluginEnv()
-	var stderr bytes.Buffer
+	var stderr limitedBuffer
+	stderr.limit = maxPluginOutputBytes
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		return protocol.Response{}, err
 	}
 	enc := json.NewEncoder(stdin)
-	dec := json.NewDecoder(stdout)
+	stdoutLimit := &limitedReadCloser{ReadCloser: stdout, remaining: maxPluginOutputBytes}
+	dec := json.NewDecoder(stdoutLimit)
 	frame, err := protocol.NewRequestFrame("root", protocol.TargetPlugin, req.Command, req)
 	if err != nil {
 		_ = stdin.Close()
@@ -515,6 +528,16 @@ func (r Runner) invokeRequestV2(ctx context.Context, entry core.PluginEntry, req
 		var frame protocol.Frame
 		if err := dec.Decode(&frame); err != nil {
 			_ = stdin.Close()
+			if stdoutLimit.exceeded || stderr.truncated {
+				if cmd.Process != nil {
+					_ = cmd.Process.Kill()
+				}
+				_ = cmd.Wait()
+				if stdoutLimit.exceeded {
+					return protocol.Response{}, fmt.Errorf("run plugin %s: plugin stdout exceeded %d bytes", entry.Name, maxPluginOutputBytes)
+				}
+				return protocol.Response{}, fmt.Errorf("run plugin %s: plugin stderr exceeded %d bytes", entry.Name, maxPluginOutputBytes)
+			}
 			waitErr := cmd.Wait()
 			msg := strings.TrimSpace(stderr.String())
 			if msg == "" && waitErr != nil {
@@ -539,6 +562,9 @@ func (r Runner) invokeRequestV2(ctx context.Context, entry core.PluginEntry, req
 			}
 			_ = stdin.Close()
 			waitErr := cmd.Wait()
+			if stderr.truncated {
+				return protocol.Response{}, fmt.Errorf("run plugin %s: plugin stderr exceeded %d bytes", entry.Name, maxPluginOutputBytes)
+			}
 			resp := protocol.Response{Protocol: protocol.Version, OK: frame.OK, Result: frame.Result, Error: frame.Error}
 			if waitErr != nil && resp.OK {
 				msg := strings.TrimSpace(stderr.String())
@@ -1475,6 +1501,49 @@ func localPluginPath(workDir, localPath string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+type limitedBuffer struct {
+	bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if b.limit <= 0 {
+		return b.Buffer.Write(p)
+	}
+	remaining := b.limit - b.Buffer.Len()
+	if remaining <= 0 {
+		b.truncated = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		_, _ = b.Buffer.Write(p[:remaining])
+		b.truncated = true
+		return len(p), nil
+	}
+	_, _ = b.Buffer.Write(p)
+	return len(p), nil
+}
+
+type limitedReadCloser struct {
+	io.ReadCloser
+	remaining int
+	exceeded  bool
+}
+
+func (r *limitedReadCloser) Read(p []byte) (int, error) {
+	if r.remaining <= 0 {
+		r.exceeded = true
+		return 0, fmt.Errorf("plugin output exceeded %d bytes", maxPluginOutputBytes)
+	}
+	if len(p) > r.remaining {
+		p = p[:r.remaining]
+	}
+	n, err := r.ReadCloser.Read(p)
+	r.remaining -= n
+	return n, err
 }
 
 func decodeResponse(data []byte) (protocol.Response, error) {

@@ -3,6 +3,7 @@ package dex_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	dex "github.com/fluxplane/fluxplane-dex"
@@ -37,6 +38,26 @@ func TestNewPassesCapabilitiesToRunner(t *testing.T) {
 	if e.Runner().Capabilities != capabilities {
 		t.Fatalf("runner capabilities were not wired from config")
 	}
+}
+
+func TestEngineAccessorsAreSafeForConcurrentFirstUse(t *testing.T) {
+	e := newEngine(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = e.Auth()
+			_ = e.Plugins()
+			_ = e.Operations()
+			_ = e.Datasources()
+			_ = e.Endpoints()
+			_ = e.Secrets()
+			_ = e.Index()
+			_ = e.Contexts()
+		}()
+	}
+	wg.Wait()
 }
 
 func TestPluginsSearchFiltersByQuery(t *testing.T) {

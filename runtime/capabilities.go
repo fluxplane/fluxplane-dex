@@ -14,6 +14,12 @@ import (
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 )
 
+const (
+	defaultHTTPResponseMaxBytes = 512 * 1024
+	hardHTTPResponseMaxBytes    = 16 * 1024 * 1024
+	hardBlobReadMaxBytes        = 32 * 1024 * 1024
+)
+
 type LocalCapabilityHost struct {
 	Root      string
 	Providers map[string]HostProvider
@@ -62,10 +68,7 @@ func (h LocalCapabilityHost) HTTP(ctx context.Context, input pluginbinding.HTTPR
 		return pluginbinding.HTTPResponse{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	maxBytes := input.MaxBytes
-	if maxBytes <= 0 {
-		maxBytes = 512 * 1024
-	}
+	maxBytes := boundedHTTPMaxBytes(input.MaxBytes)
 	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxBytes)+1))
 	if err != nil {
 		return pluginbinding.HTTPResponse{}, err
@@ -132,10 +135,7 @@ func (h LocalCapabilityHost) BlobRead(_ context.Context, input pluginbinding.Blo
 	if info.IsDir() {
 		return pluginbinding.BlobReadResponse{}, fmt.Errorf("blob path is a directory")
 	}
-	maxBytes := input.MaxBytes
-	if maxBytes <= 0 {
-		maxBytes = info.Size()
-	}
+	maxBytes := boundedBlobMaxBytes(input.MaxBytes, info.Size())
 	file, err := os.Open(path)
 	if err != nil {
 		return pluginbinding.BlobReadResponse{}, err
@@ -351,6 +351,26 @@ func allowedHTTPMethod(method string) bool {
 	default:
 		return false
 	}
+}
+
+func boundedHTTPMaxBytes(requested int) int {
+	if requested <= 0 {
+		return defaultHTTPResponseMaxBytes
+	}
+	if requested > hardHTTPResponseMaxBytes {
+		return hardHTTPResponseMaxBytes
+	}
+	return requested
+}
+
+func boundedBlobMaxBytes(requested, size int64) int64 {
+	if requested <= 0 {
+		requested = size
+	}
+	if requested > hardBlobReadMaxBytes {
+		return hardBlobReadMaxBytes
+	}
+	return requested
 }
 
 func firstNonEmpty(values ...string) string {

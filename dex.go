@@ -96,7 +96,16 @@ func New(cfg Config) (*Engine, error) {
 		}
 	}
 
-	return &Engine{runner: runner, cfg: cfg}, nil
+	engine := &Engine{runner: runner, cfg: cfg}
+	engine.auth = &AuthService{engine: engine}
+	engine.plugins = &PluginService{engine: engine}
+	engine.operations = &OperationService{engine: engine}
+	engine.datasources = &DatasourceService{engine: engine}
+	engine.endpoints = &EndpointService{engine: engine}
+	engine.secrets = &SecretService{engine: engine}
+	engine.index = &IndexService{engine: engine}
+	engine.contexts = &ContextService{engine: engine}
+	return engine, nil
 }
 
 // Close releases resources held by the engine. Currently a no-op; reserved

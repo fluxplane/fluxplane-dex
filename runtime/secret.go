@@ -191,7 +191,7 @@ func (s State) SecretStatus(plugin, instance string, purposes []SecretPurpose) m
 }
 
 func (s State) HasStoredAuth(plugin, instance string) (bool, error) {
-	dir := filepath.Join(s.AuthDir(), safeName(plugin), safeName(NormalizeInstance(instance)))
+	dir := filepath.Join(s.AuthDir(), pathName(plugin), pathName(NormalizeInstance(instance)))
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -203,8 +203,7 @@ func (s State) HasStoredAuth(plugin, instance string) (bool, error) {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
-		purpose := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
-		if _, ok, err := s.loadStoredSecret(plugin, instance, purpose); err != nil {
+		if ok, err := storedSecretFileHasMaterial(filepath.Join(dir, entry.Name())); err != nil {
 			return false, err
 		} else if ok {
 			return true, nil
@@ -270,12 +269,24 @@ func (s State) loadStoredSecret(plugin, instance, purpose string) (SecretMateria
 	return SecretMaterial{Kind: stored.Kind, Value: stored.Value, Source: "store"}, true, nil
 }
 
+func storedSecretFileHasMaterial(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	var stored StoredSecret
+	if err := json.Unmarshal(data, &stored); err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(stored.Value) != "", nil
+}
+
 func (s State) grantPath(token string) string {
-	return filepath.Join(s.GrantsDir(), safeName(token)+".json")
+	return filepath.Join(s.GrantsDir(), pathName(token)+".json")
 }
 
 func (s State) secretPath(plugin, instance, purpose string) string {
-	return filepath.Join(s.AuthDir(), safeName(plugin), safeName(instance), safeName(purpose)+".json")
+	return filepath.Join(s.AuthDir(), pathName(plugin), pathName(instance), pathName(purpose)+".json")
 }
 
 func randomToken() (string, error) {
@@ -381,21 +392,10 @@ func contains(values []string, value string) bool {
 	return false
 }
 
-func safeName(value string) string {
+func pathName(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "_"
 	}
-	var b strings.Builder
-	for _, r := range value {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r == '-', r == '_', r == '.':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('_')
-		}
-	}
-	return b.String()
+	return base64.RawURLEncoding.EncodeToString([]byte(value))
 }

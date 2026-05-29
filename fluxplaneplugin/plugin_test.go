@@ -18,7 +18,13 @@ import (
 
 func newEngine(t *testing.T) *dex.Engine {
 	t.Helper()
-	e, err := dex.New(dex.Config{WorkDir: t.TempDir()})
+	return newEngineWithConfig(t, dex.Config{})
+}
+
+func newEngineWithConfig(t *testing.T, cfg dex.Config) *dex.Engine {
+	t.Helper()
+	cfg.WorkDir = t.TempDir()
+	e, err := dex.New(cfg)
 	if err != nil {
 		t.Fatalf("dex.New: %v", err)
 	}

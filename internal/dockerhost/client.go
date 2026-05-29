@@ -191,7 +191,7 @@ func (c liveClient) ContainerExec(ctx context.Context, input ContainerExecInput)
 	if err != nil {
 		return ContainerExecResult{}, err
 	}
-	inspect, err := c.client.ContainerExecInspect(context.Background(), create.ID)
+	inspect, err := c.client.ContainerExecInspect(execCtx, create.ID)
 	if err != nil {
 		return ContainerExecResult{}, err
 	}

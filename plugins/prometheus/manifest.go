@@ -7,7 +7,7 @@ import (
 
 const (
 	PluginName        = "prometheus"
-	PluginVersion     = "0.13.3"
+	PluginVersion     = "0.13.4"
 	PluginDescription = "Prometheus endpoint discovery, health checks, PromQL queries, labels, targets, and alerts."
 
 	OperationTest       = "prometheus.test"

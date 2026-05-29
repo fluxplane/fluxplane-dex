@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	coreactivation "github.com/fluxplane/fluxplane-core/core/activation"
 	coredatasource "github.com/fluxplane/fluxplane-core/core/datasource"
@@ -14,6 +15,7 @@ import (
 	runtimeevidence "github.com/fluxplane/fluxplane-core/runtime/evidence"
 
 	dex "github.com/fluxplane/fluxplane-dex"
+	dexcore "github.com/fluxplane/fluxplane-dex/core"
 )
 
 // adapter exposes one dex plugin as a pluginhost.Plugin +
@@ -24,6 +26,16 @@ import (
 type adapter struct {
 	engine *dex.Engine
 	name   string
+	shared *adapterState
+
+	manifestMu     sync.Mutex
+	manifestCached bool
+	manifest       dexcore.PluginManifest
+}
+
+type adapterState struct {
+	intentOnce sync.Once
+	intent     *intentIndex
 }
 
 var (
@@ -39,6 +51,10 @@ var (
 // every marketplace entry is available for activation regardless of whether
 // dex has stored credentials for it.
 func Wrap(engine *dex.Engine, name string) (pluginhost.Plugin, error) {
+	return wrapWithState(engine, name, &adapterState{})
+}
+
+func wrapWithState(engine *dex.Engine, name string, shared *adapterState) (pluginhost.Plugin, error) {
 	if engine == nil {
 		return nil, fmt.Errorf("fluxplaneplugin: engine is nil")
 	}
@@ -49,7 +65,10 @@ func Wrap(engine *dex.Engine, name string) (pluginhost.Plugin, error) {
 	if _, ok := engine.Marketplace().Resolve(trimmed); !ok {
 		return nil, fmt.Errorf("fluxplaneplugin: %w: %q", dex.ErrPluginNotFound, trimmed)
 	}
-	return &adapter{engine: engine, name: trimmed}, nil
+	if shared == nil {
+		shared = &adapterState{}
+	}
+	return &adapter{engine: engine, name: trimmed, shared: shared}, nil
 }
 
 // All wraps every plugin from the engine marketplace and returns one
@@ -63,8 +82,9 @@ func All(engine *dex.Engine) ([]pluginhost.Plugin, error) {
 	}
 	entries := engine.Marketplace().Plugins()
 	out := make([]pluginhost.Plugin, 0, len(entries))
+	shared := &adapterState{}
 	for _, entry := range entries {
-		plug, err := Wrap(engine, entry.Name)
+		plug, err := wrapWithState(engine, entry.Name, shared)
 		if err != nil {
 			return nil, err
 		}
@@ -94,7 +114,7 @@ func (a *adapter) Manifest() pluginhost.Manifest {
 //     with dex-backed operations underneath;
 //   - datasource specs surfaced via DatasourceProviderContributor below.
 func (a *adapter) Contributions(ctx context.Context, _ pluginhost.Context) (resource.ContributionBundle, error) {
-	manifest, err := a.engine.Manifest(ctx, a.name)
+	manifest, err := a.cachedManifest(ctx)
 	if err != nil {
 		// Plugin not installed / manifest unreachable. Return a stub bundle
 		// with a PluginRef and a warning diagnostic instead of failing —
@@ -137,7 +157,7 @@ func (a *adapter) Contributions(ctx context.Context, _ pluginhost.Context) (reso
 // behavior of Contributions. The op name → binding mapping is rebuilt the
 // next time the plugin host resolves the ref after the plugin is installed.
 func (a *adapter) Operations(ctx context.Context, pluginCtx pluginhost.Context) ([]operation.Operation, error) {
-	manifest, err := a.engine.Manifest(ctx, a.name)
+	manifest, err := a.cachedManifest(ctx)
 	if err != nil {
 		return nil, nil
 	}
@@ -155,11 +175,41 @@ func (a *adapter) Operations(ctx context.Context, pluginCtx pluginhost.Context) 
 // the engine's marketplace); pluginhost-level dedup keeps the runtime
 // from invoking it more than once per turn.
 func (a *adapter) AssertionDerivers(ctx context.Context, _ pluginhost.Context) ([]runtimeevidence.AssertionDeriver, error) {
-	idx := buildIntentIndex(ctx, a.engine)
+	idx := a.cachedIntentIndex(ctx)
 	if idx == nil || len(idx.keywords) == 0 {
 		return nil, nil
 	}
 	return []runtimeevidence.AssertionDeriver{intentDeriver{index: idx}}, nil
+}
+
+func (a *adapter) cachedManifest(ctx context.Context) (dexcore.PluginManifest, error) {
+	a.manifestMu.Lock()
+	if a.manifestCached {
+		manifest := a.manifest
+		a.manifestMu.Unlock()
+		return manifest, nil
+	}
+	a.manifestMu.Unlock()
+
+	manifest, err := a.engine.Manifest(ctx, a.name)
+	if err != nil {
+		return dexcore.PluginManifest{}, err
+	}
+	a.manifestMu.Lock()
+	a.manifest = manifest
+	a.manifestCached = true
+	a.manifestMu.Unlock()
+	return manifest, nil
+}
+
+func (a *adapter) cachedIntentIndex(ctx context.Context) *intentIndex {
+	if a.shared == nil {
+		return buildIntentIndex(ctx, a.engine)
+	}
+	a.shared.intentOnce.Do(func() {
+		a.shared.intent = buildIntentIndex(ctx, a.engine)
+	})
+	return a.shared.intent
 }
 
 func (a *adapter) runner(opName, instance string) operation.Handler {

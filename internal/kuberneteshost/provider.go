@@ -504,6 +504,10 @@ func writePortForwardRecord(path string, result PortForwardResult) error {
 }
 
 func readPortForwardRecord(id string) (PortForwardResult, error) {
+	id = strings.TrimSpace(id)
+	if !validPortForwardID(id) {
+		return PortForwardResult{}, fmt.Errorf("invalid port-forward id %q", id)
+	}
 	dir, err := portForwardStateDir()
 	if err != nil {
 		return PortForwardResult{}, err
@@ -517,6 +521,18 @@ func readPortForwardRecord(id string) (PortForwardResult, error) {
 		return PortForwardResult{}, err
 	}
 	return result, nil
+}
+
+func validPortForwardID(id string) bool {
+	if len(id) != len("kpf-")+12 || !strings.HasPrefix(id, "kpf-") {
+		return false
+	}
+	for _, r := range id[len("kpf-"):] {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func waitForPortForward(address string, port, pid int, logPath string) error {

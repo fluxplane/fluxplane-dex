@@ -22,7 +22,7 @@ import (
 // that has no entities — callers see an empty set rather than a hard failure
 // so listing is robust to transient dex errors.
 func (a *adapter) DatasourceProviders(ctx context.Context, pluginCtx pluginhost.Context) ([]coredatasource.Provider, error) {
-	manifest, err := a.engine.Manifest(ctx, a.name)
+	manifest, err := a.cachedManifest(ctx)
 	if err != nil {
 		return []coredatasource.Provider{&dexDatasourceProvider{plugin: a.name, instance: pluginCtx.Ref.Instance, engine: a.engine}}, nil
 	}
@@ -166,17 +166,17 @@ type dexAccessor struct {
 }
 
 // sourceFor resolves the dex datasource for a given core EntityType. Returns
-// the fallback (e.g. first declared entity) when entity is empty or unknown
-// so callers that don't pass entity filters still get a deterministic source.
-func (a *dexAccessor) sourceFor(entity string) dex.DatasourceSpec {
+// the fallback only when entity is empty, so typoed or unsupported entity names
+// fail closed instead of querying and relabeling an unrelated datasource.
+func (a *dexAccessor) sourceFor(entity string) (dex.DatasourceSpec, error) {
 	entity = strings.TrimSpace(entity)
 	if entity == "" {
-		return a.fallback
+		return a.fallback, nil
 	}
 	if src, ok := a.byEntity[entity]; ok {
-		return src
+		return src, nil
 	}
-	return a.fallback
+	return dex.DatasourceSpec{}, fmt.Errorf("fluxplaneplugin: datasource %q does not support entity %q", a.spec.Name, entity)
 }
 
 var (
@@ -216,7 +216,10 @@ func (a *dexAccessor) Entities() []coredatasource.EntitySpec {
 // source (e.g. gitlab.projects) so the dex plugin's handler still dispatches
 // on its own per-source registry.
 func (a *dexAccessor) Search(ctx context.Context, req coredatasource.SearchRequest) (coredatasource.SearchResult, error) {
-	src := a.sourceFor(string(req.Entity))
+	src, err := a.sourceFor(string(req.Entity))
+	if err != nil {
+		return coredatasource.SearchResult{}, err
+	}
 	entity := strings.TrimSpace(string(req.Entity))
 	if entity == "" {
 		entity = src.Entity
@@ -254,7 +257,10 @@ func (a *dexAccessor) Search(ctx context.Context, req coredatasource.SearchReque
 }
 
 func (a *dexAccessor) List(ctx context.Context, req coredatasource.ListRequest) (coredatasource.ListResult, error) {
-	src := a.sourceFor(string(req.Entity))
+	src, err := a.sourceFor(string(req.Entity))
+	if err != nil {
+		return coredatasource.ListResult{}, err
+	}
 	entity := strings.TrimSpace(string(req.Entity))
 	if entity == "" {
 		entity = src.Entity
@@ -295,7 +301,10 @@ func (a *dexAccessor) List(ctx context.Context, req coredatasource.ListRequest) 
 }
 
 func (a *dexAccessor) Get(ctx context.Context, req coredatasource.GetRequest) (coredatasource.Record, error) {
-	src := a.sourceFor(string(req.Entity))
+	src, err := a.sourceFor(string(req.Entity))
+	if err != nil {
+		return coredatasource.Record{}, err
+	}
 	entity := strings.TrimSpace(string(req.Entity))
 	if entity == "" {
 		entity = src.Entity

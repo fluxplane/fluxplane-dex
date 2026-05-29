@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.4] - 2026-05-29
+
+### Changed
+- Cached successful fluxplaneplugin manifest snapshots and the shared dex intent index across adapter contribution hooks, reducing startup latency for hosts that register many dex plugins while keeping install failures retryable.
+- Upgraded Go module dependencies across the root module, fluxplaneplugin adapter, and plugin modules, then tidied each module.
+- Updated release version references for the root module, plugin manifests, built-in plugin metadata, release docs, and README examples.
+
+### Fixed
+- Fixed concurrent first-use races in `dex.Engine` service accessors by eagerly initializing services at engine construction.
+- Fixed secret and index state path naming to use reversible base64url encoding instead of lossy sanitized names, preventing collisions between values such as `prod/work` and `prod_work`.
+- Bounded plugin stdout/stderr capture and host HTTP/blob reads to avoid unbounded memory growth from oversized plugin or capability responses.
+- Fixed Docker exec inspection to respect the caller's execution context.
+- Hardened Kubernetes port-forward state reads by validating generated port-forward IDs before opening state files.
+- Fixed fluxplaneplugin datasource routing to reject unknown entity names instead of querying and relabeling the fallback datasource.
+
 ## [0.13.3] - 2026-05-29
 
 ### Added

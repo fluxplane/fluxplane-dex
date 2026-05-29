@@ -7,6 +7,7 @@ import (
 
 	"github.com/fluxplane/fluxplane-core/core/resource"
 	"github.com/fluxplane/fluxplane-core/orchestration/pluginhost"
+	dex "github.com/fluxplane/fluxplane-dex"
 
 	"github.com/fluxplane/fluxplane-dex/fluxplaneplugin"
 )
@@ -57,7 +58,14 @@ func TestBundlesEmitsOnePerMarketplaceEntry(t *testing.T) {
 // ephemeral test DEX_HOME) should still emit a discoverable stub with the
 // PluginRef and a warning diagnostic.
 func TestBundlesStubsUninstalledPlugins(t *testing.T) {
-	e := newEngine(t)
+	e := newEngineWithConfig(t, dex.Config{MarketplaceJSON: []byte(`{
+		"version": "1",
+		"plugins": [{
+			"name": "missing-test-plugin",
+			"description": "plugin intentionally missing from PATH",
+			"binary": "dex-plugin-missing-test-plugin"
+		}]
+	}`)})
 	bundles, err := fluxplaneplugin.Bundles(context.Background(), e)
 	if err != nil {
 		t.Fatalf("Bundles: %v", err)
@@ -67,8 +75,7 @@ func TestBundlesStubsUninstalledPlugins(t *testing.T) {
 		if b.Source.ID == "dex-intent" {
 			continue
 		}
-		// Builtin plugins (websearch, vision) have manifests; everything else
-		// in a fresh DEX_HOME stubs.
+		// The test marketplace points at a binary that is intentionally absent.
 		if len(b.Operations) == 0 && len(b.OperationSets) == 0 {
 			if len(b.Diagnostics) == 0 {
 				t.Fatalf("stub bundle for %q has no diagnostic", b.Plugins[0].Name)

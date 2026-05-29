@@ -142,6 +142,8 @@ github.com/fluxplane/codegate v1.1.0 h1:3YwcdGFoCMfOofrDfBFpqhVusx/KDKSuTuVHNgJc
 github.com/fluxplane/codegate v1.1.0/go.mod h1:+DhsTeUNfbH2BjA861bUz3tYMkkFDztlzwkBV1X2Cjg=
 github.com/fluxplane/fluxplane-core v0.20.0 h1:jKriC9SNtt+Fbl84V5I+bK1QEb2W93ZlLOCi9ZgzyFk=
 github.com/fluxplane/fluxplane-core v0.20.0/go.mod h1:Ca26gUk2+ABcystyrZaDtHH+JIx1oHtrBGVCrMmL5Ac=
+github.com/fluxplane/fluxplane-core v0.21.2 h1:kavm6HjmmshTZUTQXs7fy5QsZJXrS/JI+PZUfrSXJB4=
+github.com/fluxplane/fluxplane-core v0.21.2/go.mod h1:Ca26gUk2+ABcystyrZaDtHH+JIx1oHtrBGVCrMmL5Ac=
 github.com/fluxplane/fluxplane-dex v0.6.0/go.mod h1:LZF7+Gy+ADO7/G0DUFKNqN8C47eyo/FyILf+PfdFtT8=
 github.com/fluxplane/fluxplane-dex v0.11.0/go.mod h1:2GKD2Q3SjczKUa09FdWJQ1pHts4TDDrcsROhclevZcA=
 github.com/getkin/kin-openapi v0.138.0 h1:ebfE0JAmF6AqHrNBy1KO3Fs68K9tPs48HalvLPo7Rv4=

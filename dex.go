@@ -26,6 +26,7 @@ type Config struct {
 	DevPlugins      map[string]string
 	Timeout         time.Duration
 	HostCommand     string
+	Capabilities    runtime.CapabilityHost
 	Prompter        Prompter
 	Events          EventSink
 	Logger          *slog.Logger
@@ -80,12 +81,13 @@ func New(cfg Config) (*Engine, error) {
 	}
 
 	runner := runtime.Runner{
-		Marketplace: marketplace,
-		State:       state,
-		DevPlugins:  cfg.DevPlugins,
-		WorkDir:     cfg.WorkDir,
-		Timeout:     cfg.Timeout,
-		HostCommand: cfg.HostCommand,
+		Marketplace:  marketplace,
+		State:        state,
+		DevPlugins:   cfg.DevPlugins,
+		WorkDir:      cfg.WorkDir,
+		Timeout:      cfg.Timeout,
+		HostCommand:  cfg.HostCommand,
+		Capabilities: cfg.Capabilities,
 	}
 	if cfg.Events != nil {
 		sink := cfg.Events

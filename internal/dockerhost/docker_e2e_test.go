@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	. "github.com/fluxplane/fluxplane-dex/plugins/docker"
 )
 
 func TestDockerE2EContainerImageNetworkVolumeAndCopy(t *testing.T) {

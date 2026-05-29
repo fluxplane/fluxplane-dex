@@ -9,7 +9,6 @@ import (
 
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/internal/kuberneteshost"
-	kube "github.com/fluxplane/fluxplane-dex/plugins/kubernetes"
 )
 
 func (r Runner) hostKubernetesProviderCall(ctx context.Context, plugin, instance, grant string, input pluginbinding.ProviderCallRequest) (pluginbinding.ProviderCallResponse, error) {
@@ -23,8 +22,8 @@ func (r Runner) hostKubernetesProviderCall(ctx context.Context, plugin, instance
 	case "contexts":
 		result, err = kuberneteshost.Contexts()
 	case "cluster.probe":
-		var request kube.ClusterTestInput
-		request, err = decodeProviderPayload[kube.ClusterTestInput](input.Payload)
+		var request kuberneteshost.ClusterTestInput
+		request, err = decodeProviderPayload[kuberneteshost.ClusterTestInput](input.Payload)
 		if err == nil {
 			request, err = r.resolveKubernetesClusterTestInput(request)
 		}
@@ -32,8 +31,8 @@ func (r Runner) hostKubernetesProviderCall(ctx context.Context, plugin, instance
 			result, err = kuberneteshost.ClusterProbe(ctx, request)
 		}
 	case "namespaces":
-		var request kube.InventoryInput
-		request, err = decodeProviderPayload[kube.InventoryInput](input.Payload)
+		var request kuberneteshost.InventoryInput
+		request, err = decodeProviderPayload[kuberneteshost.InventoryInput](input.Payload)
 		if err == nil {
 			request, err = r.resolveKubernetesInventoryInput(request)
 		}
@@ -41,20 +40,20 @@ func (r Runner) hostKubernetesProviderCall(ctx context.Context, plugin, instance
 			result, err = kuberneteshost.Namespaces(ctx, request)
 		}
 	case "services":
-		var request kube.EndpointDiscoverInput
-		request, err = decodeProviderPayload[kube.EndpointDiscoverInput](input.Payload)
+		var request kuberneteshost.EndpointDiscoverInput
+		request, err = decodeProviderPayload[kuberneteshost.EndpointDiscoverInput](input.Payload)
 		if err == nil {
 			result, err = kuberneteshost.Services(ctx, request)
 		}
 	case "ingresses":
-		var request kube.EndpointDiscoverInput
-		request, err = decodeProviderPayload[kube.EndpointDiscoverInput](input.Payload)
+		var request kuberneteshost.EndpointDiscoverInput
+		request, err = decodeProviderPayload[kuberneteshost.EndpointDiscoverInput](input.Payload)
 		if err == nil {
 			result, err = kuberneteshost.Ingresses(ctx, request)
 		}
 	case "pods":
-		var request kube.InventoryInput
-		request, err = decodeProviderPayload[kube.InventoryInput](input.Payload)
+		var request kuberneteshost.InventoryInput
+		request, err = decodeProviderPayload[kuberneteshost.InventoryInput](input.Payload)
 		if err == nil {
 			request, err = r.resolveKubernetesInventoryInput(request)
 		}
@@ -62,8 +61,8 @@ func (r Runner) hostKubernetesProviderCall(ctx context.Context, plugin, instance
 			result, err = kuberneteshost.Pods(ctx, request)
 		}
 	case "deployments":
-		var request kube.InventoryInput
-		request, err = decodeProviderPayload[kube.InventoryInput](input.Payload)
+		var request kuberneteshost.InventoryInput
+		request, err = decodeProviderPayload[kuberneteshost.InventoryInput](input.Payload)
 		if err == nil {
 			request, err = r.resolveKubernetesInventoryInput(request)
 		}
@@ -71,8 +70,8 @@ func (r Runner) hostKubernetesProviderCall(ctx context.Context, plugin, instance
 			result, err = kuberneteshost.Deployments(ctx, request)
 		}
 	case "pod.logs":
-		var request kube.PodLogsInput
-		request, err = decodeProviderPayload[kube.PodLogsInput](input.Payload)
+		var request kuberneteshost.PodLogsInput
+		request, err = decodeProviderPayload[kuberneteshost.PodLogsInput](input.Payload)
 		if err == nil {
 			request, err = r.resolveKubernetesPodLogsInput(request)
 		}
@@ -80,8 +79,8 @@ func (r Runner) hostKubernetesProviderCall(ctx context.Context, plugin, instance
 			result, err = kuberneteshost.PodLogs(ctx, request)
 		}
 	case "portforward.start":
-		var request kube.PortForwardStartInput
-		request, err = decodeProviderPayload[kube.PortForwardStartInput](input.Payload)
+		var request kuberneteshost.PortForwardStartInput
+		request, err = decodeProviderPayload[kuberneteshost.PortForwardStartInput](input.Payload)
 		if err == nil {
 			request, err = r.resolveKubernetesPortForwardStartInput(request)
 		}
@@ -89,14 +88,14 @@ func (r Runner) hostKubernetesProviderCall(ctx context.Context, plugin, instance
 			result, err = kuberneteshost.PortForwardStart(ctx, request)
 		}
 	case "portforward.stop":
-		var request kube.PortForwardStopInput
-		request, err = decodeProviderPayload[kube.PortForwardStopInput](input.Payload)
+		var request kuberneteshost.PortForwardStopInput
+		request, err = decodeProviderPayload[kuberneteshost.PortForwardStopInput](input.Payload)
 		if err == nil {
 			result, err = kuberneteshost.PortForwardStop(ctx, request)
 		}
 	case "secrets":
-		var request kube.EndpointDiscoverInput
-		request, err = decodeProviderPayload[kube.EndpointDiscoverInput](input.Payload)
+		var request kuberneteshost.EndpointDiscoverInput
+		request, err = decodeProviderPayload[kuberneteshost.EndpointDiscoverInput](input.Payload)
 		if err == nil {
 			result, err = kuberneteshost.Secrets(ctx, request)
 		}
@@ -124,7 +123,7 @@ func decodeProviderPayload[T any](payload json.RawMessage) (T, error) {
 	return out, nil
 }
 
-func (r Runner) resolveKubernetesClusterTestInput(input kube.ClusterTestInput) (kube.ClusterTestInput, error) {
+func (r Runner) resolveKubernetesClusterTestInput(input kuberneteshost.ClusterTestInput) (kuberneteshost.ClusterTestInput, error) {
 	if strings.TrimSpace(input.EndpointRef) == "" {
 		return input, nil
 	}
@@ -141,7 +140,7 @@ func (r Runner) resolveKubernetesClusterTestInput(input kube.ClusterTestInput) (
 	return input, nil
 }
 
-func (r Runner) resolveKubernetesInventoryInput(input kube.InventoryInput) (kube.InventoryInput, error) {
+func (r Runner) resolveKubernetesInventoryInput(input kuberneteshost.InventoryInput) (kuberneteshost.InventoryInput, error) {
 	if strings.TrimSpace(input.EndpointRef) == "" {
 		return input, nil
 	}
@@ -158,7 +157,7 @@ func (r Runner) resolveKubernetesInventoryInput(input kube.InventoryInput) (kube
 	return input, nil
 }
 
-func (r Runner) resolveKubernetesPodLogsInput(input kube.PodLogsInput) (kube.PodLogsInput, error) {
+func (r Runner) resolveKubernetesPodLogsInput(input kuberneteshost.PodLogsInput) (kuberneteshost.PodLogsInput, error) {
 	if strings.TrimSpace(input.EndpointRef) == "" {
 		return input, nil
 	}
@@ -175,7 +174,7 @@ func (r Runner) resolveKubernetesPodLogsInput(input kube.PodLogsInput) (kube.Pod
 	return input, nil
 }
 
-func (r Runner) resolveKubernetesPortForwardStartInput(input kube.PortForwardStartInput) (kube.PortForwardStartInput, error) {
+func (r Runner) resolveKubernetesPortForwardStartInput(input kuberneteshost.PortForwardStartInput) (kuberneteshost.PortForwardStartInput, error) {
 	if strings.TrimSpace(input.EndpointRef) == "" {
 		return input, nil
 	}

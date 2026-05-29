@@ -8,8 +8,10 @@ import (
 
 	"github.com/fluxplane/fluxplane-core/core/resource"
 	"github.com/fluxplane/fluxplane-core/orchestration/pluginhost"
+	coresystem "github.com/fluxplane/fluxplane-core/runtime/system"
 
 	dex "github.com/fluxplane/fluxplane-dex"
+	dexruntime "github.com/fluxplane/fluxplane-dex/runtime"
 )
 
 // Config configures an Assembly: which dex plugins to expose, optional
@@ -20,6 +22,22 @@ type Config struct {
 	// the platform default) for plugin install state, secrets, and
 	// marketplace data.
 	Engine *dex.Engine
+
+	// System backs dex host capabilities with the caller's fluxplane-core
+	// runtime boundaries. When set and Engine is nil, dex HTTP, blob, and
+	// environment capability calls go through System instead of dex's local
+	// fallback host.
+	System coresystem.System
+
+	// Capabilities overrides the capability host passed to dex.New. It is
+	// useful when a caller wants to supply a custom host while still using
+	// the default dex engine construction.
+	Capabilities dexruntime.CapabilityHost
+
+	// HostProviders are optional provider implementations exposed through
+	// SystemCapabilityHost for provider calls not handled by dex runtime
+	// itself.
+	HostProviders map[string]dexruntime.HostProvider
 
 	// IgnoredDexPlugins is a list of glob patterns (matched with
 	// filepath.Match against the plugin name) that should NOT be exposed
@@ -52,8 +70,8 @@ type Config struct {
 // Consumers like the fluxplane-apps/slack-bot can collapse the dex-side
 // boilerplate into a single Assembly construction.
 type Assembly struct {
-	engine        *dex.Engine
-	nativePlugins []pluginhost.Plugin
+	engine         *dex.Engine
+	nativePlugins  []pluginhost.Plugin
 	ignorePatterns []string
 }
 
@@ -63,7 +81,11 @@ type Assembly struct {
 func New(cfg Config) (*Assembly, error) {
 	engine := cfg.Engine
 	if engine == nil {
-		e, err := dex.New(dex.Config{})
+		capabilities := cfg.Capabilities
+		if capabilities == nil && cfg.System != nil {
+			capabilities = NewSystemCapabilityHost(cfg.System, cfg.HostProviders)
+		}
+		e, err := dex.New(dex.Config{Capabilities: capabilities})
 		if err != nil {
 			return nil, fmt.Errorf("fluxplaneplugin.New: dex.New: %w", err)
 		}

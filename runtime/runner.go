@@ -739,6 +739,13 @@ func (r Runner) hostProviderCall(ctx context.Context, plugin, instance, grant st
 	if strings.TrimSpace(input.Provider) == "kubernetes" {
 		return r.hostKubernetesProviderCall(ctx, plugin, instance, grant, input)
 	}
+	if strings.TrimSpace(input.Provider) == systemProviderName {
+		result, err := localSystemProvider{}.Call(ctx, strings.TrimSpace(input.Action), input.Payload)
+		if err != nil {
+			return pluginbinding.ProviderCallResponse{}, err
+		}
+		return pluginbinding.ProviderCallResponse{Result: result}, nil
+	}
 	return r.capabilityHost().ProviderCall(ctx, input)
 }
 

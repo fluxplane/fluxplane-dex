@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-05-29
+
+### Added
+- Added `dex.Config.Capabilities` so embedders can provide the host capability
+  implementation used by plugin HTTP, blob, environment, and provider calls.
+- Added `fluxplaneplugin.Config.System`, `Capabilities`, and `HostProviders`
+  wiring. When a `fluxplane-core/runtime/system.System` is supplied, dex plugin
+  IO is routed through the same host system boundary as native core plugins.
+- Added `docs/plugin-dev.md` with IO-free plugin development principles,
+  dependency direction rules, endpoint/auth guidance, security expectations,
+  test practices, and release hygiene.
+
+### Changed
+- Removed root module dependencies on the Docker and Kubernetes plugin modules.
+  Runtime provider implementations now use root-owned internal host DTOs, so
+  plugin modules remain leaf modules and releases no longer need root-to-plugin
+  module replacement churn.
+- Kept built-in system provider calls available when a custom capability host
+  is installed.
+- Updated plugin module requirements, manifest versions, builtin plugin
+  versions, README examples, and maintainer release docs for `v0.11.0`.
+
 ## [0.10.0] - 2026-05-29
 
 ### Added

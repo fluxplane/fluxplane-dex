@@ -7,6 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clientkubernetes "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 	"net"
 	"net/url"
 	"os"
@@ -17,14 +23,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	. "github.com/fluxplane/fluxplane-dex/plugins/kubernetes"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clientkubernetes "k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 func Contexts() (ClusterListResult, error) {

@@ -33,8 +33,6 @@ import (
 	"github.com/moby/patternmatcher"
 	"github.com/moby/patternmatcher/ignorefile"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-
-	. "github.com/fluxplane/fluxplane-dex/plugins/docker"
 )
 
 type liveClient struct {

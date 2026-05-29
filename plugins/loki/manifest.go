@@ -7,7 +7,7 @@ import (
 
 const (
 	PluginName        = "loki"
-	PluginVersion     = "0.10.0"
+	PluginVersion     = "0.11.0"
 	PluginDescription = "Loki endpoint discovery, health checks, LogQL queries, recent logs, and labels."
 
 	EnvLokiTenantID     = "LOKI_TENANT_ID"

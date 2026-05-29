@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	dex "github.com/fluxplane/fluxplane-dex"
+	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
+	"github.com/fluxplane/fluxplane-dex/runtime"
 )
 
 func newEngine(t *testing.T) *dex.Engine {
@@ -23,6 +25,17 @@ func TestNewLoadsBundledMarketplace(t *testing.T) {
 	plugins := e.Plugins().All(context.Background())
 	if len(plugins) == 0 {
 		t.Fatalf("expected bundled marketplace to have plugins")
+	}
+}
+
+func TestNewPassesCapabilitiesToRunner(t *testing.T) {
+	capabilities := fakeCapabilityHost{}
+	e, err := dex.New(dex.Config{WorkDir: t.TempDir(), Capabilities: capabilities})
+	if err != nil {
+		t.Fatalf("dex.New: %v", err)
+	}
+	if e.Runner().Capabilities != capabilities {
+		t.Fatalf("runner capabilities were not wired from config")
 	}
 }
 
@@ -93,6 +106,34 @@ func TestAuthMethodsBuiltin(t *testing.T) {
 	}
 	_ = methods // builtin may have zero auth methods; we just assert it doesn't error
 }
+
+type fakeCapabilityHost struct{}
+
+func (fakeCapabilityHost) HTTP(context.Context, pluginbinding.HTTPRequest) (pluginbinding.HTTPResponse, error) {
+	return pluginbinding.HTTPResponse{}, nil
+}
+
+func (fakeCapabilityHost) BlobRead(context.Context, pluginbinding.BlobReadRequest) (pluginbinding.BlobReadResponse, error) {
+	return pluginbinding.BlobReadResponse{}, nil
+}
+
+func (fakeCapabilityHost) BlobWrite(context.Context, pluginbinding.BlobWriteRequest) (pluginbinding.BlobRef, error) {
+	return pluginbinding.BlobRef{}, nil
+}
+
+func (fakeCapabilityHost) BlobInfo(context.Context, pluginbinding.BlobInfoRequest) (pluginbinding.BlobRef, error) {
+	return pluginbinding.BlobRef{}, nil
+}
+
+func (fakeCapabilityHost) EnvLookup(context.Context, pluginbinding.EnvLookupRequest) (pluginbinding.EnvLookupResponse, error) {
+	return pluginbinding.EnvLookupResponse{}, nil
+}
+
+func (fakeCapabilityHost) ProviderCall(context.Context, pluginbinding.ProviderCallRequest) (pluginbinding.ProviderCallResponse, error) {
+	return pluginbinding.ProviderCallResponse{}, nil
+}
+
+var _ runtime.CapabilityHost = fakeCapabilityHost{}
 
 type scriptedPrompter struct {
 	inputs  []string

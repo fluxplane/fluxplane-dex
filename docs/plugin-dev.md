@@ -1,158 +1,112 @@
 # Plugin Development
 
-Dex plugins are model-facing capability surfaces. They should describe what an
-operation can do, validate the request, and call the dex SDK. They should not
-own host IO.
+Dex plugins are model-facing capability surfaces: describe what an operation can
+safely do, validate input, call the dex SDK, and leave host IO to the runtime.
 
-## Principles
+## Core Rules
 
-- Keep plugins IO-free. Plugin code must not read process environment, open
-  workspace files, create raw HTTP clients, open sockets, shell out, or talk
-  directly to Docker, Kubernetes, databases, or other host services.
-- Keep secrets out of operation params. A model may see operation params, so
-  credentials must be requested by purpose or endpoint reference and resolved
-  by the host/runtime.
-- Keep dependency direction one-way. Plugin modules depend on the dex SDK and
-  protocol. The root dex module must not import plugin modules.
-- Treat the host protocol as the IO boundary. Plugins ask for HTTP, blobs,
-  environment lookup, endpoint resolution, auth material, and provider calls
-  through the SDK; the host decides whether and how to satisfy those requests.
-- Prefer endpoint refs over raw connection material. Operations should accept
-  `endpoint_ref` when possible; the runtime resolves the actual URL, token,
-  password, or certificate material outside the model-visible payload.
-- Declare the smallest useful capability. Read-only operations get read grants;
-  write, mutation, network, or provider access must be explicit.
+- **IO-free plugin code:** do not read process env directly, open workspace
+  files, create raw HTTP clients, open sockets, shell out, or talk directly to
+  Docker, Kubernetes, databases, or other host services.
+- **Host protocol is the IO boundary:** use SDK capabilities for HTTP, blob
+  reads/writes, env lookup, endpoint resolution, auth material, and provider
+  calls; the host decides whether and how to satisfy them.
+- **No secrets in params/results:** model-visible payloads must contain intent,
+  never bearer tokens, passwords, cookies, API keys, certificates, or resolved
+  secret values in errors, logs, diagnostics, events, context, or results.
+- **Prefer endpoint refs:** accept `endpoint_ref` and auth purposes instead of
+  raw connection material. The runtime combines endpoint and auth material
+  outside the model-visible request.
+- **Least privilege:** declare the smallest useful capability, effects, risk,
+  and access metadata. Read-only operations must not receive write grants.
+- **One-way dependencies:** `plugins/<name>` may import
+  `github.com/fluxplane/fluxplane-dex/core/pluginbinding`; root runtime code
+  must not import `github.com/fluxplane/fluxplane-dex/plugins/<name>`.
+- **Internal host DTOs:** if runtime-side host support is needed, put wire DTOs
+  and host implementation in `internal/<provider>host`; plugin and host exchange
+  JSON across the host protocol without a root-to-plugin compile-time edge.
 
-## Architecture
+`fluxplaneplugin.Config.System` connects dex host capabilities to
+`fluxplane-core/runtime/system.System`; plugins never receive `system.System`
+directly.
 
-Plugin modules are leaf modules:
+## Auth, Endpoints, And Host Capabilities
 
-- `plugins/<name>` imports `github.com/fluxplane/fluxplane-dex/core/pluginbinding`
-  and any local plugin implementation dependencies.
-- Root runtime packages may share protocol DTOs through internal host packages
-  such as `internal/<provider>host`.
-- Root runtime packages must not import `github.com/fluxplane/fluxplane-dex/plugins/<name>`.
+Preferred integration flow:
 
-If the runtime needs a host implementation for a plugin-facing provider, put
-the host implementation and its wire DTOs in an internal package owned by the
-root module. The plugin and the host can then exchange JSON across the host
-protocol without a compile-time module edge from root back into the plugin.
+1. User configures endpoint/auth via dex auth, secrets, or host-owned config.
+2. Operation receives `endpoint_ref` plus model-provided intent.
+3. Plugin calls the SDK host client with endpoint ref and required auth purpose.
+4. Runtime resolves URL/credentials and executes through host capabilities.
 
-## Host Capabilities
+Capability guidance:
 
-Use the SDK capability APIs instead of direct IO:
+- HTTP: use host HTTP with `endpoint_ref` and auth purposes where applicable.
+- Files: use blob refs; `blob.read` for inspection, `blob.write` only for
+  intentional blob creation/modification.
+- Env lookup: use host env lookup only for compatibility/discovery; prefer
+  named secrets, auth purposes, and endpoint refs for new designs.
+- Provider calls: use generic provider grants such as `container`, `cluster`,
+  `database`, `search`, or existing stable names; avoid deployment-specific
+  capability names.
 
-- HTTP goes through the host HTTP client. Pass `endpoint_ref` and auth purposes
-  when applicable; do not place bearer tokens, passwords, cookies, or API keys
-  in params.
-- Files go through blob refs. Use `blob.read` for inspection and `blob.write`
-  only for operations that intentionally create or modify workspace blobs.
-- Environment lookup goes through host env lookup and should be used only for
-  compatibility or discovery paths. Prefer named secrets, auth purposes, and
-  endpoint refs for new operation design.
-- Provider calls go through host provider capability grants. Provider names
-  should stay generic, for example `container`, `cluster`, `database`,
-  `search`, or existing stable names, rather than encoding a deployment detail
-  into the capability set.
+## Input And Operation Design
 
-`fluxplaneplugin.Config.System` wires dex host capabilities to
-`fluxplane-core/runtime/system.System`. When an embedding host passes this
-system, dex HTTP, workspace blob, and environment calls are resolved through the
-same host boundary as native core plugins. Plugins never receive the
-`system.System` directly.
+- Keep schemas small and explicit; avoid `map[string]any` unless the upstream
+  API genuinely requires arbitrary structured input.
+- Every exported operation/datasource input field must have a useful JSON Schema
+  description. Models and UIs rely on it to choose fields.
+- Escape commas in `jsonschema` tag values as `\\,` in Go source, e.g.
+  `jsonschema:"description=User ID\\, mention\\, or name"`. Unescaped commas
+  split tag options; a single backslash makes `reflect.StructTag.Get` fail.
+- Prefer typed fields for operations. Datasource compatibility inputs may also
+  expose generic `query`, `entity`, `datasource`, and `filters`; document every
+  supported `filters` key and map aliases into the same validation path as typed
+  fields.
+- Datasource `Search`, `List`, and `Get` handlers should accept host/agent
+  request shapes, not only a custom plugin shape: e.g. top-level `query`,
+  `filters.query`, `filters.channel`, `filters.thread_ts`.
+- Separate reads from writes; mark destructive operations with effects/risk.
+- Return normalized, bounded results: cap lists, trim logs, include continuation
+  fields, and avoid dumping unbounded upstream responses.
+- Keep context providers concise; summarize useful state rather than mirroring
+  full operation results.
+- Use stable integration-level names/docs; do not expose credential source,
+  local path, or runtime implementation details in the user-facing contract.
 
-## Auth And Endpoints
+## Security And Validation
 
-Design operations so the model supplies intent, not credentials:
-
-- Accept `endpoint_ref` for configured services.
-- Request auth by purpose, such as bearer token, username/password, or named
-  headers, through the host capability request.
-- Let the runtime combine endpoint and auth material before making the host
-  HTTP call.
-- Never log, echo, serialize, or include resolved secret values in operation
-  results, diagnostics, errors, events, or context blocks.
-
-For new integrations, the preferred flow is:
-
-1. The user configures an endpoint and its auth material through dex auth,
-   secrets, or host-owned configuration.
-2. The operation receives an `endpoint_ref`.
-3. The plugin calls the SDK host client with that ref and any required auth
-   purpose.
-4. The runtime resolves URL and credentials and sends the request through the
-   host capability implementation.
-
-## Operation Design
-
-- Keep schemas small and explicit. Avoid generic `map[string]any` params unless
-  the upstream API genuinely requires arbitrary structured input.
-- Every exported input field in operation and datasource input structs must have
-  a useful JSON Schema description. Models and UIs depend on these descriptions
-  to decide which fields to use.
-- Escape commas inside `jsonschema` tag values as `\\,` in Go source, for
-  example `jsonschema:"description=User ID\\, mention\\, or name"`. The
-  jsonschema library splits tag options on unescaped commas, and a single
-  backslash makes the Go struct tag invalid for `reflect.StructTag.Get`.
-- Prefer typed fields for normal operation inputs. Datasource compatibility
-  inputs may include generic fields such as `query`, `entity`, `datasource`,
-  and `filters`; when they do, document the supported filter keys in the
-  `filters` field description and map them into the same validation path as
-  the typed fields.
-- Datasource `Search`, `List`, and `Get` handlers should accept the generic
-  request shapes used by hosts and agents, not only the plugin's first custom
-  shape. Common examples are top-level `query`, `filters.query`, and entity
-  selectors such as `filters.channel` or `filters.thread_ts`.
-- Separate read operations from write operations. This lets manifests and grants
-  express least privilege.
-- Mark destructive operations with clear effects and risk metadata.
-- Return normalized, bounded results. Cap large lists, trim logs, and include
-  continuation fields instead of dumping unbounded upstream responses.
-- Keep context providers concise. Context blocks should summarize useful state,
-  not mirror full operation results.
-- Prefer stable, integration-level language in operation names and docs. Avoid
-  baking a specific credential source, local path, or runtime implementation
-  detail into the user-facing contract.
-
-## Security
-
-- Assume operation params and results may be visible to a model, logs, traces,
-  or UI. Do not put secrets there.
-- Validate all required inputs before calling host capabilities.
-- Refuse ambiguous requests that combine mutually exclusive fields, such as
-  both `url` and `endpoint_ref`.
-- Bound network and file reads with timeouts and max byte limits.
-- Do not follow redirects, read files, or access private networks unless the
-  host policy and operation grant allow it.
-- Do not grant write capabilities to read-only operations.
-- Treat host provider payloads as untrusted JSON. Decode into typed structs and
+- Validate required inputs before host calls.
+- Refuse ambiguous mutually exclusive input, such as both `url` and
+  `endpoint_ref`.
+- Bound network/file reads with timeouts and max-byte limits.
+- Do not follow redirects, read files, or access private networks unless host
+  policy and operation grants allow it.
+- Treat host provider payloads as untrusted JSON: decode into typed structs and
   validate before executing host-side effects.
 
-## Testing
+## Tests
 
-Every plugin should have focused tests for:
+Normal `go test ./...` must not require network, Docker, Kubernetes, cloud
+credentials, or local user config. Live upstream tests must be opt-in and gated.
 
-- Manifest validity, operation schemas, capability declarations, effects, and
-  risk metadata.
-- Generated input schema quality: every manifest operation and datasource input
-  property should have a non-empty `description`, and descriptions containing
-  commas should be asserted so escaping regressions are caught.
-- Datasource generic request compatibility for the shapes agents use, including
-  top-level `query`, `filters` aliases, and entity-specific identifiers.
-- Operation behavior using fake host capabilities or test transports.
-- Auth and endpoint flows that verify secrets stay out of params, results, and
-  logs.
-- IO-free enforcement with `internal/pluginiofree` checks.
-- Error handling for missing endpoints, missing auth, invalid params, and denied
-  capabilities.
+Focused tests should cover:
 
-Live upstream tests must be opt-in and clearly gated. Normal `go test ./...`
-should not require network access, Docker, Kubernetes, cloud credentials, or
-local user configuration.
+- Manifest validity, operation schemas, capability declarations, effects, risk.
+- Generated input schema quality: every manifest operation/datasource property
+  has non-empty `description`; comma-containing descriptions are asserted so
+  escaping regressions are caught.
+- Datasource generic request compatibility: top-level `query`, `filters`
+  aliases, and entity-specific identifiers.
+- Operation behavior with fake host capabilities or test transports.
+- Auth/endpoint flows proving secrets stay out of params, results, and logs.
+- IO-free enforcement via `internal/pluginiofree`.
+- Missing endpoint/auth, invalid params, denied capability, and other error
+  paths.
 
-## Local Development
+## Local And Live Testing
 
-Install and test local plugin code with the development override:
+Install local code and the managed development plugin:
 
 ```sh
 task install
@@ -162,24 +116,41 @@ dex op show <plugin>.<operation> -o json
 dex <plugin> <operation path> -h
 ```
 
-After changing plugin code, reinstall the managed development plugin before
-live-testing through dex, coder, or datasource tools. A stale binary in
-`~/.dex/plugins/bin` can make a fixed datasource or operation appear broken.
-Confirm `dex plugin list -o json` shows the expected plugin path and version.
+After changing plugin code, reinstall the dev plugin before testing through dex,
+coder, or datasource tools. A stale binary in `~/.dex/plugins/bin` can make fixed
+code appear broken. Confirm `dex plugin list -o json` shows the expected plugin
+path/version.
 
-Do not use committed `replace` directives for release preparation. The root
-module should build without plugin-module requirements, and plugin modules
-should depend on released dex SDK versions.
+Live-test at three levels when possible:
+
+```sh
+# 1. Direct dex operation/datasource smoke test.
+dex <plugin> <operation path> --json '{"field":"value"}'
+dex datasource search <datasource> --query 'example' --limit 3
+
+# 2. Host/agent datasource path. Ask coder to use the datasource by name and
+# verify it can find real data through the installed managed plugin.
+coder --yolo --model=codex --input \
+  'Use datasource_search for <entity> in <datasource> with filters {...}; summarize the result.'
+
+# 3. End-to-end behavior. Ask coder to perform the intended user task, then
+# inspect whether it chose the right operation/datasource and returned bounded,
+# secret-free output.
+coder --yolo --model=codex --input \
+  'Using the <plugin> integration, do <task>. Keep the output concise.'
+```
+
+For datasource compatibility, live-test both the typed/top-level shape and the
+generic `filters` shape that agents use.
+
+Do not commit `replace` directives for release prep. The root module should
+build without plugin-module requirements; plugin modules should depend on
+released dex SDK versions.
 
 ## Release Hygiene
 
-- Root dex versions and plugin module versions are released together.
-- Root tags use `vX.Y.Z`.
-- Plugin module tags use `plugins/<plugin>/vX.Y.Z`.
-- Changelog entries should separate SDK/runtime changes from individual plugin
-  changes.
-- Before release, verify the root module, each plugin module, and `git diff
-  --check`.
-
-If a release requires temporary local module overrides to verify unpublished
-tags, keep them out of committed files.
+- Root dex and plugin module versions are released together.
+- Root tags: `vX.Y.Z`; plugin tags: `plugins/<plugin>/vX.Y.Z`.
+- Changelog entries should separate SDK/runtime changes from plugin changes.
+- Before release, verify root module, each plugin module, and `git diff --check`.
+- Temporary local module overrides for unpublished tags must stay uncommitted.

@@ -596,7 +596,46 @@ func indexRecordScore(record IndexRecord, query string) (int, []string) {
 		}
 		fields = appendMatchedField(fields, "record")
 	}
+	if score == 0 {
+		termScore, termFields := indexRecordTokenScore(record, query)
+		if termScore > 0 {
+			score = termScore
+			fields = appendMatchedFieldValues(fields, termFields...)
+		}
+	}
 	return score, fields
+}
+
+func indexRecordTokenScore(record IndexRecord, query string) (int, []string) {
+	terms := searchTerms(query)
+	if len(terms) < 2 {
+		return 0, nil
+	}
+	score := 0
+	var fields []string
+	for _, term := range terms {
+		termScore, termFields := indexRecordScore(record, term)
+		if termScore == 0 {
+			return 0, nil
+		}
+		score += termScore
+		fields = appendMatchedFieldValues(fields, termFields...)
+	}
+	return score / len(terms), fields
+}
+
+func searchTerms(query string) []string {
+	seen := map[string]bool{}
+	var terms []string
+	for _, token := range strings.Fields(strings.ToLower(strings.TrimSpace(query))) {
+		token = strings.Trim(token, " \t\n\r\"'()[]{}<>.,;:#!")
+		if len(token) < 2 || lookupStopword(token) || seen[token] {
+			continue
+		}
+		seen[token] = true
+		terms = append(terms, token)
+	}
+	return terms
 }
 
 func lookupTerms(options LookupOptions) []string {
@@ -726,4 +765,11 @@ func appendMatchedField(fields []string, field string) []string {
 		}
 	}
 	return append(fields, field)
+}
+
+func appendMatchedFieldValues(fields []string, candidates ...string) []string {
+	for _, candidate := range candidates {
+		fields = appendMatchedField(fields, candidate)
+	}
+	return fields
 }

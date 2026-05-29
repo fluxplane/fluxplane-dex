@@ -246,6 +246,44 @@ func TestIndexSearchScoresAndFiltersEntities(t *testing.T) {
 	}
 }
 
+func TestIndexSearchMatchesMultiTermQueriesAcrossFields(t *testing.T) {
+	state, err := NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveIndexRecords("slack", "default", "slack.users", []json.RawMessage{
+		json.RawMessage(`{"entity":"slack.user","id":"U03HY52RQLV","user_id":"U03HY52RQLV","name":"timo","display_name":"Timo Friedl","web_url":"slack://user/U03HY52RQLV"}`),
+		json.RawMessage(`{"entity":"slack.user","id":"U0ACY99H9AN","user_id":"U0ACY99H9AN","name":"timo-ai","display_name":"Timo AI","web_url":"slack://user/U0ACY99H9AN"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SaveIndexRecords("slack", "default", "slack.channels", []json.RawMessage{
+		json.RawMessage(`{"entity":"slack.channel","id":"C02GXKL0B2B","channel_id":"C02GXKL0B2B","name":"general","web_url":"slack://channel/C02GXKL0B2B"}`),
+		json.RawMessage(`{"entity":"slack.channel","id":"C05B6RU8KEV","channel_id":"C05B6RU8KEV","name":"general-ai","web_url":"slack://channel/C05B6RU8KEV"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	users, err := state.SearchIndexWithOptions("slack", "default", SearchOptions{Query: "timo U03HY52RQLV", Entity: "slack.user", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 1 || users[0].ID != "U03HY52RQLV" {
+		t.Fatalf("combined user query matches = %#v", users)
+	}
+	if len(users[0].MatchedFields) < 2 {
+		t.Fatalf("combined user matched fields = %#v", users[0].MatchedFields)
+	}
+
+	channels, err := state.SearchIndexWithOptions("slack", "default", SearchOptions{Query: "general C02GXKL0B2B", Entity: "slack.channel", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(channels) != 1 || channels[0].ID != "C02GXKL0B2B" {
+		t.Fatalf("combined channel query matches = %#v", channels)
+	}
+}
+
 func TestRunnerServesDatasourceSearchAndGetFromIndex(t *testing.T) {
 	state, err := NewState(t.TempDir())
 	if err != nil {

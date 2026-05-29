@@ -30,6 +30,13 @@ safely do, validate input, call the dex SDK, and leave host IO to the runtime.
 `fluxplane-core/runtime/system.System`; plugins never receive `system.System`
 directly.
 
+Endpoint/auth details discovered during auth should be stored as explicit auth
+purposes when they affect routing. For Atlassian Cloud, Jira and Confluence may
+need a `cloud_id` purpose so host-backed HTTP can call
+`https://api.atlassian.com/ex/<product>/<cloud_id>/...` instead of the site URL.
+Treat those IDs as routing metadata, not model-visible secrets, and keep them out
+of operation inputs unless there is a user-facing reason.
+
 ## Auth, Endpoints, And Host Capabilities
 
 Preferred integration flow:
@@ -49,6 +56,14 @@ Capability guidance:
 - Provider calls: use generic provider grants such as `container`, `cluster`,
   `database`, `search`, or existing stable names; avoid deployment-specific
   capability names.
+- Preserve dex request `path` and `query` exactly when bridging to host-system
+  HTTP. Bugs here can pass direct `dex` tests but fail through coder because the
+  plugin sees a system-backed HTTP implementation rather than the direct dex
+  transport.
+- If exactly one product endpoint is registered, runtime may inject its
+  `endpoint_ref` for operation and datasource calls. Tests should cover both
+  explicit `endpoint_ref` and single-endpoint defaulting so coder prompts with
+  empty input continue to work.
 
 ## Input And Operation Design
 
@@ -101,6 +116,9 @@ Focused tests should cover:
 - Operation behavior with fake host capabilities or test transports.
 - Auth/endpoint flows proving secrets stay out of params, results, and logs.
 - IO-free enforcement via `internal/pluginiofree`.
+- Host-system HTTP bridge tests: path/query preservation, endpoint ref
+  propagation, auth purpose routing, and direct dex versus embedded/coder
+  execution parity.
 - Missing endpoint/auth, invalid params, denied capability, and other error
   paths.
 
@@ -142,6 +160,11 @@ coder --yolo --model=codex --input \
 
 For datasource compatibility, live-test both the typed/top-level shape and the
 generic `filters` shape that agents use.
+
+For Jira and other Atlassian Cloud plugins, always include a host-backed probe in
+addition to direct `dex` CLI checks. Direct dex transport can succeed while coder
+fails if `cloud_id`, path/query forwarding, or endpoint default injection is
+missing.
 
 Do not commit `replace` directives for release prep. The root module should
 build without plugin-module requirements; plugin modules should depend on

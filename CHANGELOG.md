@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- Documented host-system HTTP and Jira Atlassian Cloud live testing checks for future plugin development.
+
 ## [0.13.2] - 2026-05-29
 
 ### Fixed

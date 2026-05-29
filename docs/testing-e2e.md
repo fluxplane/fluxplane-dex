@@ -16,6 +16,9 @@ and fixture tests do not catch.
   working tree.
 - Run targeted package tests first, then broader tests once the failure is
   understood.
+- For host-system HTTP regressions, test both direct `dex` and embedded/coder
+  paths. Direct transport can hide bridge bugs in path/query forwarding, auth
+  purpose routing, or endpoint default injection.
 
 ## Basic local verification
 
@@ -140,6 +143,39 @@ dex lookup 'group/repo!1' --plugin gitlab --entity gitlab.merge_request --limit 
   --dev-plugin gitlab=./plugins/gitlab
 ```
 
+
+## Jira and Atlassian Cloud probes
+
+Jira Cloud can require Atlassian API gateway routing. If auth discovered a
+`cloud_id`, host-backed HTTP should call
+`https://api.atlassian.com/ex/jira/<cloud_id>/...`; using the site URL can return
+`401 Unauthorized; scope does not match` even when direct auth checks look fine.
+
+Run compact probes that avoid record bodies:
+
+```bash
+dex op run jira.auth.test '{}' -o compact --dev-plugin jira=./plugins/jira
+dex datasource search jira.issues --query bug --limit 1 -o compact \
+  --dev-plugin jira=./plugins/jira
+dex datasource search jira.users --query timo --limit 1 -o compact \
+  --dev-plugin jira=./plugins/jira
+```
+
+Then verify the embedded/coder path, which exercises `fluxplaneplugin`
+system-backed HTTP rather than the direct dex transport:
+
+```bash
+coder --yolo --disallow-shell --model=codex --input \
+  "Jira auth and datasource verification only. First call jira.auth.test with empty input if available. Then use datasource_search for datasource jira entity jira.issue query bug limit 1, datasource_get for datasource jira entity jira.issue id <ISSUE-ID>, and datasource_get for datasource jira entity jira.user id <USER-ID>. Do not print record bodies. Return only PASS/FAIL and error messages."
+```
+
+If direct dex passes but coder fails, check these in order:
+
+1. The installed `dex-plugin-jira` binary is current.
+2. `cloud_id` is stored as an auth purpose and used for Atlassian gateway URLs.
+3. Runtime injected `endpoint_ref` when only one Jira endpoint is registered.
+4. `fluxplaneplugin.SystemCapabilityHost.HTTP` preserved request path and query.
+5. Jira datasource `get` handlers are registered for `jira.issue` and `jira.user`.
 
 ## Jira datasource get regression
 

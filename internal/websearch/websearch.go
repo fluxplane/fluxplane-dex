@@ -6,13 +6,16 @@ import (
 
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
+	"github.com/fluxplane/fluxplane-dex/protocol"
 )
 
 const (
 	EntitySearchResult = "web.search_result"
 
-	DefaultMax = 10
-	MaxResults = 20
+	DefaultMax     = 10
+	MaxResults     = 20
+	MaxQueries     = 5
+	MaxQueryLength = 500
 
 	MetadataProvider  = "websearch.provider"
 	MetadataOperation = "websearch.operation"
@@ -106,8 +109,9 @@ func ProviderManifestSpec(spec ProviderSpec) pluginbinding.ManifestSpec {
 			ProviderDatasourceSpec(spec),
 		},
 		Metadata: map[string]string{
-			MetadataProvider:  spec.Name,
-			MetadataOperation: spec.Operation,
+			pluginbinding.ManifestProtocolKey: protocol.Version,
+			MetadataProvider:                  spec.Name,
+			MetadataOperation:                 spec.Operation,
 		},
 	}
 }
@@ -218,6 +222,26 @@ func NormalizeQueries(input SearchInput) []string {
 		appendQuery(query)
 	}
 	return out
+}
+
+func ValidateQueries(input SearchInput) ([]string, error) {
+	queries := NormalizeQueries(input)
+	if len(queries) == 0 {
+		return nil, pluginbinding.Fail("bad_input", "at least one query is required")
+	}
+	if len(queries) > MaxQueries {
+		return nil, pluginbinding.Fail("bad_input", fmt.Sprintf("at most %d queries are allowed", MaxQueries))
+	}
+	for _, query := range queries {
+		if len(query) > MaxQueryLength {
+			return nil, pluginbinding.Fail("bad_input", fmt.Sprintf("query exceeds %d characters", MaxQueryLength))
+		}
+	}
+	return queries, nil
+}
+
+func HasResults(set ResultSet) bool {
+	return len(set.Results) > 0 || strings.TrimSpace(set.Answer) != ""
 }
 
 func NormalizeMax(input SearchInput) int {

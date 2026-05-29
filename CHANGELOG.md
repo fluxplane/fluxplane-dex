@@ -7,11 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-05-29
+
 ### Added
 - Added a fluxplaneplugin endpoint discovery bridge so dex plugins with endpoint manifests contribute core discovery providers for generic endpoint datasource searches.
 
 ### Fixed
 - Fixed SQL live endpoint queries to use endpoint `credential_ref` material and grant provider access to the SQL query-row datasource.
+- Hardened Tavily and DuckDuckGo web search providers with protocol metadata, bounded query fan-out/query length validation, and empty-result failure handling.
 - Hardened SQL read-only execution with host-level read-only transactions, SQLite read-only handles, multi-statement rejection, write CTE rejection, and MySQL `SELECT ... INTO OUTFILE`/`DUMPFILE` rejection.
 - Hardened Loki query and datasource contracts with network/tenant grants, bounded result limits, direction validation, safer LogQL string quoting, label validation, and generated JSON Schema metadata.
 

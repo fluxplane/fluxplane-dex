@@ -54,6 +54,24 @@ func TestDatasourceSearchUsesSharedWebsearchWrapper(t *testing.T) {
 	}
 }
 
+func TestSearchRejectsTooManyQueries(t *testing.T) {
+	plugin := NewPluginWithService(Service{})
+	err := plugintest.RunError(t, plugin, OperationSearch, websearch.SearchInput{Queries: []string{"1", "2", "3", "4", "5", "6"}})
+	if err.Code != "bad_input" {
+		t.Fatalf("error = %#v", err)
+	}
+}
+
+func TestSearchFailsWhenProviderReturnsNoResults(t *testing.T) {
+	host := &fakeHostClient{httpBody: `<html><body>No results</body></html>`}
+	plugin := NewPluginWithService(Service{EndpointTemplate: "https://duckduckgo.test/html/?q={query}"})
+
+	err := plugintest.RunError(t, plugin, OperationSearch, websearch.SearchInput{Query: "fluxplane dex"}, plugintest.WithHost(host))
+	if err.Code != "web_search_failed" {
+		t.Fatalf("error = %#v", err)
+	}
+}
+
 type fakeHostClient struct {
 	httpRequest pluginbinding.HTTPRequest
 	httpBody    string

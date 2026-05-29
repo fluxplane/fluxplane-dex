@@ -21,9 +21,9 @@ func NewService() Service {
 }
 
 func (s Service) Search(ctx pluginbinding.Context, input websearch.SearchInput) (websearch.SearchOutput, error) {
-	queries := websearch.NormalizeQueries(input)
-	if len(queries) == 0 {
-		return websearch.SearchOutput{}, pluginbinding.Fail("bad_input", "at least one query is required")
+	queries, err := websearch.ValidateQueries(input)
+	if err != nil {
+		return websearch.SearchOutput{}, err
 	}
 	max := websearch.NormalizeMax(input)
 	output := websearch.SearchOutput{}
@@ -31,6 +31,10 @@ func (s Service) Search(ctx pluginbinding.Context, input websearch.SearchInput) 
 		set, err := s.searchOne(ctx, query, max)
 		if err != nil {
 			output.Errors = append(output.Errors, websearch.SearchError{Provider: PluginName, Query: query, Message: err.Error()})
+			continue
+		}
+		if !websearch.HasResults(set) {
+			output.Errors = append(output.Errors, websearch.SearchError{Provider: PluginName, Query: query, Message: "duckduckgo search returned no results"})
 			continue
 		}
 		output.Results = append(output.Results, set)

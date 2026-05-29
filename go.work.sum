@@ -137,13 +137,12 @@ github.com/envoyproxy/protoc-gen-validate v1.3.3 h1:MVQghNeW+LZcmXe7SY1V36Z+WFMD
 github.com/envoyproxy/protoc-gen-validate v1.3.3/go.mod h1:TsndJ/ngyIdQRhMcVVGDDHINPLWB7C82oDArY51KfB0=
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f h1:Y/CXytFA4m6baUTXGLOoWe4PQhGxaX0KpnayAqC48p4=
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f/go.mod h1:vw97MGsxSvLiUE2X8qFplwetxpGLQrlU1Q9AUEIzCaM=
-github.com/fatih/color v1.19.0/go.mod h1:zNk67I0ZUT1bEGsSGyCZYZNrHuTkJJB+r6Q9VuMi0LE=
 github.com/fluxplane/codegate v1.1.0 h1:3YwcdGFoCMfOofrDfBFpqhVusx/KDKSuTuVHNgJcfD8=
 github.com/fluxplane/codegate v1.1.0/go.mod h1:+DhsTeUNfbH2BjA861bUz3tYMkkFDztlzwkBV1X2Cjg=
 github.com/fluxplane/fluxplane-core v0.20.0 h1:jKriC9SNtt+Fbl84V5I+bK1QEb2W93ZlLOCi9ZgzyFk=
 github.com/fluxplane/fluxplane-core v0.20.0/go.mod h1:Ca26gUk2+ABcystyrZaDtHH+JIx1oHtrBGVCrMmL5Ac=
-github.com/fluxplane/fluxplane-core v0.21.2 h1:kavm6HjmmshTZUTQXs7fy5QsZJXrS/JI+PZUfrSXJB4=
-github.com/fluxplane/fluxplane-core v0.21.2/go.mod h1:Ca26gUk2+ABcystyrZaDtHH+JIx1oHtrBGVCrMmL5Ac=
+github.com/fluxplane/fluxplane-core v0.22.0 h1:RJCdg5eNwjTp8/grN3Hzy9VhkTn5qaPoeh8LTJsZUuI=
+github.com/fluxplane/fluxplane-core v0.22.0/go.mod h1:Ca26gUk2+ABcystyrZaDtHH+JIx1oHtrBGVCrMmL5Ac=
 github.com/fluxplane/fluxplane-dex v0.6.0/go.mod h1:LZF7+Gy+ADO7/G0DUFKNqN8C47eyo/FyILf+PfdFtT8=
 github.com/fluxplane/fluxplane-dex v0.11.0/go.mod h1:2GKD2Q3SjczKUa09FdWJQ1pHts4TDDrcsROhclevZcA=
 github.com/getkin/kin-openapi v0.138.0 h1:ebfE0JAmF6AqHrNBy1KO3Fs68K9tPs48HalvLPo7Rv4=
@@ -212,8 +211,6 @@ github.com/google/cel-go v0.28.1/go.mod h1:X0bD6iVNR8pkROSOoHVdgTkzmRcosof7WQqCD
 github.com/google/go-cmp v0.5.5/go.mod h1:v8dTdLbMG2kIc/vJvl+f65V22dbkXbowE6jgT/gNBxE=
 github.com/google/go-cmp v0.5.9/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
 github.com/google/gofuzz v1.0.0 h1:A8PeW59pxE9IoFRqBp37U+mSNaQoZ46F1f0f863XSXw=
-github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674/go.mod h1:r4w70xmWCQKmi1ONH4KIaBptdivuRPyosB9RmPlGEwA=
-github.com/graph-gophers/graphql-go v1.10.2/go.mod h1:AsADheC4CCFwd8n1/QbkduTlHgYYMsRgtPihYVAlEsk=
 github.com/gregjones/httpcache v0.0.0-20190611155906-901d90724c79 h1:+ngKgrYPPJrOjhax5N+uePQ0Fh1Z7PheYoUI/0nzkPA=
 github.com/gregjones/httpcache v0.0.0-20190611155906-901d90724c79/go.mod h1:FecbI9+v66THATjSRHfNgh1IVFe/9kFxbXtjV0ctIMA=
 github.com/ianlancetaylor/demangle v0.0.0-20250417193237-f615e6bd150b h1:ogbOPx86mIhFy764gGkqnkFC8m5PJA7sPzlk9ppLVQA=
@@ -239,7 +236,6 @@ github.com/mailru/easyjson v0.9.2 h1:dX8U45hQsZpxd80nLvDGihsQ/OxlvTkVUXH2r/8cb2M
 github.com/mailru/easyjson v0.9.2/go.mod h1:1+xMtQp2MRNVL/V1bOzuP3aP8VNwRW55fQUto+XFtTU=
 github.com/matoous/go-nanoid/v2 v2.1.0 h1:P64+dmq21hhWdtvZfEAofnvJULaRR1Yib0+PnU669bE=
 github.com/matoous/go-nanoid/v2 v2.1.0/go.mod h1:KlbGNQ+FhrUNIHUxZdL63t7tl4LaPkZNpUULS8H4uVM=
-github.com/mattn/go-colorable v0.1.14/go.mod h1:6LmQG8QLFO4G5z1gPvYEzlUgJ2wF+stgPZH1UqBm1s8=
 github.com/mattn/go-localereader v0.0.1 h1:ygSAOl7ZXTx4RdPYinUpg6W99U8jWvWi9Ye2JC/oIi4=
 github.com/mattn/go-localereader v0.0.1/go.mod h1:8fBrzywKY7BI3czFoHkuzRoWE9C+EiG4R1k4Cjx5p88=
 github.com/mattn/go-runewidth v0.0.23 h1:7ykA0T0jkPpzSvMS5i9uoNn2Xy3R383f9HDx3RybWcw=

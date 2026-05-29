@@ -1,11 +1,13 @@
 package websearch
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding/plugintest"
+	"github.com/fluxplane/fluxplane-dex/protocol"
 )
 
 func TestDefineProviderWiresManifestOperationDatasourceAndSecrets(t *testing.T) {
@@ -34,7 +36,7 @@ func TestDefineProviderWiresManifestOperationDatasourceAndSecrets(t *testing.T) 
 	})
 	manifest := plugin.Manifest()
 	plugintest.AssertManifestQuality(t, manifest)
-	if manifest.Metadata[MetadataProvider] != spec.Name || manifest.Metadata[MetadataOperation] != spec.Operation {
+	if manifest.Metadata[pluginbinding.ManifestProtocolKey] != protocol.Version || manifest.Metadata[MetadataProvider] != spec.Name || manifest.Metadata[MetadataOperation] != spec.Operation {
 		t.Fatalf("metadata = %#v", manifest.Metadata)
 	}
 	if len(manifest.Operations) != 1 || manifest.Operations[0].Name != spec.Operation || manifest.Operations[0].SecretPurposes[0] != "api_key" {
@@ -76,5 +78,27 @@ func TestProviderDiscoveryFromManifestAndSelection(t *testing.T) {
 	_, errors = SelectProviders([]Provider{provider}, []string{"missing"})
 	if len(errors) != 1 || errors[0].Provider != "missing" {
 		t.Fatalf("errors = %#v", errors)
+	}
+}
+
+func TestValidateQueriesBoundsInput(t *testing.T) {
+	queries, err := ValidateQueries(SearchInput{Query: " dex ", Queries: []string{"dex", "fluxplane"}})
+	if err != nil || len(queries) != 2 || queries[0] != "dex" || queries[1] != "fluxplane" {
+		t.Fatalf("queries = %#v err=%v", queries, err)
+	}
+	if _, err := ValidateQueries(SearchInput{Queries: []string{"1", "2", "3", "4", "5", "6"}}); err == nil {
+		t.Fatalf("expected too many queries error")
+	}
+	if _, err := ValidateQueries(SearchInput{Query: strings.Repeat("x", MaxQueryLength+1)}); err == nil {
+		t.Fatalf("expected query length error")
+	}
+}
+
+func TestHasResultsAcceptsAnswerOrResults(t *testing.T) {
+	if HasResults(ResultSet{}) {
+		t.Fatalf("empty result set should not have results")
+	}
+	if !HasResults(ResultSet{Answer: "answer"}) || !HasResults(ResultSet{Results: []Result{{URL: "https://example.com"}}}) {
+		t.Fatalf("expected answer or results to count")
 	}
 }

@@ -3,8 +3,8 @@ module github.com/fluxplane/fluxplane-dex/fluxplaneplugin
 go 1.26.1
 
 require (
-	github.com/fluxplane/fluxplane-core v0.21.2
-	github.com/fluxplane/fluxplane-dex v0.14.0
+	github.com/fluxplane/fluxplane-core v0.22.0
+	github.com/fluxplane/fluxplane-dex v0.15.0
 )
 
 require (

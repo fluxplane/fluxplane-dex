@@ -3,17 +3,17 @@ module github.com/fluxplane/fluxplane-dex/fluxplaneplugin
 go 1.26.1
 
 require (
-	github.com/fluxplane/fluxplane-core v0.20.0
-	github.com/fluxplane/fluxplane-dex v0.13.2
+	github.com/fluxplane/fluxplane-core v0.21.1
+	github.com/fluxplane/fluxplane-dex v0.13.3
 )
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/adrg/xdg v0.4.0 // indirect
+	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/amitybell/piper v0.0.0-20250621082041-2bb74e3a4a55 // indirect
 	github.com/amitybell/piper-asset v0.0.0-20231030194325-d36a29e3b1fd // indirect
-	github.com/amitybell/piper-bin-linux v0.0.0-20231118093037-92b3de178ad8 // indirect
+	github.com/amitybell/piper-bin-linux v0.0.0-20250621082830-f5d5d85fa076 // indirect
 	github.com/amitybell/piper-bin-windows v0.0.0-20231118093113-cc2cef2f6b74 // indirect
 	github.com/amitybell/piper-voice-jenny v0.0.0-20231118093224-dcf0d49e46b7 // indirect
 	github.com/andybalholm/brotli v1.2.1 // indirect
@@ -88,7 +88,7 @@ require (
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
+	go.yaml.in/yaml/v4 v4.0.0-rc.4 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
@@ -108,10 +108,10 @@ require (
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260520065146-aa012df4f4af // indirect
 	k8s.io/utils v0.0.0-20260507154919-ff6756f316d2 // indirect
-	modernc.org/libc v1.72.3 // indirect
+	modernc.org/libc v1.72.5 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.50.1 // indirect
+	modernc.org/sqlite v1.51.0 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.0 // indirect

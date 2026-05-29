@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Documentation
+## [0.13.3] - 2026-05-29
+
+### Added
+- Added live Confluence datasource `get` handlers for page and user records.
+
+### Changed
+- Upgraded Go module dependencies across the root module, fluxplaneplugin adapter, and plugin modules.
+- Updated release version references for the root module, plugin manifests, built-in plugin metadata, and release documentation.
+
+### Fixed
+- Fixed Confluence page and user search inputs so `endpoint_ref` is preserved for operation and datasource calls.
 - Documented host-system HTTP and Jira Atlassian Cloud live testing checks for future plugin development.
 
 ## [0.13.2] - 2026-05-29

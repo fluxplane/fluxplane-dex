@@ -50,7 +50,6 @@ type AuthTestResult struct {
 }
 
 type PageSearchInput struct {
-	ConfluenceTargetInput
 	pluginbinding.DatasourceSearchInput
 	CQL      string `json:"cql,omitempty" jsonschema:"description=Confluence CQL query"`
 	Title    string `json:"title,omitempty" jsonschema:"description=Exact page title filter"`
@@ -108,7 +107,6 @@ type AttachmentDeleteInput struct {
 }
 
 type UserSearchInput struct {
-	ConfluenceTargetInput
 	pluginbinding.DatasourceSearchInput
 	CQL string `json:"cql,omitempty" jsonschema:"description=Confluence user CQL query"`
 }
@@ -321,6 +319,46 @@ func (s Service) UserDatasource(ctx pluginbinding.Context, input UserSearchInput
 		return UserDatasourceResult{}, pluginbinding.Errorf("confluence", "%s", err)
 	}
 	return pluginbinding.NewDatasourceSearchResult(DatasourceUsers, strings.TrimSpace(input.Query), userRecords(ctx.DatasourceSource(), users)), nil
+}
+
+func (s Service) PageDatasourceGet(ctx pluginbinding.Context, input pluginbinding.DatasourceGetInput) (pluginbinding.DatasourceGetResult[PageRecord], error) {
+	client, baseURL, err := s.client(ctx, input)
+	if err != nil {
+		return pluginbinding.DatasourceGetResult[PageRecord]{}, pluginbinding.Errorf("secret", "%s", err)
+	}
+	id := strings.TrimSpace(pluginbinding.FirstString(pluginbinding.InputMap(input), "id", "page_id"))
+	if id == "" {
+		return pluginbinding.DatasourceGetResult[PageRecord]{}, pluginbinding.Fail("bad_input", "page id is required")
+	}
+	page, err := client.GetPage(context.Background(), id)
+	if err != nil {
+		return pluginbinding.DatasourceGetResult[PageRecord]{}, pluginbinding.Errorf("confluence", "%s", err)
+	}
+	record, ok := normalizePageRecord(ctx.DatasourceSource(), baseURL, page)
+	if !ok {
+		return pluginbinding.DatasourceGetResult[PageRecord]{}, pluginbinding.Fail("not_found", "confluence page not found")
+	}
+	return pluginbinding.NewDatasourceGetResult(DatasourcePages, record), nil
+}
+
+func (s Service) UserDatasourceGet(ctx pluginbinding.Context, input pluginbinding.DatasourceGetInput) (pluginbinding.DatasourceGetResult[UserRecord], error) {
+	client, _, err := s.client(ctx, input)
+	if err != nil {
+		return pluginbinding.DatasourceGetResult[UserRecord]{}, pluginbinding.Errorf("secret", "%s", err)
+	}
+	accountID := strings.TrimSpace(pluginbinding.FirstString(pluginbinding.InputMap(input), "id", "account_id", "accountId"))
+	if accountID == "" {
+		return pluginbinding.DatasourceGetResult[UserRecord]{}, pluginbinding.Fail("bad_input", "user account_id is required")
+	}
+	user, err := client.GetUser(context.Background(), accountID)
+	if err != nil {
+		return pluginbinding.DatasourceGetResult[UserRecord]{}, pluginbinding.Errorf("confluence", "%s", err)
+	}
+	record, ok := normalizeUserRecord(ctx.DatasourceSource(), user)
+	if !ok {
+		return pluginbinding.DatasourceGetResult[UserRecord]{}, pluginbinding.Fail("not_found", "confluence user not found")
+	}
+	return pluginbinding.NewDatasourceGetResult(DatasourceUsers, record), nil
 }
 
 func (s Service) IndexBuild(ctx pluginbinding.Context, input IndexBuildInput) (pluginbinding.IndexBuildResult, error) {

@@ -33,6 +33,7 @@ type Client interface {
 	GetAttachment(context.Context, string, string, bool) (AttachmentGetResult, error)
 	DeleteAttachment(context.Context, string) (AttachmentDeleteResult, error)
 	SearchUsers(context.Context, UserSearchOptions) ([]User, error)
+	GetUser(context.Context, string) (User, error)
 }
 
 type ClientFactory func(pluginbinding.Context, string) (Client, error)
@@ -226,6 +227,14 @@ func (c liveClient) DeleteAttachment(ctx context.Context, id string) (Attachment
 		return AttachmentDeleteResult{}, err
 	}
 	return AttachmentDeleteResult{OK: true, AttachmentID: id}, nil
+}
+
+func (c liveClient) GetUser(ctx context.Context, accountID string) (User, error) {
+	query := url.Values{}
+	query.Set("accountId", strings.TrimSpace(accountID))
+	var out User
+	err := c.getJSON(ctx, "/wiki/rest/api/user", query, &out)
+	return out, err
 }
 
 func (c liveClient) SearchUsers(ctx context.Context, input UserSearchOptions) ([]User, error) {

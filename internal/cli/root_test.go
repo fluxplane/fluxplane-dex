@@ -2477,11 +2477,23 @@ func TestSearchHelpShowsOnlyCanonicalEndpointRefFlag(t *testing.T) {
 }
 
 func TestFanoutGroupsMissingPluginsAwayFromAvailableData(t *testing.T) {
+	marketplace := filepath.Join(t.TempDir(), "marketplace.json")
+	data, err := json.Marshal(core.Marketplace{Version: "1", Plugins: []core.PluginEntry{{
+		Name:   "definitely-missing",
+		Binary: "dex-plugin-definitely-missing",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marketplace, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	cmd := NewRootCommand()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "op", "ls", "-o", "json"})
+	cmd.SetArgs([]string{"--dex-home", t.TempDir(), "--marketplace", marketplace, "op", "ls", "-o", "json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}

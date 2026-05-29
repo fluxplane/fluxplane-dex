@@ -28,6 +28,57 @@ func TestServiceBuildsClientFromEndpointRef(t *testing.T) {
 	}
 }
 
+func TestSearchInputsPreserveEndpointRef(t *testing.T) {
+	client := &fakeClient{pages: []Page{{ID: "123", Title: "Runbook"}}}
+	var capturedEndpointRef string
+	plugin := NewPluginWithService(Service{
+		ClientFactory: func(_ pluginbinding.Context, endpointRef string) (Client, error) {
+			capturedEndpointRef = endpointRef
+			return client, nil
+		},
+	})
+
+	out := plugintest.RunOK[PageSearchResult](t, plugin, OperationPageSearch, map[string]any{"endpoint_ref": "confluence-dev", "query": "runbook"})
+	if out.Count != 1 {
+		t.Fatalf("page search output = %#v", out)
+	}
+	if capturedEndpointRef != "confluence-dev" {
+		t.Fatalf("endpoint_ref = %q", capturedEndpointRef)
+	}
+}
+
+func TestDatasourceGetFetchesLivePage(t *testing.T) {
+	client := &fakeClient{page: Page{
+		ID:       "123",
+		Title:    "Runbook",
+		SpaceID:  "999",
+		SpaceKey: "OPS",
+		Links:    PageLinks{WebUI: "/wiki/spaces/OPS/pages/123/Runbook"},
+	}}
+	plugin := testPlugin(client)
+
+	out := plugintest.DatasourceGetOK[pluginbinding.DatasourceGetResult[PageRecord]](t, plugin, map[string]any{"datasource": DatasourcePages, "entity": EntityPage, "id": "123"})
+	if out.Record.PageID != "123" || out.Record.Title != "Runbook" || out.Record.SpaceKey != "OPS" {
+		t.Fatalf("get output = %#v", out)
+	}
+	if client.pageID != "123" {
+		t.Fatalf("page id = %q", client.pageID)
+	}
+}
+
+func TestDatasourceGetFetchesLiveUser(t *testing.T) {
+	client := &fakeClient{user: User{AccountID: "acct-1", DisplayName: "Ada Lovelace"}}
+	plugin := testPlugin(client)
+
+	out := plugintest.DatasourceGetOK[pluginbinding.DatasourceGetResult[UserRecord]](t, plugin, map[string]any{"datasource": DatasourceUsers, "entity": EntityUser, "id": "acct-1"})
+	if out.Record.AccountID != "acct-1" || out.Record.DisplayName != "Ada Lovelace" {
+		t.Fatalf("get output = %#v", out)
+	}
+	if client.userID != "acct-1" {
+		t.Fatalf("user id = %q", client.userID)
+	}
+}
+
 func TestPageSearchAndDatasourceNormalizeRecords(t *testing.T) {
 	client := &fakeClient{pages: []Page{{
 		ID:       "123",
@@ -154,6 +205,7 @@ type fakeClient struct {
 	pages                  []Page
 	page                   Page
 	users                  []User
+	userID                 string
 	pageOptions            PageSearchOptions
 	userOptions            UserSearchOptions
 	pageID                 string
@@ -222,4 +274,9 @@ func (c *fakeClient) DeleteAttachment(_ context.Context, id string) (AttachmentD
 func (c *fakeClient) SearchUsers(_ context.Context, options UserSearchOptions) ([]User, error) {
 	c.userOptions = options
 	return c.users, nil
+}
+
+func (c *fakeClient) GetUser(_ context.Context, accountID string) (User, error) {
+	c.userID = accountID
+	return c.user, nil
 }

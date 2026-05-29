@@ -1,13 +1,14 @@
 module github.com/fluxplane/fluxplane-dex/plugins/tavily
 
-go 1.26
+go 1.26.0
 
-require github.com/fluxplane/fluxplane-dex v0.13.2
+require github.com/fluxplane/fluxplane-dex v0.13.3
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
-	github.com/buger/jsonparser v1.1.2 // indirect
+	github.com/buger/jsonparser v1.2.0 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
-	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
+	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
+	go.yaml.in/yaml/v4 v4.0.0-rc.4 // indirect
 )

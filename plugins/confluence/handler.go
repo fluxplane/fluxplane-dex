@@ -25,6 +25,8 @@ func NewPluginWithService(service Service) *pluginbinding.Plugin {
 		pluginbinding.RegisterOperation(pageSearchSpec(), service.PageSearch),
 		pluginbinding.RegisterOperation(pageShowSpec(), service.PageShow),
 		pluginbinding.RegisterOperation(userSearchSpec(), service.UserSearch),
+		pluginbinding.RegisterDatasourceGet(confluencePagesDatasourceSpec(), service.PageDatasourceGet),
+		pluginbinding.RegisterDatasourceGet(confluenceUsersDatasourceSpec(), service.UserDatasourceGet),
 		pluginbinding.RegisterDatasourceSearch(confluencePagesDatasourceSpec(), service.PageDatasource),
 		pluginbinding.RegisterDatasourceSearch(confluenceUsersDatasourceSpec(), service.UserDatasource),
 		pluginbinding.RegisterDatasourceLookup(confluencePagesLookupSpec(), service.Lookup),

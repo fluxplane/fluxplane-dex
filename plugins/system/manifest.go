@@ -8,7 +8,7 @@ import (
 
 const (
 	PluginName        = "system"
-	PluginVersion     = "0.13.2"
+	PluginVersion     = "0.13.3"
 	PluginDescription = "Local system information across OS, runtime, user, paths, CPU, time, environment, and network categories."
 
 	OperationInfo = "system.info"

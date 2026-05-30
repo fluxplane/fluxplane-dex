@@ -1,6 +1,10 @@
 package core
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	endpoint "github.com/fluxplane/fluxplane-endpoint"
+)
 
 type Marketplace struct {
 	Version string        `json:"version"`
@@ -178,22 +182,9 @@ type ContextSpec struct {
 	Kinds       []string `json:"kinds,omitempty"`
 }
 
-type EndpointSpec struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description,omitempty"`
-	Products    []string `json:"products,omitempty"`
-}
+type EndpointSpec = endpoint.EndpointSpec
 
-type EndpointRef struct {
-	ID            string            `json:"id"`
-	URL           string            `json:"url"`
-	Product       string            `json:"product,omitempty"`
-	Protocol      string            `json:"protocol,omitempty"`
-	Source        string            `json:"source,omitempty"`
-	CredentialRef string            `json:"credential_ref,omitempty"`
-	Labels        map[string]string `json:"labels,omitempty"`
-	Annotations   map[string]string `json:"annotations,omitempty"`
-}
+type EndpointRef = endpoint.EndpointRef
 
 type IndexSpec struct {
 	Name        string   `json:"name"`
@@ -206,17 +197,7 @@ type AuthMaterial struct {
 	Values map[string]string `json:"values,omitempty"`
 }
 
-type EndpointCandidate struct {
-	ID            string            `json:"id"`
-	URL           string            `json:"url,omitempty"`
-	Product       string            `json:"product,omitempty"`
-	Protocol      string            `json:"protocol,omitempty"`
-	Source        string            `json:"source,omitempty"`
-	Score         float64           `json:"score,omitempty"`
-	CredentialRef string            `json:"credential_ref,omitempty"`
-	Labels        map[string]string `json:"labels,omitempty"`
-	Annotations   map[string]string `json:"annotations,omitempty"`
-}
+type EndpointCandidate = endpoint.Candidate
 
 type ContextBlock struct {
 	ID       string            `json:"id,omitempty"`

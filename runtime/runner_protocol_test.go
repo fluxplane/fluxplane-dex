@@ -175,7 +175,8 @@ func TestRunnerServesHostLookupToPluginBindingOverV2(t *testing.T) {
 		t.Fatal(err)
 	}
 	goMod := strings.Replace(string(rootGoMod), "module github.com/fluxplane/fluxplane-dex", "module bindinghostlookup", 1)
-	goMod += "\nrequire github.com/fluxplane/fluxplane-dex v0.0.0\n\nreplace github.com/fluxplane/fluxplane-dex => " + repoRoot + "\n"
+	endpointRoot := filepath.Join(filepath.Dir(repoRoot), "fluxplane-endpoint")
+	goMod += "\nrequire github.com/fluxplane/fluxplane-dex v0.0.0\n\nreplace github.com/fluxplane/fluxplane-dex => " + repoRoot + "\nreplace github.com/fluxplane/fluxplane-endpoint => " + endpointRoot + "\n"
 	if err := os.WriteFile(filepath.Join(pluginDir, "go.mod"), []byte(goMod), 0o600); err != nil {
 		t.Fatal(err)
 	}

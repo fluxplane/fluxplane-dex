@@ -1,6 +1,7 @@
 go 1.26.1
 
 use (
+	../fluxplane-endpoint
 	.
 	./fluxplaneplugin
 	./plugins/asterisk
@@ -22,3 +23,5 @@ use (
 )
 
 replace github.com/fluxplane/fluxplane-dex v0.16.0 => .
+
+replace github.com/fluxplane/fluxplane-endpoint v0.1.0 => ../fluxplane-endpoint

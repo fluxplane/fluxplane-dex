@@ -1,10 +1,11 @@
 module github.com/fluxplane/fluxplane-dex
 
-go 1.26.0
+go 1.26.1
 
 require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.7.0
+	github.com/fluxplane/fluxplane-endpoint v0.1.0
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/invopop/jsonschema v0.14.0
 	github.com/jackc/pgx/v5 v5.9.2
@@ -111,3 +112,4 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.0 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
+

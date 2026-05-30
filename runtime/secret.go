@@ -17,37 +17,9 @@ import (
 
 const DefaultInstance = "default"
 
-type Grant struct {
-	Token        string              `json:"token"`
-	Plugin       string              `json:"plugin"`
-	Instance     string              `json:"instance"`
-	Operations   []string            `json:"operations,omitempty"`
-	Capabilities []CapabilityGrant   `json:"capabilities,omitempty"`
-	Purposes     []string            `json:"purposes,omitempty"`
-	PurposeEnv   map[string][]string `json:"purpose_env,omitempty"`
-	ExpiresAt    time.Time           `json:"expires_at"`
-	CreatedAt    time.Time           `json:"created_at"`
-}
-
-type CapabilityGrant struct {
-	Name     string `json:"name"`
-	Provider string `json:"provider,omitempty"`
-	Action   string `json:"action,omitempty"`
-}
-
-type SecretMaterial struct {
-	Kind    secret.Kind `json:"kind,omitempty"`
-	Value   string      `json:"value"`
-	Source  string      `json:"source,omitempty"`
-	Purpose string      `json:"purpose,omitempty"`
-	Ref     secret.Ref  `json:"ref,omitempty"`
-}
-
-// Material converts the runtime wire shape to shared trusted secret material.
-func (m SecretMaterial) Material() secret.Material {
-	return secret.Material{Ref: m.Ref, Kind: m.Kind, Value: []byte(m.Value)}
-}
-
+type Grant = secret.AccessGrant
+type CapabilityGrant = secret.CapabilityGrant
+type SecretMaterial = secret.WireMaterial
 type StoredSecret = secret.StoredSecret
 
 func NormalizeInstance(instance string) string {

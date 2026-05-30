@@ -8,7 +8,8 @@ import (
 
 	"github.com/fluxplane/fluxplane-core/core/resource"
 	"github.com/fluxplane/fluxplane-core/orchestration/pluginhost"
-	coresystem "github.com/fluxplane/fluxplane-core/runtime/system"
+	runtimeworkspace "github.com/fluxplane/fluxplane-core/runtime/workspace"
+	fpsystem "github.com/fluxplane/fluxplane-system"
 
 	dex "github.com/fluxplane/fluxplane-dex"
 	dexruntime "github.com/fluxplane/fluxplane-dex/runtime"
@@ -27,7 +28,10 @@ type Config struct {
 	// runtime boundaries. When set and Engine is nil, dex HTTP, blob, and
 	// environment capability calls go through System instead of dex's local
 	// fallback host.
-	System coresystem.System
+	System fpsystem.System
+
+	// Workspace backs dex blob capability calls with the caller's selected runtime workspace.
+	Workspace runtimeworkspace.Workspace
 
 	// Capabilities overrides the capability host passed to dex.New. It is
 	// useful when a caller wants to supply a custom host while still using
@@ -83,7 +87,7 @@ func New(cfg Config) (*Assembly, error) {
 	if engine == nil {
 		capabilities := cfg.Capabilities
 		if capabilities == nil && cfg.System != nil {
-			capabilities = NewSystemCapabilityHost(cfg.System, cfg.HostProviders)
+			capabilities = NewSystemCapabilityHost(cfg.System, cfg.Workspace, cfg.HostProviders)
 		}
 		e, err := dex.New(dex.Config{Capabilities: capabilities})
 		if err != nil {

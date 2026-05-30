@@ -7,18 +7,21 @@ import (
 	"strings"
 	"time"
 
-	coresystem "github.com/fluxplane/fluxplane-core/runtime/system"
+	runtimeworkspace "github.com/fluxplane/fluxplane-core/runtime/workspace"
 	"github.com/fluxplane/fluxplane-dex/core/pluginbinding"
 	dexruntime "github.com/fluxplane/fluxplane-dex/runtime"
+	fpsystem "github.com/fluxplane/fluxplane-system"
+	"github.com/fluxplane/fluxplane-system/systemkit"
 )
 
 type SystemCapabilityHost struct {
-	System    coresystem.System
+	System    fpsystem.System
+	Workspace runtimeworkspace.Workspace
 	Providers map[string]dexruntime.HostProvider
 }
 
-func NewSystemCapabilityHost(system coresystem.System, providers map[string]dexruntime.HostProvider) SystemCapabilityHost {
-	return SystemCapabilityHost{System: system, Providers: providers}
+func NewSystemCapabilityHost(system fpsystem.System, workspace runtimeworkspace.Workspace, providers map[string]dexruntime.HostProvider) SystemCapabilityHost {
+	return SystemCapabilityHost{System: system, Workspace: workspace, Providers: providers}
 }
 
 func (h SystemCapabilityHost) HTTP(ctx context.Context, input pluginbinding.HTTPRequest) (pluginbinding.HTTPResponse, error) {
@@ -29,11 +32,11 @@ func (h SystemCapabilityHost) HTTP(ctx context.Context, input pluginbinding.HTTP
 	if err != nil {
 		return pluginbinding.HTTPResponse{}, err
 	}
-	resp, err := h.System.Network().DoHTTP(ctx, coresystem.HTTPRequest{
+	resp, err := systemkit.DoHTTP(ctx, h.System.Network(), systemkit.HTTPRequest{
 		URL:       requestURL,
 		Method:    input.Method,
 		Headers:   input.Headers,
-		Body:      string(input.Body),
+		Body:      input.Body,
 		Timeout:   time.Duration(input.TimeoutMS) * time.Millisecond,
 		MaxBytes:  input.MaxBytes,
 		UserAgent: input.UserAgent,
@@ -97,10 +100,10 @@ func systemHTTPRequestURL(input pluginbinding.HTTPRequest) (string, error) {
 }
 
 func (h SystemCapabilityHost) BlobRead(ctx context.Context, input pluginbinding.BlobReadRequest) (pluginbinding.BlobReadResponse, error) {
-	if h.System == nil || h.System.Workspace() == nil {
-		return pluginbinding.BlobReadResponse{}, fmt.Errorf("fluxplaneplugin: system workspace is unavailable")
+	if h.Workspace == nil {
+		return pluginbinding.BlobReadResponse{}, fmt.Errorf("fluxplaneplugin: workspace is unavailable")
 	}
-	data, truncated, resolved, err := h.System.Workspace().ReadFile(ctx, blobPath(input.Ref, input.Path), input.MaxBytes)
+	data, truncated, resolved, err := h.Workspace.ReadFile(ctx, blobPath(input.Ref, input.Path), input.MaxBytes)
 	if err != nil {
 		return pluginbinding.BlobReadResponse{}, err
 	}
@@ -112,10 +115,11 @@ func (h SystemCapabilityHost) BlobRead(ctx context.Context, input pluginbinding.
 }
 
 func (h SystemCapabilityHost) BlobWrite(ctx context.Context, input pluginbinding.BlobWriteRequest) (pluginbinding.BlobRef, error) {
-	if h.System == nil || h.System.Workspace() == nil {
-		return pluginbinding.BlobRef{}, fmt.Errorf("fluxplaneplugin: system workspace is unavailable")
+	writer, ok := h.Workspace.(fpsystem.BoundedFileWriter)
+	if h.Workspace == nil || !ok {
+		return pluginbinding.BlobRef{}, fmt.Errorf("fluxplaneplugin: workspace writer is unavailable")
 	}
-	resolved, err := h.System.Workspace().WriteFile(ctx, blobPath(input.Ref, input.Path), input.Content, 0o644, input.Overwrite)
+	resolved, err := writer.WriteFile(ctx, blobPath(input.Ref, input.Path), input.Content, 0o644, input.Overwrite)
 	if err != nil {
 		return pluginbinding.BlobRef{}, err
 	}
@@ -127,10 +131,11 @@ func (h SystemCapabilityHost) BlobWrite(ctx context.Context, input pluginbinding
 }
 
 func (h SystemCapabilityHost) BlobInfo(ctx context.Context, input pluginbinding.BlobInfoRequest) (pluginbinding.BlobRef, error) {
-	if h.System == nil || h.System.Workspace() == nil {
-		return pluginbinding.BlobRef{}, fmt.Errorf("fluxplaneplugin: system workspace is unavailable")
+	statFS, ok := h.Workspace.(fpsystem.BoundedStatFS)
+	if h.Workspace == nil || !ok {
+		return pluginbinding.BlobRef{}, fmt.Errorf("fluxplaneplugin: workspace stat is unavailable")
 	}
-	info, resolved, err := h.System.Workspace().Stat(ctx, blobPath(input.Ref, input.Path))
+	info, resolved, err := statFS.Stat(ctx, blobPath(input.Ref, input.Path))
 	if err != nil {
 		return pluginbinding.BlobRef{}, err
 	}
@@ -179,7 +184,7 @@ func blobPath(ref, path string) string {
 	return strings.TrimSpace(path)
 }
 
-func blobRef(resolved coresystem.ResolvedPath, size int64) pluginbinding.BlobRef {
+func blobRef(resolved fpsystem.ResolvedPath, size int64) pluginbinding.BlobRef {
 	return pluginbinding.BlobRef{
 		Ref:  "workspace:" + resolved.Rel,
 		Path: resolved.Rel,

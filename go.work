@@ -1,9 +1,9 @@
 go 1.26.1
 
 use (
+	.
 	../fluxplane-endpoint
 	../fluxplane-secret
-	.
 	./fluxplaneplugin
 	./plugins/asterisk
 	./plugins/confluence
@@ -23,8 +23,8 @@ use (
 	./plugins/tavily
 )
 
-replace github.com/fluxplane/fluxplane-dex v0.16.0 => .
+replace github.com/fluxplane/fluxplane-dex v0.18.0 => .
 
-replace github.com/fluxplane/fluxplane-endpoint v0.1.0 => ../fluxplane-endpoint
+replace github.com/fluxplane/fluxplane-endpoint v0.1.1 => ../fluxplane-endpoint
 
-replace github.com/fluxplane/fluxplane-secret v0.1.0 => ../fluxplane-secret
+replace github.com/fluxplane/fluxplane-secret v0.1.1 => ../fluxplane-secret

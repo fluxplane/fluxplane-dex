@@ -3,20 +3,21 @@ module github.com/fluxplane/fluxplane-dex/fluxplaneplugin
 go 1.26.1
 
 require (
-	github.com/fluxplane/fluxplane-core v0.22.0
-	github.com/fluxplane/fluxplane-dex v0.16.0
+	github.com/fluxplane/fluxplane-core v0.23.2
+	github.com/fluxplane/fluxplane-dex v0.18.0
+)
+
+require (
+	github.com/fluxplane/fluxplane-auth v0.1.1 // indirect
+	github.com/fluxplane/fluxplane-endpoint v0.1.1 // indirect
+	github.com/fluxplane/fluxplane-event v0.1.0 // indirect
+	github.com/fluxplane/fluxplane-policy v0.1.1 // indirect
+	github.com/fluxplane/fluxplane-secret v0.1.1 // indirect
 )
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/adrg/xdg v0.5.3 // indirect
-	github.com/amitybell/piper v0.0.0-20250621082041-2bb74e3a4a55 // indirect
-	github.com/amitybell/piper-asset v0.0.0-20231030194325-d36a29e3b1fd // indirect
-	github.com/amitybell/piper-bin-linux v0.0.0-20250621082830-f5d5d85fa076 // indirect
-	github.com/amitybell/piper-bin-windows v0.0.0-20231118093113-cc2cef2f6b74 // indirect
-	github.com/amitybell/piper-voice-jenny v0.0.0-20231118093224-dcf0d49e46b7 // indirect
-	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.2.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
@@ -32,6 +33,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/fluxplane/fluxplane-system v0.1.5
 	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect

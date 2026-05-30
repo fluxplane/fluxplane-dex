@@ -8,7 +8,7 @@ import (
 
 const (
 	PluginName        = "asterisk"
-	PluginVersion     = "0.16.0"
+	PluginVersion     = "0.18.2"
 	PluginDescription = "Asterisk endpoint discovery and AMI operations."
 
 	EnvAsteriskAMIUsername = "ASTERISK_AMI_USERNAME"

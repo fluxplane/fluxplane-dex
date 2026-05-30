@@ -1,9 +1,9 @@
 module github.com/fluxplane/fluxplane-dex/plugins/gitlab
 
-go 1.26.0
+go 1.26.1
 
 require (
-	github.com/fluxplane/fluxplane-dex v0.16.0
+	github.com/fluxplane/fluxplane-dex v0.18.0
 	gitlab.com/gitlab-org/api/client-go/v2 v2.36.0
 )
 
@@ -11,6 +11,9 @@ require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.2.0 // indirect
 	github.com/fatih/color v1.19.0 // indirect
+	github.com/fluxplane/fluxplane-auth v0.1.1 // indirect
+	github.com/fluxplane/fluxplane-endpoint v0.1.1 // indirect
+	github.com/fluxplane/fluxplane-secret v0.1.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/graph-gophers/graphql-go v1.10.2 // indirect

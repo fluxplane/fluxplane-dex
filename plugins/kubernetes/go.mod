@@ -1,8 +1,8 @@
 module github.com/fluxplane/fluxplane-dex/plugins/kubernetes
 
-go 1.26.0
+go 1.26.1
 
-require github.com/fluxplane/fluxplane-dex v0.16.0
+require github.com/fluxplane/fluxplane-dex v0.18.0
 
 require (
 	k8s.io/api v0.36.1
@@ -12,6 +12,9 @@ require (
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.2.0 // indirect
+	github.com/fluxplane/fluxplane-auth v0.1.1 // indirect
+	github.com/fluxplane/fluxplane-endpoint v0.1.1 // indirect
+	github.com/fluxplane/fluxplane-secret v0.1.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect

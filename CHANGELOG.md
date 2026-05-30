@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-05-30
+
+### Changed
+- Released all dex plugin modules and the `fluxplaneplugin` adapter with current shared endpoint, auth, secret, and system compatibility updates.
+- Updated plugin module requirements, plugin manifests, builtin websearch metadata, and workspace release replacements to `0.18.2`.
+
+### Fixed
+- Updated `fluxplaneplugin` system capability hosting to use the shared `fluxplane-system` interfaces and the launch workspace for blob read, write, and stat capability calls.
+
 ## [0.16.0] - 2026-05-29
 
 ### Added

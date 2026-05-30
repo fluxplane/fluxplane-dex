@@ -3,13 +3,13 @@ module github.com/fluxplane/fluxplane-dex/fluxplaneplugin
 go 1.26.1
 
 require (
-	github.com/fluxplane/fluxplane-core v0.23.2
+	github.com/fluxplane/fluxplane-core v0.25.0
 	github.com/fluxplane/fluxplane-dex v0.18.0
+	github.com/fluxplane/fluxplane-endpoint v0.2.0
 )
 
 require (
 	github.com/fluxplane/fluxplane-auth v0.1.1 // indirect
-	github.com/fluxplane/fluxplane-endpoint v0.1.1 // indirect
 	github.com/fluxplane/fluxplane-event v0.1.0 // indirect
 	github.com/fluxplane/fluxplane-policy v0.1.1 // indirect
 	github.com/fluxplane/fluxplane-secret v0.1.1 // indirect
@@ -33,7 +33,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
-	github.com/fluxplane/fluxplane-system v0.1.5
+	github.com/fluxplane/fluxplane-system v0.1.6
 	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect

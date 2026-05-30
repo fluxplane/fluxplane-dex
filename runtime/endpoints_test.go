@@ -48,7 +48,7 @@ func TestEndpointRegistryStoresHealthAndPreservesOnUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkedAt := time.Date(2026, 5, 28, 1, 2, 3, 0, time.UTC)
-	updated, err := state.SaveEndpointHealth("dev", EndpointHealth{OK: true, CheckedAt: checkedAt, Method: "kubernetes.cluster.test", DurationMS: 42, Details: json.RawMessage(`{"server_version":"v1.30.0"}`)})
+	updated, err := state.SaveEndpointHealth("dev", EndpointHealth{OK: true, CheckedAt: checkedAt, Method: "kubernetes.cluster.test", DurationMS: 42, Details: map[string]any{"server_version": "v1.30.0"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,9 +62,9 @@ func TestEndpointRegistryStoresHealthAndPreservesOnUpdate(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("get ok=%v err=%v", ok, err)
 	}
-	var details map[string]string
+	details := map[string]any{}
 	if record.LastHealth != nil {
-		_ = json.Unmarshal(record.LastHealth.Details, &details)
+		details = record.LastHealth.Details
 	}
 	if record.LastHealth == nil || record.LastHealth.DurationMS != 42 || details["server_version"] != "v1.30.0" {
 		t.Fatalf("record = %#v", record)

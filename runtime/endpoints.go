@@ -3,31 +3,18 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/fluxplane/fluxplane-dex/core"
+	fpendpoint "github.com/fluxplane/fluxplane-endpoint"
 )
 
-type EndpointRecord struct {
-	core.EndpointRef
-	LastHealth *EndpointHealth `json:"last_health,omitempty"`
-	CreatedAt  time.Time       `json:"created_at"`
-	UpdatedAt  time.Time       `json:"updated_at"`
-}
+type EndpointRecord = fpendpoint.Record
 
-type EndpointHealth struct {
-	OK         bool            `json:"ok"`
-	CheckedAt  time.Time       `json:"checked_at"`
-	Method     string          `json:"method,omitempty"`
-	DurationMS int64           `json:"duration_ms,omitempty"`
-	Error      string          `json:"error,omitempty"`
-	Details    json.RawMessage `json:"details,omitempty"`
-}
+type EndpointHealth = fpendpoint.Health
 
 type EndpointRegistry struct {
 	Endpoints []EndpointRecord `json:"endpoints"`
@@ -53,17 +40,10 @@ func (s State) LoadEndpoints() (EndpointRegistry, error) {
 	return registry, nil
 }
 
-func (s State) SaveEndpoint(ref core.EndpointRef) (EndpointRecord, error) {
-	ref = NormalizeEndpointRef(ref)
-	if ref.ID == "" {
-		return EndpointRecord{}, fmt.Errorf("endpoint id is required")
-	}
-	if ref.URL == "" {
-		return EndpointRecord{}, fmt.Errorf("endpoint url is required")
-	}
-	parsed, err := url.Parse(ref.URL)
-	if err != nil || parsed.Scheme == "" || (parsed.Host == "" && !endpointURLAllowsEmptyHost(parsed.Scheme)) {
-		return EndpointRecord{}, fmt.Errorf("invalid endpoint url %q", ref.URL)
+func (s State) SaveEndpoint(ref fpendpoint.EndpointRef) (EndpointRecord, error) {
+	ref = ref.Normalize()
+	if err := ref.Validate(); err != nil {
+		return EndpointRecord{}, err
 	}
 	registry, err := s.LoadEndpoints()
 	if err != nil {
@@ -87,15 +67,6 @@ func (s State) SaveEndpoint(ref core.EndpointRef) (EndpointRecord, error) {
 		return EndpointRecord{}, err
 	}
 	return record, nil
-}
-
-func endpointURLAllowsEmptyHost(scheme string) bool {
-	switch strings.ToLower(strings.TrimSpace(scheme)) {
-	case "file", "sqlite", "sqlite3":
-		return true
-	default:
-		return false
-	}
 }
 
 func (s State) SaveEndpointHealth(id string, health EndpointHealth) (EndpointRecord, error) {
@@ -126,17 +97,8 @@ func (s State) SaveEndpointHealth(id string, health EndpointHealth) (EndpointRec
 	return EndpointRecord{}, fmt.Errorf("unknown endpoint %q", id)
 }
 
-func (s State) SaveEndpointCandidate(candidate core.EndpointCandidate) (EndpointRecord, error) {
-	return s.SaveEndpoint(core.EndpointRef{
-		ID:            firstEndpointNonEmpty(candidate.ID, endpointID(candidate.Product, candidate.URL)),
-		URL:           candidate.URL,
-		Product:       candidate.Product,
-		Protocol:      candidate.Protocol,
-		Source:        candidate.Source,
-		CredentialRef: candidate.CredentialRef,
-		Labels:        candidate.Labels,
-		Annotations:   candidate.Annotations,
-	})
+func (s State) SaveEndpointCandidate(candidate fpendpoint.Candidate) (EndpointRecord, error) {
+	return s.SaveEndpoint(candidate.EndpointRef())
 }
 
 func (s State) ListEndpoints(product string) ([]EndpointRecord, error) {
@@ -202,54 +164,4 @@ func (s State) writeEndpoints(registry EndpointRegistry) error {
 		return fmt.Errorf("marshal endpoints: %w", err)
 	}
 	return os.WriteFile(s.EndpointsPath(), data, 0o600)
-}
-
-func NormalizeEndpointRef(ref core.EndpointRef) core.EndpointRef {
-	ref.ID = strings.TrimSpace(ref.ID)
-	ref.URL = strings.TrimRight(strings.TrimSpace(ref.URL), "/")
-	ref.Product = strings.TrimSpace(ref.Product)
-	ref.Protocol = strings.TrimSpace(ref.Protocol)
-	ref.Source = strings.TrimSpace(ref.Source)
-	ref.CredentialRef = strings.TrimSpace(ref.CredentialRef)
-	if ref.Protocol == "" {
-		if parsed, err := url.Parse(ref.URL); err == nil {
-			ref.Protocol = parsed.Scheme
-		}
-	}
-	if ref.Source == "" {
-		ref.Source = "manual"
-	}
-	if ref.ID == "" {
-		ref.ID = endpointID(ref.Product, ref.URL)
-	}
-	return ref
-}
-
-func endpointID(product, rawURL string) string {
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	host := ""
-	if err == nil {
-		host = parsed.Host
-	}
-	id := strings.Trim(strings.ToLower(product+"-"+host), "-")
-	if id == "" {
-		id = strings.TrimSpace(rawURL)
-	}
-	replacer := strings.NewReplacer("://", "-", "/", "-", ":", "-", ".", "-", "_", "-")
-	id = replacer.Replace(id)
-	id = strings.Trim(id, "-")
-	if id == "" {
-		id = "endpoint"
-	}
-	return id
-}
-
-func firstEndpointNonEmpty(values ...string) string {
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }

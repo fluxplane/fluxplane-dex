@@ -4,9 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/protocol"
-	"github.com/fluxplane/fluxplane-dex/runtime"
+	fpendpoint "github.com/fluxplane/fluxplane-endpoint"
 )
 
 // EndpointService manages the endpoint registry.
@@ -15,13 +14,13 @@ type EndpointService struct {
 }
 
 // EndpointRef is the canonical endpoint reference.
-type EndpointRef = core.EndpointRef
+type EndpointRef = fpendpoint.EndpointRef
 
 // EndpointRecord is an entry in the saved registry, including health info.
-type EndpointRecord = runtime.EndpointRecord
+type EndpointRecord = fpendpoint.Record
 
 // EndpointHealth captures a probe result.
-type EndpointHealth = runtime.EndpointHealth
+type EndpointHealth = fpendpoint.Health
 
 // List returns saved endpoints, optionally filtered by product (e.g. "github").
 func (s *EndpointService) List(_ context.Context, product string) ([]EndpointRecord, error) {

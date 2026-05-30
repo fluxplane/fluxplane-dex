@@ -8,7 +8,7 @@ require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.2.0 // indirect
 	github.com/fluxplane/fluxplane-auth v0.1.1 // indirect
-	github.com/fluxplane/fluxplane-endpoint v0.1.1 // indirect
+	github.com/fluxplane/fluxplane-endpoint v0.2.0 // indirect
 	github.com/fluxplane/fluxplane-secret v0.1.1 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect

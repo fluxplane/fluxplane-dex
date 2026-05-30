@@ -3140,19 +3140,13 @@ func testTCPEndpoint(ctx context.Context, endpoint runtime.EndpointRecord) endpo
 }
 
 func endpointHealthFromTestResult(result endpointTestResult) runtime.EndpointHealth {
-	var details json.RawMessage
-	if len(result.Details) > 0 {
-		if raw, err := json.Marshal(result.Details); err == nil {
-			details = raw
-		}
-	}
 	return runtime.EndpointHealth{
 		OK:         result.OK,
 		CheckedAt:  result.CheckedAt,
 		Method:     result.Method,
 		DurationMS: result.DurationMS,
 		Error:      result.Error,
-		Details:    details,
+		Details:    result.Details,
 	}
 }
 

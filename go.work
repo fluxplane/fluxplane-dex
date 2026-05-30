@@ -25,6 +25,6 @@ use (
 
 replace github.com/fluxplane/fluxplane-dex v0.18.0 => .
 
-replace github.com/fluxplane/fluxplane-endpoint v0.1.1 => ../fluxplane-endpoint
+replace github.com/fluxplane/fluxplane-endpoint v0.2.0 => ../fluxplane-endpoint
 
 replace github.com/fluxplane/fluxplane-secret v0.1.1 => ../fluxplane-secret

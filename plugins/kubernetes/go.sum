@@ -10,8 +10,8 @@ github.com/fluxplane/fluxplane-auth v0.1.1 h1:fEIzbbDvy31PluMDxKFAx4v6w+J5LSrSRn
 github.com/fluxplane/fluxplane-auth v0.1.1/go.mod h1:+WDYvrSzvhjWgN/T2dvltuF88sQBTZTbOrr0OSsmxco=
 github.com/fluxplane/fluxplane-dex v0.18.0 h1:qdY0ZyBH4ThXXkSfa77jnNkG/vfQRnbj1WFciX8jClo=
 github.com/fluxplane/fluxplane-dex v0.18.0/go.mod h1:VVI6Pirc6w6r8VnF3hq0Ntrvr9EdMypG52rFMqd4mr8=
-github.com/fluxplane/fluxplane-endpoint v0.1.1 h1:dUh+KF+TAC7tBZ1nd4TU0V4srXiF/RxZ4f4Du2346iI=
-github.com/fluxplane/fluxplane-endpoint v0.1.1/go.mod h1:YxEuZNTy8NfitF6foM1AwjYTZoP5MhSuzoCKbs+Nq2Y=
+github.com/fluxplane/fluxplane-endpoint v0.2.0 h1:s1pOyLPKYGFTkN3xdFOfLMm05mQW/IIT3qtRE58CAVE=
+github.com/fluxplane/fluxplane-endpoint v0.2.0/go.mod h1:YxEuZNTy8NfitF6foM1AwjYTZoP5MhSuzoCKbs+Nq2Y=
 github.com/fluxplane/fluxplane-secret v0.1.1 h1:N/rDvbxb7/cyLmFK6rKgYWdbEl/mM/x+XFgWIONKF58=
 github.com/fluxplane/fluxplane-secret v0.1.1/go.mod h1:XkWhjAtAy2a05s71Yx1VAy+KrbDr8kuPHc1Fp1rl1IU=
 github.com/fxamacker/cbor/v2 v2.9.2 h1:X4Ksno9+x3cz0TZv69ec1hxP/+tymuR8PXQJyDwfh78=

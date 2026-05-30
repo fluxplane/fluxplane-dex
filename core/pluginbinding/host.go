@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/protocol"
+	fpendpoint "github.com/fluxplane/fluxplane-endpoint"
 )
 
 const (
@@ -23,7 +23,7 @@ type HostClient interface {
 	Lookup(input DatasourceLookupInput) (DatasourceLookupResult[LookupMatch[any]], error)
 	Search(input DatasourceSearchInput) (DatasourceSearchResult[any], error)
 	Get(input DatasourceGetInput) (DatasourceGetResult[any], error)
-	ResolveEndpoint(ref string) (core.EndpointRef, error)
+	ResolveEndpoint(ref string) (fpendpoint.EndpointRef, error)
 	HTTP(input HTTPRequest) (HTTPResponse, error)
 	BlobRead(input BlobReadRequest) (BlobReadResponse, error)
 	BlobWrite(input BlobWriteRequest) (BlobRef, error)
@@ -72,8 +72,8 @@ func (h hostClient) Get(input DatasourceGetInput) (DatasourceGetResult[any], err
 	return out, err
 }
 
-func (h hostClient) ResolveEndpoint(ref string) (core.EndpointRef, error) {
-	var out core.EndpointRef
+func (h hostClient) ResolveEndpoint(ref string) (fpendpoint.EndpointRef, error) {
+	var out fpendpoint.EndpointRef
 	err := h.call(HostEndpointResolve, map[string]any{"endpoint_ref": strings.TrimSpace(ref)}, &out)
 	return out, err
 }
@@ -141,8 +141,8 @@ func (unavailableHostClient) Get(DatasourceGetInput) (DatasourceGetResult[any], 
 	return DatasourceGetResult[any]{}, fmt.Errorf("host client is unavailable")
 }
 
-func (unavailableHostClient) ResolveEndpoint(string) (core.EndpointRef, error) {
-	return core.EndpointRef{}, fmt.Errorf("host client is unavailable")
+func (unavailableHostClient) ResolveEndpoint(string) (fpendpoint.EndpointRef, error) {
+	return fpendpoint.EndpointRef{}, fmt.Errorf("host client is unavailable")
 }
 
 func (unavailableHostClient) HTTP(HTTPRequest) (HTTPResponse, error) {

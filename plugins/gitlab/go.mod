@@ -12,7 +12,7 @@ require (
 	github.com/buger/jsonparser v1.2.0 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/fluxplane/fluxplane-auth v0.1.1 // indirect
-	github.com/fluxplane/fluxplane-endpoint v0.1.1 // indirect
+	github.com/fluxplane/fluxplane-endpoint v0.2.0 // indirect
 	github.com/fluxplane/fluxplane-secret v0.1.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect

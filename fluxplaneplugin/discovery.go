@@ -7,10 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	corediscovery "github.com/fluxplane/fluxplane-core/core/discovery"
-	coreendpoint "github.com/fluxplane/fluxplane-core/core/endpoint"
 	"github.com/fluxplane/fluxplane-core/orchestration/pluginhost"
-	runtimediscovery "github.com/fluxplane/fluxplane-core/runtime/discovery"
+	fpendpoint "github.com/fluxplane/fluxplane-endpoint"
 
 	dexcore "github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/protocol"
@@ -19,12 +17,12 @@ import (
 
 var _ pluginhost.DiscoveryProviderContributor = (*adapter)(nil)
 
-func (a *adapter) DiscoveryProviders(ctx context.Context, pluginCtx pluginhost.Context) ([]runtimediscovery.Provider, error) {
+func (a *adapter) DiscoveryProviders(ctx context.Context, pluginCtx pluginhost.Context) ([]fpendpoint.DiscoveryProvider, error) {
 	manifest, err := a.cachedManifest(ctx)
 	if err != nil || len(manifest.Endpoints) == 0 {
 		return nil, nil
 	}
-	return []runtimediscovery.Provider{dexDiscoveryProvider{plugin: a.name, instance: pluginCtx.Ref.Instance, manifest: manifest, runner: a.engine.Runner()}}, nil
+	return []fpendpoint.DiscoveryProvider{dexDiscoveryProvider{plugin: a.name, instance: pluginCtx.Ref.Instance, manifest: manifest, runner: a.engine.Runner()}}, nil
 }
 
 type dexDiscoveryProvider struct {
@@ -34,7 +32,7 @@ type dexDiscoveryProvider struct {
 	runner   runtime.Runner
 }
 
-func (p dexDiscoveryProvider) Spec() runtimediscovery.ProviderSpec {
+func (p dexDiscoveryProvider) Spec() fpendpoint.ProviderSpec {
 	products := map[string]bool{}
 	for _, endpoint := range p.manifest.Endpoints {
 		for _, product := range endpoint.Products {
@@ -44,14 +42,14 @@ func (p dexDiscoveryProvider) Spec() runtimediscovery.ProviderSpec {
 			}
 		}
 	}
-	out := runtimediscovery.ProviderSpec{Name: p.plugin, Source: "dex", Products: sortedKeys(products), Description: strings.TrimSpace(p.manifest.Description)}
+	out := fpendpoint.ProviderSpec{Name: p.plugin, Source: "dex", Products: sortedKeys(products), Description: strings.TrimSpace(p.manifest.Description)}
 	if out.Description == "" {
 		out.Description = fmt.Sprintf("Dex %s endpoint discovery provider.", p.plugin)
 	}
 	return out
 }
 
-func (p dexDiscoveryProvider) Discover(ctx context.Context, req corediscovery.Request) (corediscovery.Result, error) {
+func (p dexDiscoveryProvider) Discover(ctx context.Context, req fpendpoint.DiscoveryRequest) (fpendpoint.DiscoveryResult, error) {
 	payload := map[string]any{}
 	if product := strings.TrimSpace(req.Product); product != "" {
 		payload["product"] = product
@@ -70,28 +68,28 @@ func (p dexDiscoveryProvider) Discover(ctx context.Context, req corediscovery.Re
 	}
 	resp, err := p.runner.InvokeInstance(ctx, p.plugin, runtime.NormalizeInstance(p.instance), protocol.CommandEndpointsDiscover, payload)
 	if err != nil {
-		return corediscovery.Result{}, err
+		return fpendpoint.DiscoveryResult{}, err
 	}
 	if resp.Error != nil {
-		return corediscovery.Result{}, fmt.Errorf("dex %s endpoint discovery: %s", p.plugin, resp.Error.Message)
+		return fpendpoint.DiscoveryResult{}, fmt.Errorf("dex %s endpoint discovery: %s", p.plugin, resp.Error.Message)
 	}
 	var decoded struct {
 		Candidates []dexcore.EndpointCandidate `json:"candidates"`
 	}
 	if err := json.Unmarshal(resp.Result, &decoded); err != nil {
-		return corediscovery.Result{}, err
+		return fpendpoint.DiscoveryResult{}, err
 	}
-	out := corediscovery.Result{Candidates: make([]corediscovery.Candidate, 0, len(decoded.Candidates))}
+	out := fpendpoint.DiscoveryResult{Candidates: make([]fpendpoint.DiscoveryCandidate, 0, len(decoded.Candidates))}
 	for _, candidate := range decoded.Candidates {
 		out.Candidates = append(out.Candidates, dexCandidateToCore(candidate))
 	}
 	return out, nil
 }
 
-func dexCandidateToCore(candidate dexcore.EndpointCandidate) corediscovery.Candidate {
+func dexCandidateToCore(candidate dexcore.EndpointCandidate) fpendpoint.DiscoveryCandidate {
 	labels := cloneStringMap(candidate.Labels)
 	annotations := cloneStringMap(candidate.Annotations)
-	return corediscovery.Candidate{
+	return fpendpoint.DiscoveryCandidate{
 		ID:          candidate.ID,
 		URL:         candidate.URL,
 		Scheme:      candidate.Protocol,
@@ -100,7 +98,7 @@ func dexCandidateToCore(candidate dexcore.EndpointCandidate) corediscovery.Candi
 		AuthRef:     candidate.CredentialRef,
 		Labels:      labels,
 		Annotations: annotations,
-		Source: coreendpoint.SourceRef{
+		Source: fpendpoint.SourceRef{
 			Kind:      firstNonEmptyString(candidate.Source, labels["source"], annotations["source"]),
 			Name:      firstNonEmptyString(labels["service"], labels["name"], annotations["name"]),
 			Namespace: firstNonEmptyString(labels["namespace"], annotations["namespace"]),

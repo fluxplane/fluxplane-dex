@@ -2,8 +2,11 @@ package core
 
 import (
 	"encoding/json"
+	"strings"
 
+	auth "github.com/fluxplane/fluxplane-auth"
 	endpoint "github.com/fluxplane/fluxplane-endpoint"
+	secret "github.com/fluxplane/fluxplane-secret"
 )
 
 type Marketplace struct {
@@ -101,11 +104,29 @@ type OperationRenderSpec struct {
 
 type AuthMethod struct {
 	Name        string            `json:"name"`
-	Kind        string            `json:"kind"`
+	Kind        secret.Kind       `json:"kind"`
 	Description string            `json:"description,omitempty"`
 	Env         []string          `json:"env,omitempty"`
 	Fields      []AuthField       `json:"fields,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
+}
+
+// MethodSpec converts the legacy dex auth declaration to the shared auth contract.
+func (m AuthMethod) MethodSpec() auth.MethodSpec {
+	fields := make([]auth.FieldSpec, 0, len(m.Fields))
+	for _, field := range m.Fields {
+		fields = append(fields, field.FieldSpec())
+	}
+	return auth.MethodSpec{
+		Name:        strings.TrimSpace(m.Name),
+		Method:      auth.MethodStored,
+		Scheme:      auth.SchemeBearerToken,
+		Kind:        m.Kind,
+		Description: strings.TrimSpace(m.Description),
+		Env:         auth.EnvSpec{Aliases: trimStrings(m.Env)},
+		SetupFields: fields,
+		Annotations: cloneStringMap(m.Metadata),
+	}.Normalize()
 }
 
 type AuthField struct {
@@ -115,6 +136,22 @@ type AuthField struct {
 	Sensitive   bool     `json:"sensitive,omitempty"`
 	Secret      bool     `json:"secret,omitempty"`
 	Env         []string `json:"env,omitempty"`
+}
+
+// FieldSpec converts the legacy dex auth field to the shared auth contract.
+func (f AuthField) FieldSpec() auth.FieldSpec {
+	kind := auth.FieldString
+	if f.Secret || f.Sensitive {
+		kind = auth.FieldPassword
+	}
+	return auth.FieldSpec{
+		Slot:        secret.Slot(strings.TrimSpace(f.Name)),
+		Kind:        kind,
+		Description: strings.TrimSpace(f.Description),
+		Required:    f.Required,
+		Sensitive:   f.Sensitive || f.Secret,
+		Env:         auth.EnvSpec{Aliases: trimStrings(f.Env)},
+	}.Normalize()
 }
 
 type DatasourceSpec struct {
@@ -213,4 +250,29 @@ type ContextBlock struct {
 type ContextSource struct {
 	Plugin   string `json:"plugin,omitempty"`
 	Instance string `json:"instance,omitempty"`
+}
+
+func trimStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }

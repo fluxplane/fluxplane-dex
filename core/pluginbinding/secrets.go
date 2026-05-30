@@ -4,13 +4,20 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	secret "github.com/fluxplane/fluxplane-secret"
 )
 
 type SecretMaterial struct {
-	Kind    string `json:"kind,omitempty"`
-	Value   string `json:"value"`
-	Source  string `json:"source,omitempty"`
-	Purpose string `json:"purpose,omitempty"`
+	Kind    secret.Kind `json:"kind,omitempty"`
+	Value   string      `json:"value"`
+	Source  string      `json:"source,omitempty"`
+	Purpose string      `json:"purpose,omitempty"`
+}
+
+// Material converts the plugin wire shape to the shared secret material contract.
+func (m SecretMaterial) Material() secret.Material {
+	return secret.Material{Kind: m.Kind, Value: []byte(m.Value)}
 }
 
 type SecretGetter func(Context, string) (SecretMaterial, error)

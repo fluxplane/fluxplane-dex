@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/fluxplane/fluxplane-dex/runtime"
+	secret "github.com/fluxplane/fluxplane-secret"
 )
 
 // SecretService manages stored auth/secret material under <WorkDir>/auth.
@@ -21,6 +22,11 @@ type SecretMaterial = runtime.SecretMaterial
 // is empty, the default instance is used.
 func (s *SecretService) Save(_ context.Context, plugin, instance, purpose string, secret StoredSecret) error {
 	return s.engine.runner.State.SaveSecret(plugin, instance, purpose, secret)
+}
+
+// SaveRef persists a secret value at a shared plugin secret ref.
+func (s *SecretService) SaveRef(_ context.Context, ref secret.Ref, stored StoredSecret) error {
+	return s.engine.runner.State.SaveSecretRef(ref, stored)
 }
 
 // Has reports whether any stored secret exists for the given plugin/instance.

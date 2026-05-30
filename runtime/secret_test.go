@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	secret "github.com/fluxplane/fluxplane-secret"
 )
 
 func TestSecretGrantAllowsScopedPurpose(t *testing.T) {
@@ -94,5 +96,31 @@ func TestSecretPathNamesDoNotCollide(t *testing.T) {
 	}
 	if purposeMaterial.Value != "underscore-purpose" {
 		t.Fatalf("resolved colliding purpose secret %q", purposeMaterial.Value)
+	}
+}
+
+func TestSecretSharedRefRoundTrip(t *testing.T) {
+	state, err := NewState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := secret.Plugin("example", "work", "access_token")
+	if err := state.SaveSecretRef(ref, StoredSecret{Kind: secret.KindAPIKey, Value: "token"}); err != nil {
+		t.Fatal(err)
+	}
+	grant, err := state.CreateGrant("example", "work", nil, []SecretPurpose{{Name: "access_token"}}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	material, err := state.ResolveSecretRef(context.Background(), ref, grant.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if material.Value != "token" || material.Kind != secret.KindAPIKey || material.Ref.ResourceName() != ref.ResourceName() {
+		t.Fatalf("material = %#v", material)
+	}
+	shared := material.Material()
+	if string(shared.Value) != "token" || shared.Kind != secret.KindAPIKey || shared.Ref.ResourceName() != ref.ResourceName() {
+		t.Fatalf("shared material = %#v", shared)
 	}
 }

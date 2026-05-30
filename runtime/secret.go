@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	secret "github.com/fluxplane/fluxplane-secret"
 )
 
 const DefaultInstance = "default"
@@ -34,18 +36,19 @@ type CapabilityGrant struct {
 }
 
 type SecretMaterial struct {
-	Kind    string `json:"kind,omitempty"`
-	Value   string `json:"value"`
-	Source  string `json:"source,omitempty"`
-	Purpose string `json:"purpose,omitempty"`
+	Kind    secret.Kind `json:"kind,omitempty"`
+	Value   string      `json:"value"`
+	Source  string      `json:"source,omitempty"`
+	Purpose string      `json:"purpose,omitempty"`
+	Ref     secret.Ref  `json:"ref,omitempty"`
 }
 
-type StoredSecret struct {
-	Kind      string            `json:"kind,omitempty"`
-	Value     string            `json:"value"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
-	UpdatedAt time.Time         `json:"updated_at"`
+// Material converts the runtime wire shape to shared trusted secret material.
+func (m SecretMaterial) Material() secret.Material {
+	return secret.Material{Ref: m.Ref, Kind: m.Kind, Value: []byte(m.Value)}
 }
+
+type StoredSecret = secret.StoredSecret
 
 func NormalizeInstance(instance string) string {
 	instance = strings.TrimSpace(instance)
@@ -128,7 +131,8 @@ func (s State) ResolveSecret(ctx context.Context, plugin, instance, purpose, tok
 	if err != nil {
 		return SecretMaterial{}, err
 	}
-	material, ok, err := s.loadStoredSecret(grant.Plugin, grant.Instance, purpose)
+	ref := secret.Plugin(grant.Plugin, grant.Instance, secret.Slot(purpose))
+	material, ok, err := s.loadStoredSecretRef(ref)
 	if err != nil {
 		return SecretMaterial{}, err
 	}
@@ -144,29 +148,28 @@ func (s State) ResolveSecret(ctx context.Context, plugin, instance, purpose, tok
 	return SecretMaterial{}, fmt.Errorf("secret material not found for %s/%s purpose %q", grant.Plugin, grant.Instance, purpose)
 }
 
-func (s State) SaveSecret(plugin, instance, purpose string, secret StoredSecret) error {
-	plugin = strings.TrimSpace(plugin)
-	instance = NormalizeInstance(instance)
-	purpose = strings.TrimSpace(purpose)
-	if plugin == "" || purpose == "" {
-		return fmt.Errorf("plugin and purpose are required")
+// ResolveSecretRef resolves a shared secret ref after validating the grant for
+// plugin-scoped refs. Env refs are resolved from grant purpose env mappings.
+func (s State) ResolveSecretRef(ctx context.Context, ref secret.Ref, token string) (SecretMaterial, error) {
+	ref = ref.Normalize()
+	if ref.Scheme != secret.SchemePlugin {
+		return SecretMaterial{}, fmt.Errorf("secret ref scheme %q is unsupported", ref.Scheme)
 	}
-	if strings.TrimSpace(secret.Value) == "" {
-		return fmt.Errorf("secret value is empty")
+	return s.ResolveSecret(ctx, ref.Plugin, ref.Instance, string(ref.Slot), token)
+}
+
+func (s State) SaveSecret(plugin, instance, purpose string, stored StoredSecret) error {
+	return s.SaveSecretRef(secret.Plugin(plugin, NormalizeInstance(instance), secret.Slot(purpose)), stored)
+}
+
+// SaveSecretRef persists a shared plugin secret ref using the dex auth store.
+func (s State) SaveSecretRef(ref secret.Ref, stored StoredSecret) error {
+	ref = ref.Normalize()
+	if ref.Scheme != secret.SchemePlugin || ref.Plugin == "" || ref.Slot == "" {
+		return fmt.Errorf("plugin secret ref is required")
 	}
-	if secret.Kind == "" {
-		secret.Kind = "bearer_token"
-	}
-	secret.UpdatedAt = time.Now().UTC()
-	dir := filepath.Dir(s.secretPath(plugin, instance, purpose))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(secret, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(s.secretPath(plugin, instance, purpose), data, 0o600)
+	stored.Ref = ref
+	return secret.NewFileStore(s.AuthDir()).SaveSecret(context.Background(), stored)
 }
 
 func (s State) SecretStatus(plugin, instance string, purposes []SecretPurpose) map[string]string {
@@ -191,25 +194,7 @@ func (s State) SecretStatus(plugin, instance string, purposes []SecretPurpose) m
 }
 
 func (s State) HasStoredAuth(plugin, instance string) (bool, error) {
-	dir := filepath.Join(s.AuthDir(), pathName(plugin), pathName(NormalizeInstance(instance)))
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-		if ok, err := storedSecretFileHasMaterial(filepath.Join(dir, entry.Name())); err != nil {
-			return false, err
-		} else if ok {
-			return true, nil
-		}
-	}
-	return false, nil
+	return secret.NewFileStore(s.AuthDir()).HasPluginSecrets(plugin, NormalizeInstance(instance))
 }
 
 func (s State) validateGrant(plugin, instance, purpose, token string) (Grant, error) {
@@ -252,41 +237,19 @@ func (s State) validateGrantBase(plugin, instance, token string) (Grant, error) 
 }
 
 func (s State) loadStoredSecret(plugin, instance, purpose string) (SecretMaterial, bool, error) {
-	data, err := os.ReadFile(s.secretPath(plugin, NormalizeInstance(instance), purpose))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return SecretMaterial{}, false, nil
-		}
-		return SecretMaterial{}, false, err
-	}
-	var stored StoredSecret
-	if err := json.Unmarshal(data, &stored); err != nil {
-		return SecretMaterial{}, false, err
-	}
-	if strings.TrimSpace(stored.Value) == "" {
-		return SecretMaterial{}, false, nil
-	}
-	return SecretMaterial{Kind: stored.Kind, Value: stored.Value, Source: "store"}, true, nil
+	return s.loadStoredSecretRef(secret.Plugin(plugin, NormalizeInstance(instance), secret.Slot(purpose)))
 }
 
-func storedSecretFileHasMaterial(path string) (bool, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false, err
+func (s State) loadStoredSecretRef(ref secret.Ref) (SecretMaterial, bool, error) {
+	material, ok, err := secret.NewFileStore(s.AuthDir()).ResolveSecret(context.Background(), ref)
+	if err != nil || !ok {
+		return SecretMaterial{}, ok, err
 	}
-	var stored StoredSecret
-	if err := json.Unmarshal(data, &stored); err != nil {
-		return false, err
-	}
-	return strings.TrimSpace(stored.Value) != "", nil
+	return SecretMaterial{Kind: material.Kind, Value: string(material.Value), Source: "store", Ref: material.Ref.Normalize()}, true, nil
 }
 
 func (s State) grantPath(token string) string {
 	return filepath.Join(s.GrantsDir(), pathName(token)+".json")
-}
-
-func (s State) secretPath(plugin, instance, purpose string) string {
-	return filepath.Join(s.AuthDir(), pathName(plugin), pathName(instance), pathName(purpose)+".json")
 }
 
 func randomToken() (string, error) {
@@ -300,7 +263,7 @@ func randomToken() (string, error) {
 func envSecret(grant Grant, purpose string) (SecretMaterial, bool) {
 	for _, key := range grant.PurposeEnv[strings.TrimSpace(purpose)] {
 		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-			return SecretMaterial{Kind: "bearer_token", Value: value, Source: "env:" + key}, true
+			return SecretMaterial{Kind: secret.KindBearerToken, Value: value, Source: "env:" + key, Ref: secret.Env(key)}, true
 		}
 	}
 	return SecretMaterial{}, false

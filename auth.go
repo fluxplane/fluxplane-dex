@@ -10,6 +10,7 @@ import (
 	"github.com/fluxplane/fluxplane-dex/core"
 	"github.com/fluxplane/fluxplane-dex/protocol"
 	"github.com/fluxplane/fluxplane-dex/runtime"
+	secret "github.com/fluxplane/fluxplane-secret"
 )
 
 // AuthService manages plugin authentication.
@@ -200,11 +201,12 @@ func (s *AuthService) AutoConnect(ctx context.Context, plugin, instance string) 
 		}
 		value, ok := firstEnvValue(field.Env)
 		if ok {
-			kind := "bearer_token"
+			kind := secret.KindBearerToken
 			if !field.Sensitive && !field.Secret {
-				kind = "config"
+				kind = secret.Kind("config")
 			}
-			if err := s.engine.runner.State.SaveSecret(plugin, instance, name, StoredSecret{Kind: kind, Value: value}); err != nil {
+			ref := secret.Plugin(plugin, instance, secret.Slot(name))
+			if err := s.engine.runner.State.SaveSecretRef(ref, StoredSecret{Kind: kind, Value: value}); err != nil {
 				return result, err
 			}
 			result.Saved = append(result.Saved, name)
@@ -241,11 +243,12 @@ func (s *AuthService) saveValues(plugin, instance string, fields []AuthField, va
 		if field.Name == "" {
 			field = AuthField{Name: purpose, Sensitive: true, Secret: true}
 		}
-		kind := "bearer_token"
+		kind := secret.KindBearerToken
 		if !field.Sensitive && !field.Secret {
-			kind = "config"
+			kind = secret.Kind("config")
 		}
-		if err := s.engine.runner.State.SaveSecret(plugin, instance, purpose, StoredSecret{Kind: kind, Value: value}); err != nil {
+		ref := secret.Plugin(plugin, instance, secret.Slot(purpose))
+		if err := s.engine.runner.State.SaveSecretRef(ref, StoredSecret{Kind: kind, Value: value}); err != nil {
 			return result, err
 		}
 		result.Saved = append(result.Saved, purpose)

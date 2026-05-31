@@ -12,7 +12,7 @@ require (
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.2.0 // indirect
-	github.com/fluxplane/fluxplane-auth v0.2.0 // indirect
+	github.com/fluxplane/fluxplane-auth v0.2.1 // indirect
 	github.com/fluxplane/fluxplane-endpoint v0.2.0 // indirect
 	github.com/fluxplane/fluxplane-event v0.2.0 // indirect
 	github.com/fluxplane/fluxplane-policy v0.1.1 // indirect

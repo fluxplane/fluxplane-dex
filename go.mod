@@ -5,9 +5,9 @@ go 1.26.1
 require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.7.0
-	github.com/fluxplane/fluxplane-auth v0.1.1
+	github.com/fluxplane/fluxplane-auth v0.2.0
 	github.com/fluxplane/fluxplane-endpoint v0.2.0
-	github.com/fluxplane/fluxplane-secret v0.1.1
+	github.com/fluxplane/fluxplane-secret v0.2.0
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/invopop/jsonschema v0.14.0
 	github.com/jackc/pgx/v5 v5.9.2
@@ -37,6 +37,8 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/fluxplane/fluxplane-event v0.2.0 // indirect
+	github.com/fluxplane/fluxplane-policy v0.1.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect

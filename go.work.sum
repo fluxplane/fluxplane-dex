@@ -161,6 +161,7 @@ github.com/fluxplane/fluxplane-core v0.22.0 h1:RJCdg5eNwjTp8/grN3Hzy9VhkTn5qaPoe
 github.com/fluxplane/fluxplane-core v0.22.0/go.mod h1:Ca26gUk2+ABcystyrZaDtHH+JIx1oHtrBGVCrMmL5Ac=
 github.com/fluxplane/fluxplane-dex v0.6.0/go.mod h1:LZF7+Gy+ADO7/G0DUFKNqN8C47eyo/FyILf+PfdFtT8=
 github.com/fluxplane/fluxplane-dex v0.11.0/go.mod h1:2GKD2Q3SjczKUa09FdWJQ1pHts4TDDrcsROhclevZcA=
+github.com/fluxplane/fluxplane-secret v0.1.0/go.mod h1:XkWhjAtAy2a05s71Yx1VAy+KrbDr8kuPHc1Fp1rl1IU=
 github.com/getkin/kin-openapi v0.138.0 h1:ebfE0JAmF6AqHrNBy1KO3Fs68K9tPs48HalvLPo7Rv4=
 github.com/getkin/kin-openapi v0.138.0/go.mod h1:vUYWaKyMqj7PfTybelXtLuLN9tReS12vxnzMRK+z2GY=
 github.com/go-errors/errors v1.5.1 h1:ZwEMSLRCapFLflTpT7NKaAc7ukJ8ZPEjzlxt8rPN8bk=

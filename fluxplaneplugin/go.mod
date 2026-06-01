@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/fluxplane/fluxplane-core v0.29.0
-	github.com/fluxplane/fluxplane-dex v0.18.2
+	github.com/fluxplane/fluxplane-dex v0.29.0
 	github.com/fluxplane/fluxplane-endpoint v0.2.0
 )
 

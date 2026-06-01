@@ -8,8 +8,8 @@ github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/fluxplane/fluxplane-auth v0.3.0 h1:6maBRpqewt3tEdKj5KgMDg635L5zNdp6MKnGog4cdsU=
 github.com/fluxplane/fluxplane-auth v0.3.0/go.mod h1:rHQCW6ZGg4yr1V2ugbX2dagNDbAioePRjAHAWVBjrFk=
-github.com/fluxplane/fluxplane-dex v0.18.2 h1:U2K4m5A+cW9RYnQ9bVKzOsdqW4bW2BH3qNstbcJB8rc=
-github.com/fluxplane/fluxplane-dex v0.18.2/go.mod h1:VVI6Pirc6w6r8VnF3hq0Ntrvr9EdMypG52rFMqd4mr8=
+github.com/fluxplane/fluxplane-dex v0.29.0 h1:zoShcn87tKn5Wc5vJRtINE/E+7oQNvod9ygHgbs5fLE=
+github.com/fluxplane/fluxplane-dex v0.29.0/go.mod h1:tjty2XK9cXU5Xit2avXuh5918Bleni8LX+MrYE47vSk=
 github.com/fluxplane/fluxplane-endpoint v0.2.0 h1:s1pOyLPKYGFTkN3xdFOfLMm05mQW/IIT3qtRE58CAVE=
 github.com/fluxplane/fluxplane-endpoint v0.2.0/go.mod h1:YxEuZNTy8NfitF6foM1AwjYTZoP5MhSuzoCKbs+Nq2Y=
 github.com/fluxplane/fluxplane-event v0.2.0 h1:LDGaNvng9bRFAJJqIXA31Kn6+QGNdPHF3AzF5BzfhOE=

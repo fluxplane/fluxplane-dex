@@ -6,6 +6,7 @@ require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.7.0
 	github.com/fluxplane/fluxplane-auth v0.3.0
+	github.com/fluxplane/fluxplane-datasource v0.1.0
 	github.com/fluxplane/fluxplane-endpoint v0.2.0
 	github.com/fluxplane/fluxplane-secret v0.2.0
 	github.com/go-sql-driver/mysql v1.10.0
@@ -84,6 +85,7 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
+	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0 // indirect

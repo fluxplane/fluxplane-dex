@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	coredatasource "github.com/fluxplane/fluxplane-core/core/datasource"
 	"github.com/fluxplane/fluxplane-core/core/operation"
 	"github.com/fluxplane/fluxplane-core/core/resource"
 	"github.com/fluxplane/fluxplane-core/orchestration/pluginhost"
+	coredatasource "github.com/fluxplane/fluxplane-datasource"
 
 	dex "github.com/fluxplane/fluxplane-dex"
 	"github.com/fluxplane/fluxplane-dex/fluxplaneplugin"

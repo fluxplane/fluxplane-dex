@@ -8,11 +8,11 @@ import (
 	"sync"
 
 	coreactivation "github.com/fluxplane/fluxplane-core/core/activation"
-	coredatasource "github.com/fluxplane/fluxplane-core/core/datasource"
 	"github.com/fluxplane/fluxplane-core/core/operation"
 	"github.com/fluxplane/fluxplane-core/core/resource"
 	"github.com/fluxplane/fluxplane-core/orchestration/pluginhost"
 	runtimeevidence "github.com/fluxplane/fluxplane-core/runtime/evidence"
+	coredatasource "github.com/fluxplane/fluxplane-datasource"
 
 	dex "github.com/fluxplane/fluxplane-dex"
 	dexcore "github.com/fluxplane/fluxplane-dex/core"

@@ -2,6 +2,8 @@ go 1.26.1
 
 use (
 	.
+	../fluxplane-core
+	../fluxplane-datasource
 	../fluxplane-endpoint
 	../fluxplane-secret
 	./fluxplaneplugin
@@ -24,6 +26,10 @@ use (
 )
 
 replace github.com/fluxplane/fluxplane-dex v0.29.0 => .
+
+replace github.com/fluxplane/fluxplane-core v0.30.0 => ../fluxplane-core
+
+replace github.com/fluxplane/fluxplane-datasource v0.1.0 => ../fluxplane-datasource
 
 replace github.com/fluxplane/fluxplane-endpoint v0.2.0 => ../fluxplane-endpoint
 

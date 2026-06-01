@@ -17,3 +17,14 @@ func NewListResult[T any](items []T) ListResult[T] {
 func NewShowResult[T any](record T, metadata map[string]any) ShowResult[T] {
 	return ShowResult[T]{Record: record, Metadata: cloneAnyMap(metadata)}
 }
+
+func cloneAnyMap(input map[string]any) map[string]any {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
+}

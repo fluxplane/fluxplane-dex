@@ -127,6 +127,42 @@ func TestDatasourceMetadataHelpersAndTags(t *testing.T) {
 	}
 }
 
+func TestEntitySchemaForPreservesExplicitSchemaOverrides(t *testing.T) {
+	type taggedRecord struct {
+		ID    string `json:"id" datasource:"id"`
+		Title string `json:"title" datasource:"title" jsonschema:"description=Generated title"`
+	}
+	spec := TypedDatasourceSpec[DatasourceSearchInput, DatasourceSearchResult[taggedRecord]](
+		"test.items",
+		"test.item",
+		"Test items.",
+		[]string{CapabilitySearch},
+		EntitySchema(core.DatasourceEntitySchema{
+			IDField: "external_id",
+			Fields:  []core.DatasourceFieldSpec{{Name: "title", Description: "Explicit title"}},
+		}),
+		EntitySchemaFor[taggedRecord](),
+	)
+	if spec.EntitySchema == nil {
+		t.Fatal("entity schema is nil")
+	}
+	if spec.EntitySchema.IDField != "external_id" {
+		t.Fatalf("IDField = %q, want explicit override", spec.EntitySchema.IDField)
+	}
+	if spec.EntitySchema.TitleField != "title" {
+		t.Fatalf("TitleField = %q, want generated title field", spec.EntitySchema.TitleField)
+	}
+	for _, field := range spec.EntitySchema.Fields {
+		if field.Name == "title" {
+			if field.Description != "Explicit title" {
+				t.Fatalf("title description = %q, want explicit override", field.Description)
+			}
+			return
+		}
+	}
+	t.Fatalf("title field missing: %#v", spec.EntitySchema.Fields)
+}
+
 func TestDefineRegistersContextProvider(t *testing.T) {
 	spec := ContextSpec("test.context", "Test context.", ContextKindText)
 	plugin := Define(ManifestSpec{Name: "test"},

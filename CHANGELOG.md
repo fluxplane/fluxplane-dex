@@ -9,8 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Upgraded workspace module dependencies, including `fluxplaneplugin` on
-  `github.com/fluxplane/fluxplane-core v0.29.0`.
+  `github.com/fluxplane/fluxplane-core v0.30.0`.
 - Updated dex release documentation examples to the `v0.29.0` module tag.
+- Datasource specs, declaration metadata, lookup/search/get DTOs, record bases, schema derivation, and lookup scoring now use `github.com/fluxplane/fluxplane-datasource` shared types under the existing dex API aliases.
+- `fluxplaneplugin` now bridges datasource providers through the shared `fluxplane-datasource` provider/accessor contracts instead of the removed `fluxplane-core/core/datasource` package.
 
 ## [0.18.2] - 2026-05-30
 

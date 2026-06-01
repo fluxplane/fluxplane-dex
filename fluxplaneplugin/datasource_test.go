@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	coredatasource "github.com/fluxplane/fluxplane-core/core/datasource"
+	coredatasource "github.com/fluxplane/fluxplane-datasource"
 )
 
 func TestDecodeRecordsUnwrapsDatasourceGetRecord(t *testing.T) {

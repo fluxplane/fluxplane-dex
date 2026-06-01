@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	auth "github.com/fluxplane/fluxplane-auth"
+	datasource "github.com/fluxplane/fluxplane-datasource"
 	endpoint "github.com/fluxplane/fluxplane-endpoint"
 	secret "github.com/fluxplane/fluxplane-secret"
 )
@@ -83,18 +84,18 @@ const (
 	OperationUnknown       OperationIdempotency = "unknown"
 )
 
-type OperationAccess string
+type OperationAccess = datasource.Access
 
 const (
-	OperationAccessNone        OperationAccess = "none"
-	OperationAccessAuth        OperationAccess = "auth"
-	OperationAccessSecret      OperationAccess = "secret"
-	OperationAccessNetwork     OperationAccess = "network"
-	OperationAccessProvider    OperationAccess = "provider"
-	OperationAccessProcess     OperationAccess = "process"
-	OperationAccessBrowser     OperationAccess = "browser"
-	OperationAccessFilesystem  OperationAccess = "filesystem"
-	OperationAccessLocalSystem OperationAccess = "local_system"
+	OperationAccessNone        = datasource.AccessNone
+	OperationAccessAuth        = datasource.AccessAuth
+	OperationAccessSecret      = datasource.AccessSecret
+	OperationAccessNetwork     = datasource.AccessNetwork
+	OperationAccessProvider    = datasource.AccessProvider
+	OperationAccessProcess     = datasource.AccessProcess
+	OperationAccessBrowser     = datasource.AccessBrowser
+	OperationAccessFilesystem  = datasource.AccessFilesystem
+	OperationAccessLocalSystem = datasource.AccessLocalSystem
 )
 
 type OperationRenderSpec struct {
@@ -154,64 +155,20 @@ func (f AuthField) FieldSpec() auth.FieldSpec {
 	}.Normalize()
 }
 
-type DatasourceSpec struct {
-	Name           string                    `json:"name"`
-	Entity         string                    `json:"entity"`
-	Description    string                    `json:"description,omitempty"`
-	Capabilities   []string                  `json:"capabilities,omitempty"`
-	Access         []OperationAccess         `json:"access,omitempty"`
-	SecretPurposes []string                  `json:"secret_purposes,omitempty"`
-	Input          json.RawMessage           `json:"input_schema,omitempty"`
-	Output         json.RawMessage           `json:"output_schema,omitempty"`
-	EntitySchema   *DatasourceEntitySchema   `json:"entity_schema,omitempty"`
-	Views          []DatasourceViewSpec      `json:"views,omitempty"`
-	Relations      []DatasourceRelationSpec  `json:"relations,omitempty"`
-	Fallback       DatasourceFallback        `json:"fallback,omitempty"`
-	Completion     *DatasourceCompletionSpec `json:"completion,omitempty"`
-}
-
-type DatasourceEntitySchema struct {
-	Entity     string                `json:"entity,omitempty"`
-	IDField    string                `json:"id_field,omitempty"`
-	TitleField string                `json:"title_field,omitempty"`
-	Fields     []DatasourceFieldSpec `json:"fields,omitempty"`
-}
-
-type DatasourceFieldSpec struct {
-	Name        string                  `json:"name"`
-	Type        string                  `json:"type,omitempty"`
-	Description string                  `json:"description,omitempty"`
-	Views       []string                `json:"views,omitempty"`
-	Completion  bool                    `json:"completion,omitempty"`
-	Relation    *DatasourceRelationSpec `json:"relation,omitempty"`
-}
-
-type DatasourceViewSpec struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description,omitempty"`
-	Fields      []string `json:"fields,omitempty"`
-}
-
-type DatasourceRelationSpec struct {
-	Name   string `json:"name,omitempty"`
-	Field  string `json:"field,omitempty"`
-	Entity string `json:"entity"`
-	Type   string `json:"type,omitempty"`
-}
-
-type DatasourceFallback string
+type DatasourceSpec = datasource.Declaration
+type DatasourceEntitySchema = datasource.EntitySchema
+type DatasourceFieldSpec = datasource.SchemaField
+type DatasourceViewSpec = datasource.ViewSpec
+type DatasourceRelationSpec = datasource.DeclarationRelationSpec
+type DatasourceFallback = datasource.Fallback
+type DatasourceCompletionSpec = datasource.CompletionSpec
 
 const (
-	DatasourceFallbackNone           DatasourceFallback = "none"
-	DatasourceFallbackHostIndex      DatasourceFallback = "host_index"
-	DatasourceFallbackProviderFirst  DatasourceFallback = "provider_first"
-	DatasourceFallbackHostIndexFirst DatasourceFallback = "host_index_first"
+	DatasourceFallbackNone           = datasource.FallbackNone
+	DatasourceFallbackHostIndex      = datasource.FallbackHostIndex
+	DatasourceFallbackProviderFirst  = datasource.FallbackProviderFirst
+	DatasourceFallbackHostIndexFirst = datasource.FallbackHostIndexFirst
 )
-
-type DatasourceCompletionSpec struct {
-	Fields      []string `json:"fields,omitempty"`
-	Description string   `json:"description,omitempty"`
-}
 
 type ContextSpec struct {
 	Name        string   `json:"name"`

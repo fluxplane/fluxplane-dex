@@ -111,7 +111,7 @@ type AuthMethod struct {
 	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
-// MethodSpec converts the legacy dex auth declaration to the shared auth contract.
+// MethodSpec converts the dex auth declaration to the shared auth contract.
 func (m AuthMethod) MethodSpec() auth.MethodSpec {
 	fields := make([]auth.FieldSpec, 0, len(m.Fields))
 	for _, field := range m.Fields {
@@ -138,7 +138,7 @@ type AuthField struct {
 	Env         []string `json:"env,omitempty"`
 }
 
-// FieldSpec converts the legacy dex auth field to the shared auth contract.
+// FieldSpec converts the dex auth field to the shared auth contract.
 func (f AuthField) FieldSpec() auth.FieldSpec {
 	kind := auth.FieldString
 	if f.Secret || f.Sensitive {

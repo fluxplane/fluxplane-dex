@@ -270,7 +270,7 @@ replacement for the root release version.
 Plugin modules intentionally require the release root module version:
 
 ```go
-require github.com/fluxplane/fluxplane-dex v0.16.0
+require github.com/fluxplane/fluxplane-dex v0.29.0
 ```
 
 Do not add local `replace` directives to plugin modules for release. The release

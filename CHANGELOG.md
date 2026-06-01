@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Upgraded workspace module dependencies, including `fluxplaneplugin` on
+  `github.com/fluxplane/fluxplane-core v0.29.0`.
+- Updated dex release documentation examples to the `v0.29.0` module tag.
+
 ## [0.18.2] - 2026-05-30
 
 ### Changed

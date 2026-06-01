@@ -199,7 +199,7 @@ use (
 Plugin modules should require the root release version:
 
 ```go
-require github.com/fluxplane/fluxplane-dex v0.16.0
+require github.com/fluxplane/fluxplane-dex v0.29.0
 ```
 
 Release packaging should use this sequence:
